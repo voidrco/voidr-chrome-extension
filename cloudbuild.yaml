@@ -13,7 +13,6 @@ steps:
       - 'npm-install'
 
   # Etapa 3: Copiar o script para a pasta da versão (tag) no GCS
-  # Exemplo de destino: gs://cdn-voidr-global/voidr-collector/default/v1.2.3/recorder.min.js
   - name: 'gcr.io/cloud-builders/gsutil'
     args:
       - 'cp'
@@ -24,7 +23,6 @@ steps:
       - 'npm-build'
 
   # Etapa 4: Copiar o script para a pasta "latest" no GCS
-  # Exemplo de destino: gs://cdn-voidr-global/voidr-collector/default/latest/recorder.min.js
   - name: 'gcr.io/cloud-builders/gsutil'
     args:
       - 'cp'
@@ -46,3 +44,21 @@ steps:
     id: 'cdn-invalidate-cache'
     waitFor:
       - 'gcs-upload-latest'
+
+  # Etapa 6: Limpar o cache do Cloudflare
+  - name: 'gcr.io/cloud-builders/gcloud'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        # Acessa o token da API do Secret Manager
+        API_TOKEN=mYJjUYJIt_3_RWnlvqiF_EioOWlUdMQSpGAF_Plg
+
+        # Envia a requisição para a API do Cloudflare
+        curl -X POST "https://api.cloudflare.com/client/v4/zones/40807c6c48cb5d8a1e29bfbca48a519e/purge_cache" \
+          -H "Authorization: Bearer $$API_TOKEN" \
+          -H "Content-Type: application/json" \
+          --data '{"prefixes":["cdn.voidr.co/voidr-collector"]}'
+    id: 'cloudflare-purge-cache'
+    waitFor:
+      - 'gcdn-invalidate-cache'
