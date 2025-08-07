@@ -34,21 +34,15 @@ steps:
     waitFor:
       - 'npm-build'
 
-  # Etapa 5: Invalidar o cache do Cloud CDN para a versão "latest"
-  # Substitua [LOAD_BALANCER_NAME] pelo nome do seu balanceador de carga.
+  # Etapa 5: Invalidar o cache do Cloud CDN para os arquivos atualizados
   - name: 'gcr.io/cloud-builders/gcloud'
     args:
       - 'compute'
       - 'url-maps'
-      - 'caches'
-      - 'invalidate'
-      - 'cdn-load-balancer' # <-- IMPORTANTE: Substitua pelo nome do seu balanceador de carga
-      - '--path=/voidr-collector'
+      - 'invalidate-cdn-cache'
+      - 'cdn-load-balancer'
+      - '--path=/voidr-collector/*'
       - '--async'
     id: 'cdn-invalidate-cache'
     waitFor:
       - 'gcs-upload-latest'
-
-# A variável ${TAG_NAME} é fornecida automaticamente pelo Cloud Build quando o gatilho é uma tag.
-substitutions:
-  _API_HOST: ''
