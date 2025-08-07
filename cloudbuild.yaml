@@ -42,7 +42,7 @@ steps:
       - 'url-maps'
       - 'caches'
       - 'invalidate'
-      - '[LOAD_BALANCER_NAME]' # <-- IMPORTANTE: Substitua pelo nome do seu balanceador de carga
+      - 'cdn-load-balancer' # <-- IMPORTANTE: Substitua pelo nome do seu balanceador de carga
       - '--path=/voidr-collector/default/latest/recorder.min.js'
       - '--async'
     id: 'cdn-invalidate-cache'
