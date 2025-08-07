@@ -13,9 +13,18 @@ if [ "$1" != "patch" ] && [ "$1" != "minor" ] && [ "$1" != "major" ]; then
   exit 1
 fi
 
-# Garante que a branch local está atualizada com a master remota
+# Garante que a branch local está limpa e atualizada
 git checkout master
 git pull origin master
+
+# Se o `git status` não estiver limpo, o npm version falhará.
+# Adicionamos um check para dar uma mensagem mais clara.
+if ! git diff --quiet; then
+    echo "Erro: O diretório de trabalho do Git não está limpo."
+    echo "Faça o commit ou descarte suas alterações antes de criar uma release."
+    git status -s # Mostra os arquivos modificados
+    exit 1
+fi
 
 # Executa o npm version, que irá:
 # 1. Aumentar a versão no package.json
@@ -25,12 +34,8 @@ VERSION=$(npm version $1)
 
 echo "Versão atualizada para ${VERSION}"
 
-git add package.json package-lock.json
-git commit -m "chore(release): ${VERSION}"
-git tag ${VERSION}
-
-# Envia o commit e a tag para o repositório remoto
-git push origin master
+# Envia o commit e a tag para o repositório remoto.
+# O `npm version` já criou o commit e a tag, só precisamos enviar.
 git push origin master --tags
 
 echo "✅ Release ${VERSION} enviada com sucesso para o GitHub."
