@@ -43,7 +43,7 @@ steps:
       - 'caches'
       - 'invalidate'
       - 'cdn-load-balancer' # <-- IMPORTANTE: Substitua pelo nome do seu balanceador de carga
-      - '--path=/voidr-collector/default/latest/recorder.min.js'
+      - '--path=/voidr-collector'
       - '--async'
     id: 'cdn-invalidate-cache'
     waitFor:
