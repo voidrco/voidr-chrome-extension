@@ -30,6 +30,7 @@ git commit -m "chore(release): ${VERSION}"
 git tag ${VERSION}
 
 # Envia o commit e a tag para o repositório remoto
+git push origin master
 git push origin master --tags
 
 echo "✅ Release ${VERSION} enviada com sucesso para o GitHub."
