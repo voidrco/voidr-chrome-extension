@@ -1,17 +1,16 @@
 # cloudbuild.yaml
 steps:
-  # Etapa 1: Instalar as dependências do projeto usando 'npm ci'
-  # 'npm ci' é mais rápido e seguro para builds de CI/CD, pois usa o package-lock.json
+  # Etapa 1: Instalar as dependências do projeto
   - name: 'gcr.io/cloud-builders/npm'
-    args: ['ci']
-    id: 'npm-ci'
+    args: ['install']
+    id: 'npm-install'
 
   # Etapa 2: Executar o build para gerar o script em dist/
   - name: 'gcr.io/cloud-builders/npm'
     args: ['run', 'build']
     id: 'npm-build'
     waitFor:
-      - 'npm-ci'
+      - 'npm-install'
 
   # Etapa 3: Copiar o script para a pasta da versão (tag) no GCS
   # Exemplo de destino: gs://cdn-voidr-global/voidr-collector/default/v1.2.3/recorder.min.js
