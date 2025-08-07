@@ -1,0 +1,54 @@
+# cloudbuild.yaml
+steps:
+  # Etapa 1: Instalar as dependências do projeto
+  - name: 'gcr.io/cloud-builders/npm'
+    args: ['install']
+    id: 'npm-install'
+
+  # Etapa 2: Executar o build para gerar o script em dist/
+  - name: 'gcr.io/cloud-builders/npm'
+    args: ['run', 'build']
+    id: 'npm-build'
+    waitFor:
+      - 'npm-install'
+
+  # Etapa 3: Copiar o script para a pasta da versão (tag) no GCS
+  # Exemplo de destino: gs://cdn-voidr-global/voidr-collector/default/v1.2.3/recorder.min.js
+  - name: 'gcr.io/cloud-builders/gsutil'
+    args:
+      - 'cp'
+      - 'dist/recorder.min.js'
+      - 'gs://cdn-voidr-global/voidr-collector/default/${TAG_NAME}/recorder.min.js'
+    id: 'gcs-upload-versioned'
+    waitFor:
+      - 'npm-build'
+
+  # Etapa 4: Copiar o script para a pasta "latest" no GCS
+  # Exemplo de destino: gs://cdn-voidr-global/voidr-collector/default/latest/recorder.min.js
+  - name: 'gcr.io/cloud-builders/gsutil'
+    args:
+      - 'cp'
+      - 'dist/recorder.min.js'
+      - 'gs://cdn-voidr-global/voidr-collector/default/latest/recorder.min.js'
+    id: 'gcs-upload-latest'
+    waitFor:
+      - 'npm-build'
+
+  # Etapa 5: Invalidar o cache do Cloud CDN para a versão "latest"
+  # Substitua [LOAD_BALANCER_NAME] pelo nome do seu balanceador de carga.
+  - name: 'gcr.io/cloud-builders/gcloud'
+    args:
+      - 'compute'
+      - 'url-maps'
+      - 'caches'
+      - 'invalidate'
+      - '[LOAD_BALANCER_NAME]' # <-- IMPORTANTE: Substitua pelo nome do seu balanceador de carga
+      - '--path=/voidr-collector/default/latest/recorder.min.js'
+      - '--async'
+    id: 'cdn-invalidate-cache'
+    waitFor:
+      - 'gcs-upload-latest'
+
+# A variável ${TAG_NAME} é fornecida automaticamente pelo Cloud Build quando o gatilho é uma tag.
+substitutions:
+  _API_HOST: ''
