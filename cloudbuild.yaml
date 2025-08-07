@@ -61,4 +61,4 @@ steps:
           --data '{"prefixes":["cdn.voidr.co/voidr-collector"]}'
     id: 'cloudflare-purge-cache'
     waitFor:
-      - 'gcdn-invalidate-cache'
+      - 'cdn-invalidate-cache'
