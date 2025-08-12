@@ -1,14 +1,35 @@
+import serveStatic from 'serve-static';
+import { resolve } from 'node:path';
+
 export default {
+  server: {
+    cors: true,
+  },
+  plugins: [
+    {
+      name: 'serve-dist',
+      configureServer(server) {
+        server.middlewares.use(
+          '/dist',
+          serveStatic(resolve(process.cwd(), 'dist'), {
+            setHeaders(res) {
+              res.setHeader('Access-Control-Allow-Origin', '*');
+            },
+          }),
+        );
+      },
+    },
+  ],
   build: {
     lib: {
-      entry: "src/recorder.js",
-      name: "rrwebClient",
-      formats: ["iife"],
-      fileName: () => "recorder.min.js",
+      entry: 'src/recorder.js',
+      name: 'rrwebClient',
+      formats: ['iife'],
+      fileName: () => 'recorder.min.js',
     },
-    outDir: "dist",
+    outDir: 'dist',
     emptyOutDir: true,
-    minify: "esbuild",
-    target: "es2018",
+    minify: 'esbuild',
+    target: 'es2018',
   },
 };

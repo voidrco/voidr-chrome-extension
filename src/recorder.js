@@ -218,6 +218,8 @@ const VoidrCollector = (function () {
         maskTextSelector: config.dataMasking.text ? '*' : null,
         maskAllInputs: config.dataMasking.inputs,
         blockSelector: config.dataMasking.blockSelectors?.join(', '),
+        checkoutEveryNms: 60000,
+        checkoutEveryNevents: 500,
         sampling: {
           mousemove: 50,
           mouseInteraction: true,
@@ -466,7 +468,7 @@ const VoidrCollector = (function () {
       if (networkBuffer.length > 10) this._sendNetworkEvents();
     },
 
-    _sendEvents() {
+    async _sendEvents() {
       if (isSending || events.length === 0) return;
       isSending = true;
 
@@ -483,7 +485,12 @@ const VoidrCollector = (function () {
       };
 
       try {
-        navigator.sendBeacon(`${config.collectorUrl}/sessions`, JSON.stringify(payload));
+        await fetch(`${config.collectorUrl}/sessions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        // navigator.sendBeacon(`${config.collectorUrl}/sessions`, JSON.stringify(payload));
       } catch (error) {
         console.error('VoidrCollector: Failed to send events', error);
         events.unshift(...batch);
