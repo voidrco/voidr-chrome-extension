@@ -146,7 +146,7 @@ const VoidrCollector = (function () {
       if (!id) return;
 
       userId = id;
-      localStorage.setItem('voidr_user_id', id);
+      sessionStorage.setItem('voidr_user_id', id);
 
       // Atualizar dados do usuário
       config.user = { ...(config.user || {}), ...traits };
@@ -175,16 +175,16 @@ const VoidrCollector = (function () {
 
     // ======= Métodos Internos =======
     _initUser() {
-      userId = config.user?.id || localStorage.getItem('voidr_user_id');
+      userId = config.user?.id || sessionStorage.getItem('voidr_user_id');
       if (!userId) {
         userId = crypto.randomUUID();
-        localStorage.setItem('voidr_user_id', userId);
+        sessionStorage.setItem('voidr_user_id', userId);
       }
     },
 
     _initSession() {
       sessionId = sessionStorage.getItem('voidr_session_id');
-      const lastActivity = localStorage.getItem('voidr_last_activity');
+      const lastActivity = sessionStorage.getItem('voidr_last_activity');
       const sessionExpired = lastActivity
         ? Date.now() - parseInt(lastActivity) > config.sessionTimeout * 60 * 1000
         : true;
@@ -194,7 +194,7 @@ const VoidrCollector = (function () {
         sessionStorage.setItem('voidr_session_id', sessionId);
       }
 
-      localStorage.setItem('voidr_last_activity', Date.now());
+      sessionStorage.setItem('voidr_last_activity', Date.now());
     },
 
     _startRecording() {
