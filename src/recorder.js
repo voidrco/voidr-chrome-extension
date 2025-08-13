@@ -1,6 +1,8 @@
 import { record } from 'rrweb';
 import { getRecordConsolePlugin } from '@rrweb/rrweb-plugin-console-record';
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 const VoidrCollector = (function () {
   // ======= Configurações Internas =======
   let config = {
@@ -15,6 +17,7 @@ const VoidrCollector = (function () {
     networkCapture: true,
     captureConsole: true,
     user: null,
+    meta: null,
   };
 
   let events = [];
@@ -25,6 +28,7 @@ const VoidrCollector = (function () {
   let stopRecording = null;
   let isSending = false;
   let observer = null;
+  let authToken = null;
 
   // ======= Funções Auxiliares =======
   function generateSelector(el, maxDepth = 6) {
@@ -109,7 +113,7 @@ const VoidrCollector = (function () {
      * @param {boolean} [options.dataMasking] - Configurações de ofuscação
      * @param {number} [options.sessionTimeout] - Tempo de sessão em minutos
      */
-    init(options) {
+    async init(options) {
       // Validação básica
       if (!options || !options.apiKey) {
         throw new Error('VoidrCollector: API Key é obrigatória');
@@ -123,8 +127,41 @@ const VoidrCollector = (function () {
       this._initUser();
       this._initSession();
 
+      // Validar apiKey e obter JWT antes de iniciar a biblioteca
+      try {
+        const response = await fetch(`${config.collectorUrl}/init`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            apiKey: config.apiKey,
+            userId,
+            userTraits: config.user,
+            meta: config.meta,
+            sessionId,
+          }),
+        });
+
+        if (!response.ok) {
+          console.error('VoidrCollector: API Key inválida');
+          return;
+        }
+
+        const data = await response.json().catch(() => ({}));
+        authToken = data.token || null;
+        if (!authToken) {
+          console.error('VoidrCollector: Falha ao obter token de autenticação');
+          return;
+        }
+      } catch (err) {
+        console.error('VoidrCollector: Falha ao validar API Key', err);
+        return;
+      }
+
       // Iniciar gravação
       this._startRecording();
+
+      await sleep(2000);
+      await this._sendEvents();
 
       // Configurar envio periódico
       setInterval(() => {
@@ -487,7 +524,10 @@ const VoidrCollector = (function () {
       try {
         await fetch(`${config.collectorUrl}/sessions`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+          },
           body: JSON.stringify(payload),
         });
         // navigator.sendBeacon(`${config.collectorUrl}/sessions`, JSON.stringify(payload));
@@ -530,6 +570,9 @@ const VoidrCollector = (function () {
         const xhr = new XMLHttpRequest();
         xhr.open('POST', `${config.collectorUrl}/sessions`, false);
         xhr.setRequestHeader('Content-Type', 'application/json');
+        if (authToken) {
+          xhr.setRequestHeader('Authorization', `Bearer ${authToken}`);
+        }
         xhr.send(JSON.stringify(payload));
       }
     },
