@@ -7,6 +7,8 @@ const VoidrCollector = (function () {
   // ======= Configurações Internas =======
   let config = {
     apiKey: null,
+    applicationId: null,
+    environment: null,
     collectorUrl: 'https://collector.voidr.co',
     sessionTimeout: 30, // minutos
     dataMasking: {
@@ -108,6 +110,8 @@ const VoidrCollector = (function () {
      * Inicializa o coletor de eventos
      * @param {Object} options - Configurações de inicialização
      * @param {string} options.apiKey - Chave API obrigatória
+     * @param {string} [options.applicationId] - ID da aplicação (opcional)
+     * @param {string} [options.environment] - Ambiente, ex: "production", "staging" (opcional)
      * @param {Object} [options.user] - Dados do usuário
      * @param {string} [options.collectorUrl] - URL alternativo do coletor
      * @param {boolean} [options.dataMasking] - Configurações de ofuscação
@@ -132,13 +136,25 @@ const VoidrCollector = (function () {
         const response = await fetch(`${config.collectorUrl}/init`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            apiKey: config.apiKey,
-            userId,
-            userTraits: config.user,
-            meta: config.meta,
-            sessionId,
-          }),
+          body: (() => {
+            const initPayload = {
+              apiKey: config.apiKey,
+              userId,
+              userTraits: config.user,
+              meta: config.meta,
+              sessionId,
+            };
+            if (config.applicationId) initPayload.applicationId = config.applicationId;
+            if (config.environment) initPayload.environment = config.environment;
+            // URL inicial da página
+            try {
+              initPayload.initialUrl =
+                typeof window !== 'undefined' && window.location ? window.location.href : null;
+            } catch (_) {
+              initPayload.initialUrl = null;
+            }
+            return JSON.stringify(initPayload);
+          })(),
         });
 
         if (!response.ok) {
