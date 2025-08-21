@@ -588,7 +588,6 @@ const VoidrCollector = (function () {
         };
 
         const scheduleSnapshot = debounce((reason) => {
-          console.log('TOOK FULL SNAPSHOT REASON:', reason);
           record.takeFullSnapshot();
         }, options.debounceMs);
 
