@@ -73,13 +73,11 @@
     initOptions: {
       apiKey: 'f72dfbc0-d648-46fc-bc96-e3a0e5e009ac', // API Key da conta de testes
       user: {
-        id: 'voidr-test-user',
+        id: 'voidr-platform-01',
         email: 'contact@voidr.co',
       },
       collectorUrl: 'http://localhost:3100',
-      meta: {
-        hospital: 'Hospital vera cruz',
-      },
+      meta: {},
       // Add other options here as needed
     },
   };

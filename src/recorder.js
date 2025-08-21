@@ -11,6 +11,7 @@ const VoidrCollector = (function () {
     environment: null,
     collectorUrl: 'https://collector.voidr.co',
     sessionTimeout: 30, // minutos
+    system: false,
     dataMasking: {
       text: false,
       inputs: false,
@@ -31,6 +32,7 @@ const VoidrCollector = (function () {
   let isSending = false;
   let observer = null;
   let authToken = null;
+  let lastHref = null;
 
   // ======= Funções Auxiliares =======
   function generateSelector(el, maxDepth = 6) {
@@ -89,6 +91,14 @@ const VoidrCollector = (function () {
     };
   }
 
+  function debounce(fn, delay) {
+    let timer = null;
+    return function (...args) {
+      clearTimeout(timer);
+      timer = setTimeout(() => fn.apply(this, args), delay);
+    };
+  }
+
   function truncate(text, maxLength) {
     if (typeof text !== 'string') return '';
     return text.length > maxLength ? text.substring(0, maxLength) + '...' : text;
@@ -116,6 +126,7 @@ const VoidrCollector = (function () {
      * @param {string} [options.collectorUrl] - URL alternativo do coletor
      * @param {boolean} [options.dataMasking] - Configurações de ofuscação
      * @param {number} [options.sessionTimeout] - Tempo de sessão em minutos
+     * @param {boolean} [options.system=false] - Flag opcional para indicar execução em contexto de sistema
      */
     async init(options) {
       // Validação básica
@@ -126,6 +137,12 @@ const VoidrCollector = (function () {
       // Mesclar configurações
       config = { ...config, ...options };
 
+      // Exigir user.id vindo do config
+      if (!config.user || !config.user.id) {
+        console.error('VoidrCollector: user.id é obrigatório');
+        return;
+      }
+
       // Inicializar IDs
       sessionStartedAt = Date.now();
       this._initUser();
@@ -133,40 +150,65 @@ const VoidrCollector = (function () {
 
       // Validar apiKey e obter JWT antes de iniciar a biblioteca
       try {
-        const response = await fetch(`${config.collectorUrl}/init`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: (() => {
-            const initPayload = {
-              apiKey: config.apiKey,
-              userId,
-              userTraits: config.user,
-              meta: config.meta,
-              sessionId,
-            };
-            if (config.applicationId) initPayload.applicationId = config.applicationId;
-            if (config.environment) initPayload.environment = config.environment;
-            // URL inicial da página
-            try {
-              initPayload.initialUrl =
-                typeof window !== 'undefined' && window.location ? window.location.href : null;
-            } catch (_) {
-              initPayload.initialUrl = null;
-            }
-            return JSON.stringify(initPayload);
-          })(),
-        });
+        const storedJwt = sessionStorage.getItem('voidr_jwt');
+        const storedSession = sessionStorage.getItem('voidr_session_id');
+        const storedUser = sessionStorage.getItem('voidr_user_id');
 
-        if (!response.ok) {
-          console.error('VoidrCollector: API Key inválida');
-          return;
-        }
+        if (storedJwt && storedSession && storedUser === userId) {
+          authToken = storedJwt;
+        } else {
+          sessionStorage.removeItem('voidr_jwt');
+          sessionStorage.removeItem('voidr_session_id');
+          sessionStorage.removeItem('voidr_user_id');
 
-        const data = await response.json().catch(() => ({}));
-        authToken = data.token || null;
-        if (!authToken) {
-          console.error('VoidrCollector: Falha ao obter token de autenticação');
-          return;
+          const response = await fetch(`${config.collectorUrl}/init`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: (() => {
+              const initPayload = {
+                apiKey: config.apiKey,
+                userId,
+                userTraits: config.user,
+                meta: config.meta,
+                system: Boolean(config.system),
+                sessionId,
+              };
+              if (
+                config.user &&
+                typeof config.user.name === 'string' &&
+                config.user.name.length > 0
+              ) {
+                initPayload.userName = config.user.name;
+              }
+              if (config.applicationId) initPayload.applicationId = config.applicationId;
+              if (config.environment) initPayload.environment = config.environment;
+              // URL inicial da página
+              try {
+                initPayload.initialUrl =
+                  typeof window !== 'undefined' && window.location ? window.location.href : null;
+              } catch (_) {
+                initPayload.initialUrl = null;
+              }
+              return JSON.stringify(initPayload);
+            })(),
+          });
+
+          if (!response.ok) {
+            console.error('VoidrCollector: API Key inválida');
+            return;
+          }
+
+          const data = await response.json().catch(() => ({}));
+          authToken = data.token || null;
+          if (!authToken) {
+            console.error('VoidrCollector: Falha ao obter token de autenticação');
+            return;
+          }
+          // Persistir JWT para reutilização em reinits
+          try {
+            sessionStorage.setItem('voidr_jwt', authToken);
+            sessionStorage.setItem('voidr_user_id', userId);
+          } catch (_) {}
         }
       } catch (err) {
         console.error('VoidrCollector: Falha ao validar API Key', err);
@@ -183,7 +225,7 @@ const VoidrCollector = (function () {
       setInterval(() => {
         this._sendEvents();
         this._sendNetworkEvents();
-      }, 10000);
+      }, 7000);
 
       window.addEventListener('beforeunload', () => this._handleUnload());
     },
@@ -229,10 +271,6 @@ const VoidrCollector = (function () {
     // ======= Métodos Internos =======
     _initUser() {
       userId = config.user?.id || sessionStorage.getItem('voidr_user_id');
-      if (!userId) {
-        userId = crypto.randomUUID();
-        sessionStorage.setItem('voidr_user_id', userId);
-      }
     },
 
     _initSession() {
@@ -271,13 +309,13 @@ const VoidrCollector = (function () {
         maskTextSelector: config.dataMasking.text ? '*' : null,
         maskAllInputs: config.dataMasking.inputs,
         blockSelector: config.dataMasking.blockSelectors?.join(', '),
-        checkoutEveryNms: 60000,
-        checkoutEveryNevents: 500,
+        checkoutEveryNms: 60000, // snapshot completo a cada 60s
+        checkoutEveryNth: 1000, // snapshot completo a cada 1000 eventos
         sampling: {
-          mousemove: 50,
+          mousemove: 100,
           mouseInteraction: true,
           input: 'all',
-          scroll: 150,
+          scroll: 250,
         },
         slimDOMOptions: 'all',
       });
@@ -286,40 +324,133 @@ const VoidrCollector = (function () {
       this._initEventListeners();
       this._initNetworkCapture();
       this._initErrorTracking();
+      // this._initRoutingCapture();
+      // if (config.uiHeuristics?.enabled) {
+      this._initUISnapshotHeuristics();
+      // }
+    },
+
+    _initNetworkCapture() {
+      if (!config.networkCapture) return;
+
+      // 🔥 Fetch interceptado
+      const originalFetch = window.fetch;
+      window.fetch = async function (...args) {
+        const [url, config] = args;
+        let requestUrl = typeof url === 'string' ? url : url.url;
+        if (!requestUrl) {
+          return;
+        }
+
+        if (!requestUrl.startsWith('http')) {
+          requestUrl = `${url.origin}${requestUrl}`;
+        }
+
+        const start = Date.now();
+
+        try {
+          const response = await originalFetch(...args);
+          const cloned = response.clone();
+
+          cloned.text().then((body) => {
+            VoidrCollector._logNetworkEvent({
+              type: 'fetch',
+              url: requestUrl,
+              method: config && config.method ? config.method : 'GET',
+              status: response.status,
+              duration: Date.now() - start,
+              response: truncate(body, 2000),
+              thirdParty: isThirdParty(requestUrl),
+              origin: window.location.origin,
+            });
+          });
+
+          return response;
+        } catch (error) {
+          VoidrCollector._logNetworkEvent({
+            type: 'fetchError',
+            url: requestUrl,
+            error: error.message,
+            thirdParty: isThirdParty(requestUrl),
+            origin: window.location.origin,
+          });
+          throw error;
+        }
+      };
+
+      // 🔥 XHR interceptado
+      const originalXHR = window.XMLHttpRequest;
+
+      function InterceptedXHR() {
+        const xhr = new originalXHR();
+        const open = xhr.open;
+        const send = xhr.send;
+        let method = '';
+        let url = '';
+
+        xhr.open = function (_method, _url) {
+          method = _method;
+          url = _url;
+          return open.apply(this, arguments);
+        };
+
+        xhr.send = function (body) {
+          const start = Date.now();
+
+          this.addEventListener('loadend', () => {
+            VoidrCollector._logNetworkEvent({
+              type: 'xhr',
+              url: url,
+              method: method,
+              status: this.status,
+              duration: Date.now() - start,
+              response: truncate(this.responseText, 2000),
+              thirdParty: isThirdParty(url),
+              origin: window.location.origin,
+            });
+          });
+
+          return send.apply(this, arguments);
+        };
+
+        return xhr;
+      }
+
+      window.XMLHttpRequest = InterceptedXHR;
     },
 
     _initEventListeners() {
       // 🔥 MutationObserver para mudanças no DOM
-      observer = new MutationObserver((mutations) => {
-        mutations.forEach((mutation) => {
-          if (mutation.type === 'childList') {
-            mutation.addedNodes.forEach((node) => {
-              if (node.nodeType === 1) {
-                events.push({
-                  type: 5,
-                  timestamp: Date.now(),
-                  data: {
-                    plugin: 'dom.change',
-                    payload: {
-                      type: 'nodeAdded',
-                      selector: generateSelector(node),
-                      tag: node.tagName,
-                      text: getTextContent(node),
-                    },
-                  },
-                });
-              }
-            });
-          }
-        });
-      });
+      // observer = new MutationObserver((mutations) => {
+      //   mutations.forEach((mutation) => {
+      //     if (mutation.type === 'childList') {
+      //       mutation.addedNodes.forEach((node) => {
+      //         if (node.nodeType === 1) {
+      //           events.push({
+      //             type: 5,
+      //             timestamp: Date.now(),
+      //             data: {
+      //               plugin: 'dom.change',
+      //               payload: {
+      //                 type: 'nodeAdded',
+      //                 selector: generateSelector(node),
+      //                 tag: node.tagName,
+      //                 text: getTextContent(node),
+      //               },
+      //             },
+      //           });
+      //         }
+      //       });
+      //     }
+      //   });
+      // });
 
-      observer.observe(document, {
-        childList: true,
-        subtree: true,
-        attributes: false,
-        characterData: false,
-      });
+      // observer.observe(document, {
+      //   childList: true,
+      //   subtree: true,
+      //   attributes: false,
+      //   characterData: false,
+      // });
 
       // 🔥 Eventos de input e change
       document.addEventListener('input', (e) => {
@@ -402,85 +533,85 @@ const VoidrCollector = (function () {
       window.addEventListener('scroll', scrollHandler);
     },
 
-    _initNetworkCapture() {
-      if (!config.networkCapture) return;
+    _initRoutingCapture() {
+      try {
+        lastHref = typeof window !== 'undefined' && window.location ? window.location.href : null;
 
-      // 🔥 Fetch interceptado
-      const originalFetch = window.fetch;
-      window.fetch = async function (...args) {
-        const [url, config] = args;
-        const requestUrl = typeof url === 'string' ? url : url.url;
-        const start = Date.now();
+        const onRouteChange = (trigger) => {
+          const current = window.location.href;
+          if (!current || current === lastHref) return;
+          const from = lastHref;
+          lastHref = current;
 
-        try {
-          const response = await originalFetch(...args);
-          const cloned = response.clone();
+          // Evento custom do rrweb para indicar troca de rota
+          try {
+            if (typeof record?.addCustomEvent === 'function') {
+              record.addCustomEvent('route', { from, to: current, trigger });
+            }
+          } catch (_) {}
 
-          cloned.text().then((body) => {
-            VoidrCollector._logNetworkEvent({
-              type: 'fetch',
-              url: requestUrl,
-              method: config && config.method ? config.method : 'GET',
-              status: response.status,
-              duration: Date.now() - start,
-              response: truncate(body, 2000),
-              thirdParty: isThirdParty(requestUrl),
-              origin: window.location.origin,
-            });
-          });
-
-          return response;
-        } catch (error) {
-          VoidrCollector._logNetworkEvent({
-            type: 'fetchError',
-            url: requestUrl,
-            error: error.message,
-            thirdParty: isThirdParty(requestUrl),
-            origin: window.location.origin,
-          });
-          throw error;
-        }
-      };
-
-      // 🔥 XHR interceptado
-      const originalXHR = window.XMLHttpRequest;
-
-      function InterceptedXHR() {
-        const xhr = new originalXHR();
-        const open = xhr.open;
-        const send = xhr.send;
-        let method = '';
-        let url = '';
-
-        xhr.open = function (_method, _url) {
-          method = _method;
-          url = _url;
-          return open.apply(this, arguments);
+          // Força um full snapshot para garantir que o player reflita a nova UI
+          try {
+            if (typeof record?.takeFullSnapshot === 'function') {
+              record.takeFullSnapshot();
+            }
+          } catch (_) {}
         };
 
-        xhr.send = function (body) {
-          const start = Date.now();
+        const origPushState = history.pushState;
+        const origReplaceState = history.replaceState;
 
-          this.addEventListener('loadend', () => {
-            VoidrCollector._logNetworkEvent({
-              type: 'xhr',
-              url: url,
-              method: method,
-              status: this.status,
-              duration: Date.now() - start,
-              response: truncate(this.responseText, 2000),
-              thirdParty: isThirdParty(url),
-              origin: window.location.origin,
-            });
-          });
-
-          return send.apply(this, arguments);
+        history.pushState = function () {
+          const result = origPushState.apply(this, arguments);
+          onRouteChange('pushState');
+          return result;
         };
 
-        return xhr;
+        history.replaceState = function () {
+          const result = origReplaceState.apply(this, arguments);
+          onRouteChange('replaceState');
+          return result;
+        };
+
+        window.addEventListener('popstate', () => onRouteChange('popstate'));
+        window.addEventListener('hashchange', () => onRouteChange('hashchange'));
+      } catch (err) {
+        // noop
       }
+    },
 
-      window.XMLHttpRequest = InterceptedXHR;
+    _initUISnapshotHeuristics() {
+      try {
+        const options = {
+          mutationThreshold: config?.uiHeuristics?.mutationThreshold || 50,
+          debounceMs: 400,
+        };
+
+        const scheduleSnapshot = debounce((reason) => {
+          console.log('TOOK FULL SNAPSHOT REASON:', reason);
+          record.takeFullSnapshot();
+        }, options.debounceMs);
+
+        // Heurística 1: grande volume de mutações em curto intervalo
+        const mo = new MutationObserver((mutationList) => {
+          let score = 0;
+          for (const m of mutationList) {
+            score += (m.addedNodes?.length || 0) + (m.removedNodes?.length || 0);
+            if (m.type === 'attributes' || m.type === 'characterData') score += 1;
+          }
+          if (score >= options.mutationThreshold) {
+            scheduleSnapshot('mutationThreshold');
+          }
+        });
+        mo.observe(document, {
+          childList: true,
+          subtree: true,
+          attributes: true,
+          characterData: true,
+        });
+      } catch (_) {
+        // noop
+      }
     },
 
     _initErrorTracking() {
@@ -526,8 +657,11 @@ const VoidrCollector = (function () {
       isSending = true;
 
       const batch = events.splice(0, 100);
+
+      const startedAt = events[0]?.timestamp ?? Date.now();
+      const endedAt = events[events.length - 1]?.timestamp ?? Date.now();
+
       const payload = {
-        apiKey: config.apiKey,
         userId,
         sessionId,
         userTraits: config.user,
@@ -535,10 +669,12 @@ const VoidrCollector = (function () {
         events: batch,
         maskedElements: config.dataMasking.blockSelectors,
         sessionTimeout: config.sessionTimeout,
+        startedAt,
+        endedAt,
       };
 
       try {
-        await fetch(`${config.collectorUrl}/sessions`, {
+        await fetch(`${config.collectorUrl}/sessions/chunk`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -546,9 +682,9 @@ const VoidrCollector = (function () {
           },
           body: JSON.stringify(payload),
         });
-        // navigator.sendBeacon(`${config.collectorUrl}/sessions`, JSON.stringify(payload));
       } catch (error) {
         console.error('VoidrCollector: Failed to send events', error);
+        stopRecording();
         events.unshift(...batch);
       } finally {
         isSending = false;
@@ -584,7 +720,7 @@ const VoidrCollector = (function () {
         };
 
         const xhr = new XMLHttpRequest();
-        xhr.open('POST', `${config.collectorUrl}/sessions`, false);
+        xhr.open('POST', `${config.collectorUrl}/sessions/chunk`, false);
         xhr.setRequestHeader('Content-Type', 'application/json');
         if (authToken) {
           xhr.setRequestHeader('Authorization', `Bearer ${authToken}`);
