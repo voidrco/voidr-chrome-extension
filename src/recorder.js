@@ -336,15 +336,38 @@ const VoidrCollector = (function () {
       // 🔥 Fetch interceptado
       const originalFetch = window.fetch;
       window.fetch = async function (...args) {
-        const [url, config] = args;
+        const [url, requestConfig] = args;
         let requestUrl = typeof url === 'string' ? url : url.url;
         if (!requestUrl) {
           return;
         }
 
         if (!requestUrl.startsWith('http')) {
-          requestUrl = `${url.origin}${requestUrl}`;
+          try {
+            requestUrl = new URL(requestUrl, window.location.origin).toString();
+          } catch (_) {
+            requestUrl = `${window.location.origin}${requestUrl}`;
+          }
         }
+
+        // Normaliza a URL base do collector a partir da configuração do módulo
+        const normalizedCollectorBase =
+          config && typeof config.collectorUrl === 'string'
+            ? config.collectorUrl.replace(/\/+$/, '')
+            : '';
+        const isCollectorRequest = (() => {
+          try {
+            return (
+              requestUrl &&
+              normalizedCollectorBase &&
+              requestUrl.startsWith(normalizedCollectorBase)
+            );
+          } catch (_) {
+            return Boolean(
+              requestUrl && normalizedCollectorBase && requestUrl.includes(normalizedCollectorBase),
+            );
+          }
+        })();
 
         const start = Date.now();
 
@@ -353,27 +376,31 @@ const VoidrCollector = (function () {
           const cloned = response.clone();
 
           cloned.text().then((body) => {
-            VoidrCollector._logNetworkEvent({
-              type: 'fetch',
-              url: requestUrl,
-              method: config && config.method ? config.method : 'GET',
-              status: response.status,
-              duration: Date.now() - start,
-              response: truncate(body, 2000),
-              thirdParty: isThirdParty(requestUrl),
-              origin: window.location.origin,
-            });
+            if (!isCollectorRequest) {
+              VoidrCollector._logNetworkEvent({
+                type: 'fetch',
+                url: requestUrl,
+                method: requestConfig && requestConfig.method ? requestConfig.method : 'GET',
+                status: response.status,
+                duration: Date.now() - start,
+                response: truncate(body, 2000),
+                thirdParty: isThirdParty(requestUrl),
+                origin: window.location.origin,
+              });
+            }
           });
 
           return response;
         } catch (error) {
-          VoidrCollector._logNetworkEvent({
-            type: 'fetchError',
-            url: requestUrl,
-            error: error.message,
-            thirdParty: isThirdParty(requestUrl),
-            origin: window.location.origin,
-          });
+          if (!isCollectorRequest) {
+            VoidrCollector._logNetworkEvent({
+              type: 'fetchError',
+              url: requestUrl,
+              error: error.message,
+              thirdParty: isThirdParty(requestUrl),
+              origin: window.location.origin,
+            });
+          }
           throw error;
         }
       };
@@ -398,16 +425,23 @@ const VoidrCollector = (function () {
           const start = Date.now();
 
           this.addEventListener('loadend', () => {
-            VoidrCollector._logNetworkEvent({
-              type: 'xhr',
-              url: url,
-              method: method,
-              status: this.status,
-              duration: Date.now() - start,
-              response: truncate(this.responseText, 2000),
-              thirdParty: isThirdParty(url),
-              origin: window.location.origin,
-            });
+            const baseCollectorUrl =
+              config && typeof config.collectorUrl === 'string'
+                ? config.collectorUrl.replace(/\/+$/, '')
+                : '';
+            const isCollectorRequest = url && baseCollectorUrl && url.startsWith(baseCollectorUrl);
+            if (!isCollectorRequest) {
+              VoidrCollector._logNetworkEvent({
+                type: 'xhr',
+                url: url,
+                method: method,
+                status: this.status,
+                duration: Date.now() - start,
+                response: truncate(this.responseText, 2000),
+                thirdParty: isThirdParty(url),
+                origin: window.location.origin,
+              });
+            }
           });
 
           return send.apply(this, arguments);
@@ -652,19 +686,19 @@ const VoidrCollector = (function () {
     },
 
     async _sendEvents() {
-      if (isSending || events.length === 0) return;
+      const MIN_BATCH_SIZE = 10;
+      if (isSending || events.length < MIN_BATCH_SIZE) return;
       isSending = true;
 
       const batch = events.splice(0, 100);
 
-      const startedAt = events[0]?.timestamp ?? Date.now();
-      const endedAt = events[events.length - 1]?.timestamp ?? Date.now();
+      const startedAt = batch[0]?.timestamp ?? Date.now();
+      const endedAt = batch[batch.length - 1]?.timestamp ?? Date.now();
 
       const payload = {
         userId,
         sessionId,
         userTraits: config.user,
-        startedAt: sessionStartedAt,
         events: batch,
         maskedElements: config.dataMasking.blockSelectors,
         sessionTimeout: config.sessionTimeout,
@@ -707,6 +741,7 @@ const VoidrCollector = (function () {
 
     _handleUnload() {
       this._sendNetworkEvents();
+      // Respeitar mínimo de eventos antes de enviar
       this._sendEvents();
 
       // Envio síncrono como fallback
