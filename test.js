@@ -62,8 +62,8 @@
     // Add or remove scripts here (first is the recorder)
     scripts: [
       {
-        src: 'http://localhost:5173/dist/recorder.min.js',
-        // src: 'https://cdn.voidr.co/voidr-collector/default/latest/recorder.min.js',
+        // src: 'http://localhost:5173/dist/recorder.min.js',
+        src: 'https://cdn.voidr.co/voidr-collector/default/latest/recorder.min.js',
         id: '__voidr_recorder__',
       },
       // Example: add another script if needed
@@ -73,10 +73,10 @@
     initOptions: {
       apiKey: 'f72dfbc0-d648-46fc-bc96-e3a0e5e009ac', // API Key da conta de testes
       user: {
-        id: 'voidr-platform-01',
+        id: 'voidr-philips-01',
         email: 'contact@voidr.co',
       },
-      collectorUrl: 'http://localhost:3100',
+      // collectorUrl: 'http://localhost:3100',
       meta: {},
       // Add other options here as needed
     },

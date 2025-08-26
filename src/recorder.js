@@ -33,6 +33,8 @@ const VoidrCollector = (function () {
   let observer = null;
   let authToken = null;
   let lastHref = null;
+  let foceStop = false;
+  let eventsInterval = null;
 
   // ======= Funções Auxiliares =======
   function generateSelector(el, maxDepth = 6) {
@@ -222,7 +224,7 @@ const VoidrCollector = (function () {
       await this._sendEvents();
 
       // Configurar envio periódico
-      setInterval(() => {
+      eventsInterval = setInterval(() => {
         this._sendEvents();
         this._sendNetworkEvents();
       }, 7000);
@@ -687,7 +689,7 @@ const VoidrCollector = (function () {
 
     async _sendEvents() {
       const MIN_BATCH_SIZE = 10;
-      if (isSending || events.length < MIN_BATCH_SIZE) return;
+      if (isSending || events.length < MIN_BATCH_SIZE || foceStop) return;
       isSending = true;
 
       const batch = events.splice(0, 100);
@@ -718,6 +720,11 @@ const VoidrCollector = (function () {
       } catch (error) {
         console.error('VoidrCollector: Failed to send events', error);
         stopRecording();
+        foceStop = true;
+        sessionStorage.removeItem('voidr_session_id');
+        sessionStorage.removeItem('voidr_user_id');
+        sessionStorage.removeItem('voidr_jwt');
+        clearInterval(eventsInterval);
         events.unshift(...batch);
       } finally {
         isSending = false;
