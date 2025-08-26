@@ -709,7 +709,7 @@ const VoidrCollector = (function () {
       };
 
       try {
-        await fetch(`${config.collectorUrl}/sessions/chunk`, {
+        const res = await fetch(`${config.collectorUrl}/sessions/chunk`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -717,6 +717,29 @@ const VoidrCollector = (function () {
           },
           body: JSON.stringify(payload),
         });
+
+        if (!res.ok) {
+          throw new Error('VoidrCollector: Failed to send events');
+        }
+
+        if (res.status === 401) {
+          const response = await fetch(`${config.collectorUrl}/refresh-token`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              apiKey: config.apiKey,
+            }),
+          });
+          if (!response.ok) {
+            throw new Error('VoidrCollector: Failed to refresh token');
+          }
+          const data = await response.json().catch(() => ({}));
+          authToken = data.token || null;
+          if (!authToken) {
+            throw new Error('VoidrCollector: Failed to refresh token');
+          }
+          sessionStorage.setItem('voidr_jwt', authToken);
+        }
       } catch (error) {
         console.error('VoidrCollector: Failed to send events', error);
         stopRecording();

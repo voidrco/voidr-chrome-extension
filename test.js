@@ -71,7 +71,7 @@
     ],
     // Options passed to VoidrCollector.init
     initOptions: {
-      apiKey: 'f72dfbc0-d648-46fc-bc96-e3a0e5e009ac', // API Key da conta de testes
+      apiKey: '234db192-f549-4a99-a9f6-b20e54c6f9ba', // API Key da conta de testes
       user: {
         id: 'voidr-philips-01',
         email: 'contact@voidr.co',
