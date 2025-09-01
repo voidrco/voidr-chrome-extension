@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Voidr Testing Assistant - Login</title>
+    <link rel="stylesheet" href="auth.css" />
+    <script src="../assets/lucide-icons.js"></script>
+  </head>
+  <body>
+    <div class="auth-container">
+      <div class="auth-card">
+        <!-- Header com logo -->
+        <div class="auth-header">
+          <div class="logo-container">
+            <img src="../assets/logo-light.svg" alt="Voidr Logo" class="logo-icon" />
+          </div>
+        </div>
+
+        <!-- Status da conexão -->
+        <div class="connection-status" id="connection-status">
+          <div class="status-indicator checking" id="status-indicator"></div>
+          <span id="status-text">Checking connection...</span>
+        </div>
+
+        <!-- Conteúdo principal -->
+        <div class="auth-content">
+          <!-- Estado: Verificando -->
+          <div class="auth-state" id="checking-state">
+            <div class="loading-spinner"></div>
+            <h2>Connecting to Voidr platform</h2>
+            <p>Checking if you are already authenticated...</p>
+          </div>
+
+          <!-- Estado: Não autenticado -->
+          <div class="auth-state hidden" id="login-state">
+            <h2>Please login to continue</h2>
+            <p>To use the Testing Assistant, you need to be logged in to the Voidr platform.</p>
+
+            <div class="auth-actions">
+              <button id="open-platform-btn" class="btn-primary">
+                <span class="icon-external-link"></span>
+                Open Voidr Platform
+              </button>
+
+              <button id="retry-auth-btn" class="btn-secondary">
+                <span class="icon-refresh-cw"></span>
+                Check Again
+              </button>
+            </div>
+
+            <div class="auth-help">
+              <details>
+                <summary>Need help?</summary>
+                <div class="help-content">
+                  <p><strong>How to login:</strong></p>
+                  <ol>
+                    <li>Click "Open Voidr Platform"</li>
+                    <li>Login with your credentials</li>
+                    <li>Return to this extension</li>
+                    <li>Click "Check Again"</li>
+                  </ol>
+                  <p>
+                    <strong>Still having issues?</strong><br />
+                    Make sure you are logged in at
+                    <a href="http://localhost:3030" target="_blank" rel="noopener"
+                      >localhost:3030</a
+                    >
+                  </p>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <!-- Estado: Autenticado -->
+          <div class="auth-state hidden" id="authenticated-state">
+            <div class="success-icon">
+              <span class="icon-check-circle-2"></span>
+            </div>
+            <h2>Successfully connected!</h2>
+            <p>You are authenticated on the Voidr platform.</p>
+
+            <div class="user-info" id="user-info">
+              <div class="user-avatar" id="user-avatar">
+                <span class="icon-user"></span>
+              </div>
+              <div class="user-details">
+                <span class="user-name" id="user-name">Loading...</span>
+                <span class="user-email" id="user-email"></span>
+              </div>
+            </div>
+
+            <div class="auth-actions">
+              <button id="continue-btn" class="btn-primary">
+                <span class="icon-chevron-right"></span>
+                Continue to Extension
+              </button>
+
+              <button id="logout-btn" class="btn-secondary">
+                <span class="icon-log-out"></span>
+                Logout
+              </button>
+            </div>
+          </div>
+
+          <!-- Estado: Erro -->
+          <div class="auth-state hidden" id="error-state">
+            <div class="error-icon">
+              <span class="icon-alert-circle"></span>
+            </div>
+            <h2>Connection error</h2>
+            <p id="error-message">Could not connect to the Voidr platform.</p>
+
+            <div class="auth-actions">
+              <button id="retry-connection-btn" class="btn-primary">
+                <span class="icon-refresh-cw"></span>
+                Try Again
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="auth-footer">
+          <span class="version">v1.0.0</span>
+          <a href="https://voidr.com" target="_blank" rel="noopener" class="footer-link">
+            <span class="icon-external-link" style="width: 12px; height: 12px"></span>
+            voidr.com
+          </a>
+        </div>
+      </div>
+    </div>
+
+    <script src="auth.js"></script>
+  </body>
+</html>
