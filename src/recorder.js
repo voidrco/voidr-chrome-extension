@@ -332,6 +332,14 @@ const VoidrCollector = (function () {
       console.log('VoidrCollector: Session ended');
     },
 
+    /**
+     * Retorna o ID da sessão atual
+     * @returns {string|null} O ID da sessão atual ou null se não inicializado
+     */
+    getSessionId() {
+      return sessionId;
+    },
+
     // ======= Métodos Internos =======
     _initUser() {
       userId = config.user?.id || sessionStorage.getItem('voidr_user_id');
