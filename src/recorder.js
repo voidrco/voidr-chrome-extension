@@ -35,6 +35,8 @@ const VoidrCollector = (function () {
   let lastHref = null;
   let foceStop = false;
   let eventsInterval = null;
+  let originalFetch = null;
+  let originalXHR = null;
 
   // ======= Funções Auxiliares =======
   function generateSelector(el, maxDepth = 6) {
@@ -270,6 +272,66 @@ const VoidrCollector = (function () {
       config = { ...config, ...updates };
     },
 
+    /**
+     * Força o fim da sessão atual
+     * Para a gravação, limpa intervalos, remove dados do sessionStorage
+     * e restaura interceptadores originais
+     */
+    endSession() {
+      // Parar gravação do rrweb
+      if (stopRecording && typeof stopRecording === 'function') {
+        stopRecording();
+        stopRecording = null;
+      }
+
+      // Limpar interval principal
+      if (eventsInterval) {
+        clearInterval(eventsInterval);
+        eventsInterval = null;
+      }
+
+      // Parar MutationObserver se ativo
+      if (observer && typeof observer.disconnect === 'function') {
+        observer.disconnect();
+        observer = null;
+      }
+
+      // Restaurar fetch original
+      if (originalFetch && typeof window !== 'undefined') {
+        window.fetch = originalFetch;
+        originalFetch = null;
+      }
+
+      // Restaurar XMLHttpRequest original
+      if (originalXHR && typeof window !== 'undefined') {
+        window.XMLHttpRequest = originalXHR;
+        originalXHR = null;
+      }
+
+      // Limpar sessionStorage
+      try {
+        sessionStorage.removeItem('voidr_jwt');
+        sessionStorage.removeItem('voidr_session_id');
+        sessionStorage.removeItem('voidr_user_id');
+        sessionStorage.removeItem('voidr_last_activity');
+      } catch (e) {
+        // Ignora erros de sessionStorage
+      }
+
+      // Reset das variáveis de estado
+      events = [];
+      networkBuffer = [];
+      sessionStartedAt = null;
+      userId = null;
+      sessionId = null;
+      isSending = false;
+      authToken = null;
+      lastHref = null;
+      foceStop = true;
+
+      console.log('VoidrCollector: Session ended');
+    },
+
     // ======= Métodos Internos =======
     _initUser() {
       userId = config.user?.id || sessionStorage.getItem('voidr_user_id');
@@ -336,7 +398,7 @@ const VoidrCollector = (function () {
       if (!config.networkCapture) return;
 
       // 🔥 Fetch interceptado
-      const originalFetch = window.fetch;
+      originalFetch = window.fetch;
       window.fetch = async function (...args) {
         const [url, requestConfig] = args;
         let requestUrl = typeof url === 'string' ? url : url.url;
@@ -408,7 +470,7 @@ const VoidrCollector = (function () {
       };
 
       // 🔥 XHR interceptado
-      const originalXHR = window.XMLHttpRequest;
+      originalXHR = window.XMLHttpRequest;
 
       function InterceptedXHR() {
         const xhr = new originalXHR();
