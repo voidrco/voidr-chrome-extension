@@ -1,5 +1,5 @@
 /* Voidr Extension Auth Styles - Matching Platform Design */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&display=swap');
 
 :root {
   --background: #050607;
@@ -35,7 +35,7 @@
 }
 
 body {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   font-weight: 300;
   background-color: var(--background);
   color: var(--text-primary);
@@ -85,7 +85,7 @@ body {
 }
 
 .logo-text h1 {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   font-weight: 500;
   font-size: 28px;
   letter-spacing: -0.02em;
@@ -169,7 +169,7 @@ body {
 }
 
 .auth-state h2 {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   font-size: 24px;
   font-weight: 500;
   letter-spacing: -0.02em;
@@ -280,7 +280,7 @@ body {
   cursor: pointer;
   transition: all 0.2s ease;
   text-decoration: none;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
 }
 
 .btn-primary {

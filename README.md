@@ -181,3 +181,32 @@ The extension requests the following permissions:
 - Theme: dark by default
 - Typography: system fonts (-apple-system, etc.)
 - Components: consistent with Voidr platform
+
+## 📦 Production Build
+
+Use these steps to produce a ZIP ready for the Chrome Web Store.
+
+1) Prepare assets
+- Ensure `icons/icon16.png`, `icons/icon32.png`, `icons/icon48.png`, `icons/icon128.png` exist
+- Bump `version` in `manifest.json` and point API URLs to production
+
+2) Optional minification
+- You may minify JS/CSS using `uglify-js` and `clean-css-cli` (see `build.md`)
+
+3) Create the ZIP
+
+```bash
+cd /Users/mjnr/projects/voidr-chrome-extension
+zip -r voidr-extension.zip . -x "*.md" "*.git*" "node_modules/*"
+```
+
+4) Local QA
+- Go to `chrome://extensions/`
+- Enable Developer Mode
+- Click "Load unpacked" (dev) or "Load packed" (select `voidr-extension.zip`)
+
+5) Publish
+- Upload `voidr-extension.zip` to the Chrome Web Store Developer Console
+- Add screenshots and description; submit for review
+
+See `build.md` for the full production guide and checklist.

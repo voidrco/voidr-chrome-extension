@@ -1,5 +1,117 @@
+/* Recording overlay */
+.voidr-rec-border {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  box-shadow: inset 0 0 0 4px #3b82f6;
+  z-index: 2147483646;
+}
+.voidr-rec-border--defect { box-shadow: inset 0 0 0 4px #ef4444; }
+.voidr-rec-countdown {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 128px;
+  height: 128px;
+  border-radius: 9999px;
+  background: #111827;
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 72px;
+  font-weight: 800;
+  border: 1px solid rgba(255,255,255,0.12);
+  box-shadow: 0 12px 38px rgba(0,0,0,0.5);
+  z-index: 2147483647;
+}
+.voidr-rec-panel {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 20px;
+  background: linear-gradient(180deg, #0b0f14 0%, #070a0f 100%);
+  border: 1px solid rgba(255,255,255,0.14);
+  color: #e5e7eb;
+  padding: 12px 16px;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  z-index: 2147483647;
+  backdrop-filter: blur(10px) saturate(135%);
+  box-shadow: 0 18px 48px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.08);
+}
+.voidr-rec-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 30% 30%, #1f2937 0%, #0b0f14 70%);
+  border: 1px solid rgba(255,255,255,0.12);
+}
+.voidr-rec-title {
+  font-size: 13px;
+  color: #cbd5e1;
+  letter-spacing: .2px;
+}
+.voidr-rec-actions { display: flex; align-items: center; gap: 8px; margin-left: 8px; }
+.voidr-rec-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.02)) !important;
+  color: #ffffff !important;
+  border: 1px solid rgba(255,255,255,0.16) !important;
+  padding: 6px 10px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background .15s ease, transform .1s ease, box-shadow .15s ease;
+}
+.voidr-rec-btn:hover { background: rgba(255,255,255,0.08) !important; box-shadow: 0 4px 18px rgba(0,0,0,.35); }
+.voidr-rec-btn:active { transform: translateY(1px); }
+.voidr-rec-btn svg { width: 14px; height: 14px; stroke: currentColor !important; fill: none !important; }
+.voidr-rec-btn.danger { border-color: rgba(239,68,68,0.6) !important; color: #ffffff !important; background: rgba(239,68,68,0.08) !important; }
+.voidr-rec-btn.danger:hover { background: rgba(239,68,68,0.14) !important; }
+
+/* Ensure inner SVG primitives inherit button color for consistent white icons */
+.voidr-rec-btn svg path,
+.voidr-rec-btn svg polyline,
+.voidr-rec-btn svg line,
+.voidr-rec-btn svg rect,
+.voidr-rec-btn svg circle { stroke: currentColor !important; fill: none !important; }
+/* Floating refocus button */
+.voidr-refocus-btn {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: #000;
+  color: #fff;
+  border: 1px solid rgba(255,255,255,0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.4);
+  cursor: pointer;
+  z-index: 2147483647;
+  transition: transform .12s ease, box-shadow .12s ease, opacity .2s ease;
+}
+.voidr-refocus-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 14px 34px rgba(0,0,0,0.5);
+}
+.voidr-refocus-btn svg {
+  width: 26px;
+  height: 26px;
+}
 /* Voidr Extension Content Styles - Matching Platform Design */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&display=swap');
 
 :root {
   --background: #050607;
@@ -14,7 +126,7 @@
 /* Reset e configurações base */
 #voidr-testing-widget * {
   box-sizing: border-box;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   font-weight: 300;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -147,7 +259,7 @@
   gap: 8px;
   transition: all 0.2s ease;
   border-bottom: 2px solid transparent;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
 }
 
 .voidr-tab-button:hover {
@@ -205,7 +317,7 @@
   border-radius: 8px;
   color: var(--text-primary);
   font-size: 14px;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   font-weight: 400;
   transition: border-color 0.2s ease;
 }
@@ -245,7 +357,7 @@
   transition: all 0.2s ease;
   margin-right: 8px;
   margin-bottom: 8px;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
 }
 
 .voidr-button-primary {
@@ -768,3 +880,43 @@
   padding: 20px;
   overflow-y: auto;
 }
+
+/* Defects list */
+.voidr-defects-list { display: flex; flex-direction: column; gap: 8px; }
+.voidr-defect-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--background-elevated);
+}
+.voidr-defect-main { display: flex; flex-direction: column; gap: 6px; }
+.voidr-defect-title { color: var(--text-primary); font-size: 14px; font-weight: 500; }
+.voidr-defect-meta { display: flex; align-items: center; gap: 8px; color: var(--text-secondary); font-size: 12px; }
+.voidr-slug { opacity: 0.7; }
+
+/* Status/Severity/Priority badges */
+.voidr-status-badge,
+.voidr-severity-badge,
+.voidr-priority-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .2px;
+  border: 1px solid var(--border-color);
+}
+.voidr-status-open { background: rgba(34,197,94,0.08); color: #22c55e; border-color: rgba(34,197,94,0.3); }
+.voidr-status-in_progress { background: rgba(59,130,246,0.08); color: #3b82f6; border-color: rgba(59,130,246,0.3); }
+.voidr-status-resolved { background: rgba(245,158,11,0.08); color: #f59e0b; border-color: rgba(245,158,11,0.3); }
+.voidr-status-closed { background: rgba(148,163,184,0.16); color: #94a3b8; border-color: rgba(148,163,184,0.35); }
+.voidr-severity-badge.voidr-severity-critical { background: #ef4444; color: #fff; border-color: #ef4444; }
+.voidr-severity-badge.voidr-severity-high { background: #f97316; color: #fff; border-color: #f97316; }
+.voidr-severity-badge.voidr-severity-medium { background: #eab308; color: #111; border-color: #eab308; }
+.voidr-severity-badge.voidr-severity-low { background: #22c55e; color: #fff; border-color: #22c55e; }
+.voidr-priority-badge { background: rgba(255,255,255,0.06); color: var(--text-primary); }

@@ -1,4 +1,4 @@
-// Content script para injeção do widget Voidr nas páginas
+// Content script to inject the Voidr widget into pages
 
 console.log('Voidr Testing Assistant - Content script carregado');
 
@@ -7,24 +7,58 @@ let voidrWidget = null;
 let isWidgetVisible = false;
 let voidrSettings = {};
 let testPlanningContext = null;
+let defectsContext = { items: [], loading: false, page: 1, limit: 20, hasMore: false, filters: {} };
+let lastCapturedSessionId = null;
+let newDefectDraft = { attachments: [], sessionId: null };
 
-// Load test planning service
-const script = document.createElement('script');
-script.src = chrome.runtime.getURL('services/testPlanningService.js');
-document.head.appendChild(script);
+// Load services into page context
+const tpScript = document.createElement('script');
+tpScript.src = chrome.runtime.getURL('services/testPlanningService.js');
+document.head.appendChild(tpScript);
+const dfScript = document.createElement('script');
+dfScript.src = chrome.runtime.getURL('services/defectsService.js');
+document.head.appendChild(dfScript);
+const storageScript = document.createElement('script');
+storageScript.src = chrome.runtime.getURL('services/privateStorageService.js');
+document.head.appendChild(storageScript);
 
-// Inicialização do content script
+// Ensure global font for any inline elements we create
+try {
+  const fontStyle = document.createElement('style');
+  fontStyle.textContent = `
+    .voidr-rec-panel, .voidr-rec-panel *, .voidr-rec-countdown { font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, system-ui, sans-serif !important; }
+    #voidr-testing-widget, #voidr-testing-widget * { font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, system-ui, sans-serif !important; }
+  `;
+  document.head.appendChild(fontStyle);
+} catch (_) {}
+
+// Content script initialization
 async function initVoidrExtension() {
   try {
     console.log('Initializing Voidr Extension...');
 
-    // Verifica autenticação primeiro
+    // Always ensure the refocus button is present, independent of auth
+    createRefocusButton();
+    ensureRefocusButtonPresent();
+    try {
+      // Reinsert defensively on navigation/visibility changes
+      if (!window.__voidr_refocus_check__) {
+        window.__voidr_refocus_check__ = setInterval(() => {
+          try { ensureRefocusButtonPresent(); } catch (_) {}
+        }, 3000);
+      }
+      ['visibilitychange', 'pageshow', 'focus', 'popstate', 'hashchange'].forEach((evt) => {
+        try { window.addEventListener(evt, ensureRefocusButtonPresent, { passive: true }); } catch (_) {}
+      });
+    } catch (_) {}
+
+    // Check authentication first
     const authStatus = await getAuthStatus();
     console.log('Content script auth status:', authStatus);
 
     if (!authStatus.isAuthenticated) {
-      console.log('User not authenticated, widget not loaded');
-      return;
+      console.log('User not authenticated yet – refocus button is available to open popup');
+      // Keep the button visible; do not return early to allow focus/open
     }
 
     if (!authStatus.token) {
@@ -34,19 +68,29 @@ async function initVoidrExtension() {
 
     console.log('JWT token available, proceeding with widget creation');
 
-    // Carrega configurações
+    // Load settings
     voidrSettings = await getSettings();
 
-    // Inicializa test planning context
+    // Inicializa test planning context (force fresh on each init)
+    try {
+      // wait service and clear cache to force fresh
+      let tries = 0; while (!window.testPlanningService && tries < 30) { await new Promise(r=>setTimeout(r,100)); tries++; }
+      if (window.testPlanningService && typeof window.testPlanningService.clearCache === 'function') {
+        window.testPlanningService.clearCache();
+      }
+    } catch (_) {}
     await initializeTestPlanningContext();
 
-    // Cria o widget se habilitado
-    if (voidrSettings.widgetEnabled !== false) {
-      createVoidrWidget();
-    }
+    // Remove old floating widget and keep only the refocus button
+    try {
+      const oldWidget = document.getElementById('voidr-testing-widget');
+      if (oldWidget) oldWidget.remove();
+      const oldFloat = document.getElementById('voidr-floating-btn');
+      if (oldFloat && oldFloat.parentElement) oldFloat.parentElement.remove();
+    } catch (_) {}
 
-    // Adiciona listeners para eventos da página
-    setupPageListeners();
+    // Create floating button to refocus/open the popup window
+    createRefocusButton();
 
     console.log('Voidr Extension initialized successfully for:', authStatus.user?.email);
   } catch (error) {
@@ -54,7 +98,7 @@ async function initVoidrExtension() {
   }
 }
 
-// Busca configurações do storage
+// Fetch settings from storage
 function getSettings() {
   return new Promise((resolve) => {
     chrome.runtime.sendMessage({ action: 'getSettings' }, (response) => {
@@ -63,7 +107,7 @@ function getSettings() {
   });
 }
 
-// Busca status de autenticação
+// Fetch authentication status
 function getAuthStatus() {
   return new Promise((resolve) => {
     chrome.runtime.sendMessage({ action: 'getAuthStatus' }, (response) => {
@@ -156,8 +200,7 @@ function createVoidrWidget() {
   // Adiciona event listeners
   setupWidgetListeners();
 
-  // Mostra tela de boas-vindas
-  showWelcomeScreen();
+  // Não usamos mais o widget embutido na página
 }
 
 // Configura listeners do widget
@@ -186,12 +229,12 @@ function setupWidgetListeners() {
   });
 }
 
-// Configura listeners da página
+// Setup page listeners
 function setupPageListeners() {
-  // Listener para detectar mudanças na página
+  // Listener to detect changes in the page
   const observer = new MutationObserver((mutations) => {
-    // Aqui podemos implementar lógica para detectar mudanças relevantes
-    console.log('Mudanças detectadas na página:', mutations.length);
+    // Implement logic to detect relevant changes here
+    console.log('Detected changes in page:', mutations.length);
   });
 
   observer.observe(document.body, {
@@ -199,6 +242,194 @@ function setupPageListeners() {
     subtree: true,
     attributes: true
   });
+}
+
+// New: Create floating refocus button only
+function createRefocusButton() {
+  try {
+    console.log('[Voidr] Creating refocus button (shadow host)');
+    // Remove legacy instances
+    const oldHost = document.getElementById('voidr-refocus-host');
+    if (oldHost) oldHost.remove();
+
+    // Create host positioned at bottom-right with exact z-index requirement
+    const host = document.createElement('div');
+    host.id = 'voidr-refocus-host';
+    host.style.position = 'fixed';
+    host.style.right = '16px';
+    host.style.bottom = '16px';
+    host.style.zIndex = '1000000';
+    host.style.width = '56px';
+    host.style.height = '56px';
+    host.style.pointerEvents = 'auto';
+    document.documentElement.appendChild(host);
+
+    // Attach shadow root to isolate from page CSS
+    const shadow = host.attachShadow({ mode: 'open' });
+    const style = document.createElement('style');
+    style.textContent = `
+      :host { all: initial; }
+      .btn { 
+        all: initial; 
+        display: inline-flex; align-items: center; justify-content: center;
+        width: 56px; height: 56px; border-radius: 50%; background: #000; color: #fff; 
+        border: 1px solid rgba(255,255,255,0.18); cursor: pointer; 
+        box-shadow: 0 10px 30px rgba(0,0,0,0.45);
+      }
+      .btn:hover { box-shadow: 0 14px 36px rgba(0,0,0,0.55); }
+      svg { width: 26px; height: 26px; display:block; }
+    `;
+    const btn = document.createElement('button');
+    btn.className = 'btn';
+    btn.title = 'Open Voidr Assistant';
+    btn.innerHTML = `
+      <svg viewBox="0 0 4521 4521" xmlns="http://www.w3.org/2000/svg" fill="white" aria-hidden="true">
+        <path fill-rule="evenodd" clip-rule="evenodd" d="M2260.5 4521C3508.94 4521 4521 3508.94 4521 2260.49C4521 1012.06 3508.94 0 2260.5 0C1012.06 0 0 1012.06 0 2260.49C0 3508.94 1012.06 4521 2260.5 4521ZM3334.24 2024.28C3334.24 2154.74 3228.47 2260.49 3098.02 2260.49H2504.44C2373.99 2260.49 2268.22 2366.26 2268.22 2496.72V3098.01C2268.22 3228.48 2162.46 3334.24 2032.01 3334.24H1422.98C1292.52 3334.24 1186.76 3228.48 1186.76 3098.01V2496.72C1186.76 2366.26 1292.52 2260.49 1422.98 2260.49H2016.56C2147.01 2260.49 2252.78 2154.74 2252.78 2024.28V1422.99C2252.78 1292.52 2358.53 1186.76 2488.99 1186.76H3098.02C3228.47 1186.76 3334.24 1292.52 3334.24 1422.99V2024.28Z"/>
+      </svg>
+    `;
+    shadow.appendChild(style);
+    shadow.appendChild(btn);
+
+    // Click handler
+    btn.addEventListener('click', () => {
+      try {
+        const rect = host.getBoundingClientRect();
+        const left = Math.round(rect.left + window.screenX - (472 - rect.width));
+        const top = Math.round(rect.top + window.screenY - 625);
+        console.log('[Voidr] Refocus button clicked, requesting popup at', { left, top });
+        chrome.runtime.sendMessage(
+          {
+            action: 'focusOrOpenPopup',
+            position: { left, top }
+          },
+          () => {}
+        );
+      } catch (e) {}
+    });
+  } catch (e) {}
+}
+
+// Ensure the refocus button exists; if missing, recreate it
+function ensureRefocusButtonPresent() {
+  try {
+    const host = document.getElementById('voidr-refocus-host');
+    if (!host) {
+      createRefocusButton();
+    }
+  } catch (_) {}
+}
+
+// Session recording overlay + collector
+async function startVoidrSessionRecording(testCaseName, options = {}) {
+  try {
+    // Remove existing overlays
+    document.querySelectorAll('.voidr-rec-border, .voidr-rec-countdown, .voidr-rec-panel').forEach((n) => n.remove());
+
+    // Countdown 3..2..1
+    const countdown = document.createElement('div');
+    countdown.className = 'voidr-rec-countdown';
+    document.documentElement.appendChild(countdown);
+    const border = document.createElement('div');
+    border.className = 'voidr-rec-border' + (options && options.mode === 'defect' ? ' voidr-rec-border--defect' : '');
+    document.documentElement.appendChild(border);
+
+    let value = 3;
+    countdown.textContent = String(value);
+    await new Promise((resolve) => {
+      const timer = setInterval(() => {
+        value -= 1;
+        if (value <= 0) {
+          clearInterval(timer);
+          resolve();
+        } else {
+          countdown.textContent = String(value);
+        }
+      }, 1000);
+    });
+    countdown.remove();
+
+    // Panel with controls (render first to guarantee visibility)
+    const panel = document.createElement('div');
+    panel.className = 'voidr-rec-panel';
+    panel.style.cssText = '';
+    panel.innerHTML = `
+      <div class="voidr-rec-icon">
+        <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" fill="#ef4444"><circle cx="12" cy="12" r="6" /></svg>
+      </div>
+      <div class="voidr-rec-title">Recording session for &quot;${escapeHtml(testCaseName)}&quot;</div>
+      <div class="voidr-rec-actions">
+        <button class="voidr-rec-btn" id="voidr-rec-rollback">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <polyline points="1 4 1 10 7 10"></polyline>
+            <path d="M3.51 15A9 9 0 1 0 7 4.6"></path>
+          </svg>
+          Rollback
+        </button>
+        <button class="voidr-rec-btn danger" id="voidr-rec-stop">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="6" y="6" width="12" height="12" rx="2" ry="2"></rect>
+          </svg>
+          Stop
+        </button>
+      </div>
+    `;
+    document.documentElement.appendChild(panel);
+
+    // Request background to inject official collector in MAIN world (CSP-safe) and init
+    try {
+      // Use dynamic apiKey from customer-configs
+      makeAuthenticatedRequest('/customer-configs', 'GET')
+        .then((cfg) => {
+          const cd = cfg && (cfg.data || cfg);
+          const apiKey = cd?.apiKey || cd?.data?.apiKey;
+          chrome.runtime.sendMessage({
+            action: 'voidr:injectCollectorAndInit',
+            initOptions: {
+              user: { id: 'voidr-defect-assistant' },
+              apiKey: apiKey,
+              system: true,
+              url: window.location.href,
+              meta: { testCase: testCaseName, mode: options && options.mode ? options.mode : 'test-case' }
+            }
+          }, () => {});
+        })
+        .catch(() => {
+          chrome.runtime.sendMessage({
+            action: 'voidr:injectCollectorAndInit',
+            initOptions: {
+              user: { id: 'voidr-defect-assistant' },
+              apiKey: undefined,
+              system: true,
+              url: window.location.href,
+              meta: { testCase: testCaseName, mode: options && options.mode ? options.mode : 'test-case' }
+            }
+          }, () => {});
+        });
+    } catch (_) {}
+
+    // Handlers
+    document.getElementById('voidr-rec-rollback')?.addEventListener('click', () => {
+      // Restart without removing collector (keeps running)
+      startVoidrSessionRecording(testCaseName);
+    });
+    document.getElementById('voidr-rec-stop')?.addEventListener('click', () => {
+      border.remove();
+      panel.remove();
+      document.querySelectorAll('.voidr-rec-countdown').forEach((n) => n.remove());
+      try {
+        // Inform background to read sessionId and broadcast
+        chrome.runtime.sendMessage({ action: 'voidr:sessionStopped' });
+      } catch (_) {}
+    });
+  } catch (e) {
+    console.error('Voidr session recording error:', e);
+  }
+}
+
+// Deprecated: collector injection handled by background in MAIN world to satisfy CSP
+
+function escapeHtml(str) {
+  try { return str.replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); } catch (_){ return str; }
 }
 
 // Funções do widget
@@ -276,8 +507,8 @@ function showWelcomeScreen() {
               </svg>
             </div>
             <div class="voidr-action-content">
-              <h4>Report Defects</h4>
-              <p>Report bugs and issues found on this page</p>
+              <h4>Analyze Defects</h4>
+              <p>List and report defects on this page</p>
             </div>
             <div class="voidr-action-arrow">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -393,58 +624,19 @@ function showBugReportView() {
           </svg>
           Back
         </button>
-        <h3>Report Defects</h3>
+        <h3>Analyze Defects</h3>
       </div>
-      <div class="voidr-view-content">
-        <div class="voidr-form-group">
-          <label>Bug title:</label>
-          <input type="text" id="bug-title" placeholder="Briefly describe the problem...">
-        </div>
-        <div class="voidr-form-group">
-          <label>Severity:</label>
-          <select id="bug-severity">
-            <option value="low">Low</option>
-            <option value="medium">Medium</option>
-            <option value="high">High</option>
-            <option value="critical">Critical</option>
-          </select>
-        </div>
-        <div class="voidr-form-group">
-          <label>Description:</label>
-          <textarea id="bug-description" placeholder="Describe the problem in detail..."></textarea>
-        </div>
-        <div class="voidr-form-group">
-          <label>Steps to reproduce:</label>
-          <textarea id="bug-steps" placeholder="1. Go to the page...&#10;2. Click on...&#10;3. Notice that..."></textarea>
-        </div>
-        <div class="voidr-form-actions">
-          <button onclick="captureScreenshot()" class="voidr-button-secondary">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
-              <circle cx="12" cy="13" r="4"/>
-            </svg>
-            Capture Screenshot
-          </button>
-          <button onclick="reportBug()" class="voidr-button-primary">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M8 2v4m8-4v4m-6 4h4m-4 4h4M8 8H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-2"/>
-              <rect x="8" y="6" width="8" height="4" rx="1"/>
-            </svg>
-            Report Bug
-          </button>
-        </div>
+      <div class="voidr-view-content" id="defects-content">
+        <!-- Populated by updateDefectsContent() -->
       </div>
     </div>
   `;
+
+  updateDefectsContent();
 }
 
 // Funções de funcionalidade
-function startElementSelection() {
-  console.log('Iniciando seleção de elemento...');
-  // TODO: Implementar seleção de elementos na página
-  alert('Element selection functionality will be implemented in the next iteration');
-}
-
+ 
 // Funções antigas removidas - agora usamos o sistema de navegação interno
 
 function captureScreenshot() {
@@ -456,52 +648,289 @@ function captureScreenshot() {
   });
 }
 
-async function reportBug() {
-  const title = document.getElementById('bug-title').value;
-  const severity = document.getElementById('bug-severity').value;
-  const description = document.getElementById('bug-description').value;
-  const steps = document.getElementById('bug-steps').value;
+// Defects view helpers and handlers
+async function updateDefectsContent() {
+  const container = document.getElementById('defects-content');
+  if (!container) return;
 
-  if (!title.trim() || !description.trim()) {
-    alert('Please fill in at least the title and description of the bug.');
-    return;
-  }
+  const appId = testPlanningContext?.application?.id || testPlanningContext?.application?._id || null;
+  const filters = { page: defectsContext.page, limit: defectsContext.limit, sortBy: 'createdAt', sortDir: 'desc' };
+  if (appId) filters.applicationId = appId;
 
-  console.log('Reportando bug:', { title, severity, description, steps });
+  container.innerHTML = `
+    <div class="voidr-app-context">
+      <div class="voidr-app-info">
+        <h4>${testPlanningContext?.application?.name || 'Application'}</h4>
+        <p>${testPlanningContext?.application?.environment?.name || ''}</p>
+      </div>
+      <div style="display:flex; gap:8px;">
+        <button class="voidr-button-secondary voidr-small" onclick="refreshDefectsList()">Refresh</button>
+        <button class="voidr-button-primary voidr-small" onclick="showNewDefectForm()">Report Defect</button>
+      </div>
+    </div>
+    <div id="defects-list">
+      <div class="voidr-loading-state"><div class="voidr-loading-spinner"></div><p>Loading defects...</p></div>
+    </div>
+  `;
 
   try {
-    // Faz requisição autenticada para criar defect
-    const response = await makeAuthenticatedRequest('/defects', 'POST', {
-      title: title,
-      description: description,
-      severity: severity,
-      priority: 'p2', // Padrão
-      status: 'open',
-      reproducibility: 'always', // Padrão
-      platform: {
-        os: navigator.platform,
-        browser: navigator.userAgent.split(' ').pop(),
-        url: window.location.href
-      },
-      attachments: [], // TODO: Implementar anexos
-      sessions: [], // TODO: Implementar sessões
-      relations: []
-    });
-
-    if (response.success) {
-      alert('Bug reported successfully!');
-      // Limpa campos
-      document.getElementById('bug-title').value = '';
-      document.getElementById('bug-description').value = '';
-      document.getElementById('bug-steps').value = '';
-    } else {
-      alert('Error reporting bug: ' + (response.error || 'Unknown error'));
-    }
-  } catch (error) {
-    console.error('Erro ao reportar bug:', error);
-    alert('Error reporting bug. Check your connection.');
+    let tries = 0;
+    while (!window.defectsService && tries < 30) { await new Promise((r) => setTimeout(r, 100)); tries += 1; }
+    if (!window.defectsService) throw new Error('Defects service not available');
+    const res = await window.defectsService.listDefects(filters);
+    defectsContext.items = res.items || [];
+    defectsContext.page = res.page || 1;
+    defectsContext.limit = res.limit || 20;
+    defectsContext.hasMore = (res.total || 0) > (res.page * res.limit);
+    renderDefectsList();
+  } catch (e) {
+    const list = document.getElementById('defects-list');
+    if (list) list.innerHTML = `<div class=\"voidr-empty-state\"><h4>Failed to load defects</h4><p>${(e && e.message) || 'Unknown error'}</p></div>`;
   }
 }
+
+function renderDefectsList() {
+  const list = document.getElementById('defects-list');
+  if (!list) return;
+  const items = defectsContext.items || [];
+  if (!items.length) {
+    list.innerHTML = `<div class=\"voidr-empty-state\"><h4>No defects found</h4><p>Create your first defect for this application.</p></div>`;
+    return;
+  }
+  const rows = items.map((d) => {
+    const status = (d.status || 'open').toLowerCase();
+    const sev = (d.severity || 'medium').toLowerCase();
+    const pri = (d.priority || 'p2').toUpperCase();
+    const title = d.title || d.slug || 'Untitled';
+    const slug = d.slug || d._id || '';
+    return `
+      <div class=\"voidr-defect-item\">
+        <div class=\"voidr-defect-main\">
+          <div class=\"voidr-defect-title\">${title}</div>
+          <div class=\"voidr-defect-meta\">
+            <span class=\"voidr-status-badge voidr-status-${status}\">${status}</span>
+            <span class=\"voidr-severity-badge voidr-severity-${sev}\">${sev}</span>
+            <span class=\"voidr-priority-badge\">${pri}</span>
+            ${slug ? `<span class=\"voidr-slug\">${slug}</span>` : ''}
+          </div>
+        </div>
+        <div class=\"voidr-defect-actions\">
+          <button class=\"voidr-button-secondary voidr-small\" onclick=\"viewDefect('${encodeURIComponent(slug)}')\">View</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+  list.innerHTML = `<div class=\"voidr-defects-list\">${rows}</div>`;
+}
+
+window.refreshDefectsList = function () { updateDefectsContent(); };
+
+window.showNewDefectForm = function () {
+  const container = document.getElementById('defects-content');
+  if (!container) return;
+  newDefectDraft = { attachments: [], sessionId: lastCapturedSessionId };
+  const optApplication = testPlanningContext?.application;
+  container.innerHTML = `
+    <div class=\"voidr-form-container\">
+      <div class=\"voidr-form-header\">
+        <button onclick=\"updateDefectsContent()\" class=\"voidr-back-button\">
+          <svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><polyline points=\"15,18 9,12 15,6\"/></svg>
+          Back
+        </button>
+        <h4>New Defect</h4>
+      </div>
+
+      <div class=\"voidr-app-context\" style=\"margin-bottom:16px;\">
+        <div class=\"voidr-app-info\">
+          <h4>${optApplication?.name || 'Application'}</h4>
+          <p>${optApplication?.environment?.name || ''}</p>
+        </div>
+        <div style=\"display:flex; gap:8px;\">
+          <button class=\"voidr-button-secondary voidr-small\" onclick=\"startRecordingForDefect()\">Record Session</button>
+          <button class=\"voidr-button-secondary voidr-small\" onclick=\"linkLastSessionForDefect()\" ${lastCapturedSessionId ? '' : 'disabled'}>${lastCapturedSessionId ? 'Link Last Session' : 'No Session'}</button>
+        </div>
+      </div>
+
+      <form onsubmit=\"submitNewDefect(event)\">
+        <div class=\"voidr-form-group\">
+          <label>Title</label>
+          <input type=\"text\" id=\"df-title\" placeholder=\"Briefly describe the problem...\" required />
+        </div>
+        <div class=\"voidr-form-group\">
+          <label>Description</label>
+          <textarea id=\"df-description\" placeholder=\"Describe the problem in detail...\" required></textarea>
+        </div>
+        <div class=\"voidr-form-group\">
+          <label>Application Environment</label>
+          <input id=\"df-env\" type=\"text\" value=\"${optApplication?.environment?.name || ''}\" placeholder=\"production / staging / development\" />
+        </div>
+        <div class=\"voidr-form-group\">
+          <label>Session</label>
+          <input id=\"df-session\" type=\"text\" value=\"${lastCapturedSessionId || ''}\" placeholder=\"Session ID (optional)\" />
+        </div>
+        <div class=\"voidr-form-group\">
+          <label>Severity</label>
+          <select id=\"df-severity\">
+            <option value=\"low\">Low</option>
+            <option value=\"medium\" selected>Medium</option>
+            <option value=\"high\">High</option>
+            <option value=\"critical\">Critical</option>
+          </select>
+        </div>
+        <div class=\"voidr-form-group\">
+          <label>Priority</label>
+          <select id=\"df-priority\">
+            <option value=\"p3\">P3</option>
+            <option value=\"p2\" selected>P2</option>
+            <option value=\"p1\">P1</option>
+            <option value=\"p0\">P0</option>
+          </select>
+        </div>
+        <div class=\"voidr-form-group\">
+          <label>Reproducibility</label>
+          <select id=\"df-repro\">
+            <option value=\"always\" selected>Always</option>
+            <option value=\"sometimes\">Sometimes</option>
+            <option value=\"rarely\">Rarely</option>
+            <option value=\"intermittent\">Intermittent</option>
+          </select>
+        </div>
+
+        <div class=\"voidr-form-group\">
+          <label>Attachments</label>
+          <input type=\"file\" id=\"df-file\" multiple style=\"display:none\" />
+          <div id=\"df-upload-zone\" class=\"voidr-upload-zone\" onclick=\"document.getElementById('df-file').click()\">Click to select files or drop here</div>
+          <div id=\"df-uploaded\" class=\"voidr-uploaded-list\" style=\"margin-top:8px;\"></div>
+        </div>
+
+        <div class=\"voidr-form-actions\">
+          <button type=\"submit\" class=\"voidr-button-primary\">Create Defect</button>
+          <button type=\"button\" onclick=\"updateDefectsContent()\" class=\"voidr-button-secondary\">Cancel</button>
+        </div>
+      </form>
+    </div>
+  `;
+
+  try {
+    const zone = document.getElementById('df-upload-zone');
+    const input = document.getElementById('df-file');
+    if (zone) {
+      zone.addEventListener('dragover', (e) => { e.preventDefault(); zone.classList.add('voidr-upload-over'); });
+      zone.addEventListener('dragleave', () => { zone.classList.remove('voidr-upload-over'); });
+      zone.addEventListener('drop', (e) => {
+        e.preventDefault(); zone.classList.remove('voidr-upload-over');
+        const files = Array.from(e.dataTransfer.files || []);
+        if (files.length) handleFilesUpload(files);
+      });
+    }
+    input?.addEventListener('change', (e) => {
+      const files = Array.from(e.target.files || []);
+      if (files.length) handleFilesUpload(files);
+    });
+  } catch (_) {}
+};
+
+async function handleFilesUpload(files) {
+  for (const file of files) {
+    try {
+      let tries = 0;
+      while (!window.privateStorageService && tries < 30) { await new Promise((r) => setTimeout(r, 100)); tries += 1; }
+      if (!window.privateStorageService) throw new Error('Storage service not available');
+      const uploaded = await window.defectsService.uploadAttachment(file, { pageUrl: window.location.href });
+      newDefectDraft.attachments.push(uploaded);
+      renderUploadedAttachments();
+    } catch (e) {
+      alert('Failed to upload file: ' + (e?.message || 'Unknown error'));
+    }
+  }
+}
+
+function renderUploadedAttachments() {
+  const list = document.getElementById('df-uploaded');
+  if (!list) return;
+  if (!newDefectDraft.attachments.length) { list.innerHTML = ''; return; }
+  list.innerHTML = newDefectDraft.attachments.map((a, idx) => `
+    <div class=\"voidr-uploaded-item\">
+      <div class=\"voidr-uploaded-name\">${a.name}</div>
+      <div class=\"voidr-uploaded-actions\">
+        <button class=\"voidr-action-btn\" title=\"Remove\" onclick=\"removeUploadedAttachment(${idx})\">
+          <svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><line x1=\"18\" y1=\"6\" x2=\"6\" y2=\"18\"/><line x1=\"6\" y1=\"6\" x2=\"18\" y2=\"18\"/></svg>
+        </button>
+      </div>
+    </div>
+  `).join('');
+}
+
+window.removeUploadedAttachment = function (idx) { if (idx >= 0 && idx < newDefectDraft.attachments.length) { newDefectDraft.attachments.splice(idx, 1); renderUploadedAttachments(); } };
+
+window.startRecordingForDefect = function () { const titleEl = document.getElementById('df-title'); const name = titleEl && titleEl.value ? titleEl.value : 'Defect Session'; try { startVoidrSessionRecording(name); } catch (_) {} };
+
+window.linkLastSessionForDefect = function () { if (lastCapturedSessionId) { newDefectDraft.sessionId = lastCapturedSessionId; alert('Linked session: ' + lastCapturedSessionId); } };
+
+window.viewDefect = async function (idOrSlug) {
+  try {
+    let tries = 0; while (!window.defectsService && tries < 30) { await new Promise((r) => setTimeout(r, 100)); tries += 1; }
+    if (!window.defectsService) throw new Error('Defects service not available');
+    const defect = await window.defectsService.getDefect(decodeURIComponent(idOrSlug));
+    const container = document.getElementById('defects-content'); if (!container) return;
+    const status = (defect.status || 'open').toLowerCase(); const sev = (defect.severity || 'medium').toLowerCase(); const pri = (defect.priority || 'p2').toUpperCase();
+    container.innerHTML = `
+      <div class=\"voidr-form-header\">
+        <button onclick=\"updateDefectsContent()\" class=\"voidr-back-button\">
+          <svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><polyline points=\"15,18 9,12 15,6\"/></svg>
+          Back
+        </button>
+        <h4>${defect.title || defect.slug}</h4>
+      </div>
+      <div class=\"voidr-app-context\">
+        <div class=\"voidr-app-info\">
+          <p>Status: <span class=\"voidr-status-badge voidr-status-${status}\">${status}</span></p>
+          <p>Severity: <span class=\"voidr-severity-badge voidr-severity-${sev}\">${sev}</span> • Priority: <span class=\"voidr-priority-badge\">${pri}</span></p>
+        </div>
+      </div>
+      <div style=\"margin-top:12px;\">
+        <p style=\"white-space:pre-wrap; color: var(--text-primary);\">${(defect.description || '').replace(/</g,'&lt;')}</p>
+      </div>
+    `;
+  } catch (e) { alert('Failed to open defect: ' + (e?.message || 'Unknown error')); }
+};
+
+window.submitNewDefect = async function (event) {
+  event.preventDefault();
+  const title = document.getElementById('df-title').value.trim();
+  const description = document.getElementById('df-description').value.trim();
+  const envName = (document.getElementById('df-env') && document.getElementById('df-env').value.trim()) || '';
+  const sessionInput = (document.getElementById('df-session') && document.getElementById('df-session').value.trim()) || '';
+  const severity = document.getElementById('df-severity').value;
+  const priority = document.getElementById('df-priority').value;
+  const reproducibility = document.getElementById('df-repro').value;
+  if (!title || !description) { alert('Please fill title and description'); return; }
+  try {
+    let tries = 0; while (!window.defectsService && tries < 30) { await new Promise((r) => setTimeout(r, 100)); tries += 1; }
+    if (!window.defectsService) throw new Error('Defects service not available');
+    const app = testPlanningContext?.application || {};
+    // Normalize environment enum
+    const envLower = String(envName || (app.environment && (app.environment.type || app.environment.name)) || '').toLowerCase();
+    const envNormalized = ['production','staging','development'].includes(envLower)
+      ? envLower
+      : (envLower.startsWith('prod') ? 'production' : envLower.startsWith('stag') ? 'staging' : 'development');
+    // Reporter from content auth status
+    const auth = await getAuthStatus();
+    const reporter = auth && auth.user && (auth.user.id || auth.user._id || auth.user.email) || undefined;
+    const payload = {
+      title, description, severity, priority, status: 'open', reproducibility,
+      applicationId: app.id || app._id,
+      applicationEnvironment: envNormalized,
+      reportedBy: reporter,
+      platform: { os: navigator.platform, browser: navigator.userAgent },
+      attachments: newDefectDraft.attachments || [],
+      sessions: sessionInput ? [sessionInput] : (newDefectDraft.sessionId ? [newDefectDraft.sessionId] : [])
+    };
+    await window.defectsService.createDefect(payload);
+    alert('Defect created successfully');
+    updateDefectsContent();
+  } catch (e) { alert('Failed to create defect: ' + (e?.message || 'Unknown error')); }
+};
 
 // Listener para mensagens do background script
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
@@ -524,7 +953,17 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       // Mostra notificação de sucesso
       showAuthSuccessNotification();
       break;
+    case 'voidr:startSessionRecording':
+      startVoidrSessionRecording(request.testCaseName || 'Test Case', { mode: request.mode });
+      break;
+    case 'voidr:sessionCaptured':
+      if (request.sessionId) {
+        lastCapturedSessionId = request.sessionId;
+      }
+      break;
   }
+  // Signal background we are ready to receive forwards
+  try { chrome.runtime.sendMessage({ action: 'contentReady' }); } catch (_) {}
 });
 
 // Mostra notificação de sucesso da autenticação

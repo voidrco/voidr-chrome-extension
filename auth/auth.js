@@ -169,7 +169,7 @@ async function checkAuthentication() {
   } catch (error) {
     console.error('Error checking authentication:', error);
     authState.checking = false;
-    showErrorState('Erro ao verificar autenticação: ' + error.message);
+    showErrorState('Error checking authentication: ' + error.message);
   }
 }
 
@@ -456,7 +456,7 @@ async function logout() {
     });
   } catch (error) {
     console.error('Logout error:', error);
-    showErrorState('Erro ao fazer logout: ' + error.message);
+    showErrorState('Error during logout: ' + error.message);
   }
 }
 

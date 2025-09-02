@@ -1,5 +1,5 @@
 /* Voidr Extension Popup Styles - Matching Platform Design */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&display=swap');
 
 :root {
   --background: #050607;
@@ -21,7 +21,7 @@ body {
   width: 100vw;
   min-height: 100vh;
   max-height: 100vh;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   font-weight: 300;
   background-color: var(--background);
   color: var(--text-primary);
@@ -184,7 +184,7 @@ body {
   cursor: pointer;
   transition: all 0.2s ease;
   text-align: left;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
 }
 
 .action-button.primary {
@@ -319,7 +319,7 @@ body {
   border-radius: 4px;
   transition: all 0.2s ease;
   text-decoration: none;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   font-weight: 400;
 }
 
@@ -488,6 +488,54 @@ body {
   padding: 20px;
 }
 
+/* Organization card (above welcome) */
+.voidr-org-card {
+  margin: 12px 20px 0;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.015));
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+}
+.voidr-org-logo {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--hover-color);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.voidr-org-logo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.voidr-org-logo-fallback {
+  width: 60%;
+  height: 60%;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.08);
+}
+.voidr-org-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.voidr-org-name {
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .voidr-welcome-header {
   text-align: center;
   margin-bottom: 24px;
@@ -647,6 +695,24 @@ body {
   overflow-y: auto;
 }
 
+/* Defects list + badges for popup */
+.voidr-defects-list { display: flex; flex-direction: column; gap: 8px; }
+.voidr-defect-item { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px; border:1px solid var(--border-color); border-radius:8px; background: var(--background-elevated); }
+.voidr-defect-main { display:flex; flex-direction:column; gap:6px; }
+.voidr-defect-title { color: var(--text-primary); font-size:14px; font-weight:500; }
+.voidr-defect-meta { display:flex; align-items:center; gap:8px; color: var(--text-secondary); font-size:12px; }
+.voidr-slug { opacity:.7; }
+.voidr-status-badge, .voidr-severity-badge, .voidr-priority-badge { display:inline-flex; align-items:center; padding:2px 6px; border-radius:999px; font-size:10px; font-weight:600; letter-spacing:.2px; border:1px solid var(--border-color); }
+.voidr-status-open { background: rgba(34,197,94,0.08); color:#22c55e; border-color: rgba(34,197,94,0.3); }
+.voidr-status-in_progress { background: rgba(59,130,246,0.08); color:#3b82f6; border-color: rgba(59,130,246,0.3); }
+.voidr-status-resolved { background: rgba(245,158,11,0.08); color:#f59e0b; border-color: rgba(245,158,11,0.3); }
+.voidr-status-closed { background: rgba(148,163,184,0.16); color:#94a3b8; border-color: rgba(148,163,184,0.35); }
+.voidr-severity-badge.voidr-severity-critical { background:#ef4444; color:#fff; border-color:#ef4444; }
+.voidr-severity-badge.voidr-severity-high { background:#f97316; color:#fff; border-color:#f97316; }
+.voidr-severity-badge.voidr-severity-medium { background:#eab308; color:#111; border-color:#eab308; }
+.voidr-severity-badge.voidr-severity-low { background:#22c55e; color:#fff; border-color:#22c55e; }
+.voidr-priority-badge { background: rgba(255,255,255,0.06); color: var(--text-primary); }
+
 .voidr-back-button {
   background: var(--hover-color);
   border: 1px solid var(--border-color);
@@ -685,7 +751,7 @@ body {
   border-radius: 8px;
   color: var(--text-primary);
   font-size: 14px;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   font-weight: 400;
   transition: border-color 0.2s ease;
 }
@@ -712,6 +778,16 @@ body {
   gap: 8px;
   margin-top: 16px;
 }
+.voidr-button-ghost {
+  background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+}
+.voidr-button-ghost:hover {
+  background: rgba(255,255,255,0.08);
+  border-color: rgba(255,255,255,0.35);
+}
 
 .voidr-form-actions button {
   flex: 1;
@@ -727,7 +803,7 @@ body {
   font-weight: 500;
   cursor: pointer;
   transition: all 0.2s ease;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -872,6 +948,18 @@ body {
   overflow: hidden;
 }
 
+/* Highlight animation for newly created items */
+.voidr-highlight {
+  animation: voidr-flash 2s ease-out 1;
+}
+
+@keyframes voidr-flash {
+  0% { box-shadow: 0 0 0 rgba(34, 197, 94, 0); border-color: rgba(34, 197, 94, 0); }
+  15% { box-shadow: 0 0 0 rgba(34, 197, 94, 0.35); border-color: rgba(34, 197, 94, 0.6); }
+  50% { box-shadow: 0 0 0 rgba(34, 197, 94, 0.2); border-color: rgba(34, 197, 94, 0.35); }
+  100% { box-shadow: 0 0 0 rgba(34, 197, 94, 0); border-color: var(--border-color); }
+}
+
 .voidr-module-header {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.01));
   padding: 12px 16px;
@@ -988,6 +1076,14 @@ body {
   border-radius: 4px;
   padding: 8px 12px;
   margin-bottom: 4px;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.voidr-module-header:hover,
+.voidr-suite-header:hover,
+.voidr-test-case-item:hover {
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .voidr-test-case-header {
@@ -1179,4 +1275,59 @@ body {
 .voidr-button-secondary:hover:not(:disabled) {
   transform: translateY(-1px);
   box-shadow: 0 8px 25px rgba(0, 0, 0, 0.2);
+}
+
+/* Upload UI */
+.voidr-uploaded-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.voidr-uploaded-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--hover-color);
+}
+.voidr-uploaded-name {
+  color: var(--text-primary);
+  font-size: 12px;
+}
+.voidr-uploaded-actions {
+  display: flex;
+  gap: 6px;
+}
+.voidr-uploaded-actions .voidr-action-btn {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 4px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  transition: all 0.2s ease;
+}
+.voidr-uploaded-actions .voidr-action-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-primary);
+}
+.voidr-upload-zone {
+  border: 2px dashed var(--border-color);
+  border-radius: 8px;
+  padding: 12px;
+  text-align: center;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin-top: 8px;
+}
+.voidr-upload-zone:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+.voidr-upload-over {
+  border-color: rgba(59, 130, 246, 0.7);
+  background: rgba(59, 130, 246, 0.08);
 }

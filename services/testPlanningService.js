@@ -1,6 +1,9 @@
 // Test Planning Service for Voidr Extension
 // Replicates the platform's test planning functionality
 
+if (typeof window !== 'undefined' && window.testPlanningService) {
+  // Already defined – avoid double registration
+} else {
 class TestPlanningService {
   constructor() {
     this.currentApplication = null;
@@ -95,6 +98,32 @@ class TestPlanningService {
     } catch (error) {
       console.error('Error finding application by URL:', error);
       return null;
+    }
+  }
+
+  // Create a new test plan for an application
+  async createTestPlan(applicationId, planData) {
+    try {
+      if (!applicationId) throw new Error('Missing applicationId');
+
+      const apiData = {
+        applicationId: applicationId,
+        name: planData?.name,
+        description: planData?.description || '',
+        status: planData?.status || 'DRAFT'
+      };
+
+      const response = await this.makeAPIRequest(`/test-plans`, 'POST', apiData);
+
+      if (!response?.success) {
+        throw new Error(response?.error || 'Failed to create test plan');
+      }
+
+      // Invalidate any cached test plan content lists
+      this.cache.clear();
+      return response.data;
+    } catch (error) {
+      throw error;
     }
   }
 
@@ -318,6 +347,9 @@ class TestPlanningService {
         type: 'MANUAL', // Default to MANUAL for extension-created cases
         attachments: testCaseData.attachments || []
       };
+      if (Object.prototype.hasOwnProperty.call(testCaseData, 'sessionId')) {
+        apiData.sessionId = testCaseData.sessionId;
+      }
 
       const response = await this.makeAPIRequest(
         `/test-plans/${testPlanId}/modules/${moduleSlug}/suites/${suiteSlug}/cases`,
@@ -330,6 +362,72 @@ class TestPlanningService {
       }
 
       // Clear cache to force refresh
+      this.cache.delete(`testplan_${testPlanId}`);
+      return response.data;
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  // Get a specific test case details
+  async getTestCase(testPlanId, moduleSlug, suiteSlug, testCaseSlug) {
+    try {
+      const response = await this.makeAPIRequest(
+        `/test-plans/${testPlanId}/modules/${moduleSlug}/suites/${suiteSlug}/cases/${testCaseSlug}`
+      );
+      if (!response?.success) {
+        throw new Error(response?.error || 'Failed to fetch test case');
+      }
+      const data = response?.data?.data || response?.data || response;
+      return data;
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  // Update existing test case
+  async updateTestCase(testPlanId, moduleSlug, suiteSlug, testCaseSlug, updates) {
+    try {
+      const apiData = {};
+      if (Object.prototype.hasOwnProperty.call(updates, 'name')) {
+        apiData.name = updates.name;
+      }
+      if (Object.prototype.hasOwnProperty.call(updates, 'objective')) {
+        apiData.objective = updates.objective;
+      }
+      if (Object.prototype.hasOwnProperty.call(updates, 'prerequisites')) {
+        apiData.prerequisites = Array.isArray(updates.prerequisites)
+          ? updates.prerequisites
+          : updates.prerequisites
+          ? [updates.prerequisites]
+          : [];
+      }
+      if (Object.prototype.hasOwnProperty.call(updates, 'expectedResult')) {
+        apiData.expectedResult = updates.expectedResult;
+      }
+      if (Object.prototype.hasOwnProperty.call(updates, 'type')) {
+        apiData.type = updates.type;
+      }
+      if (Object.prototype.hasOwnProperty.call(updates, 'status')) {
+        apiData.status = updates.status;
+      }
+      if (Object.prototype.hasOwnProperty.call(updates, 'attachments')) {
+        apiData.attachments = updates.attachments || [];
+      }
+      if (Object.prototype.hasOwnProperty.call(updates, 'sessionId')) {
+        apiData.sessionId = updates.sessionId; // can be string or null to unlink
+      }
+
+      const response = await this.makeAPIRequest(
+        `/test-plans/${testPlanId}/modules/${moduleSlug}/suites/${suiteSlug}/cases/${testCaseSlug}`,
+        'PATCH',
+        apiData
+      );
+
+      if (!response?.success) {
+        throw new Error(response?.error || 'Failed to update test case');
+      }
+
       this.cache.delete(`testplan_${testPlanId}`);
       return response.data;
     } catch (error) {
@@ -458,6 +556,9 @@ class TestPlanningService {
   // Make authenticated API request via background script
   async makeAPIRequest(endpoint, method = 'GET', data = null) {
     return new Promise((resolve) => {
+      try {
+        console.log('[Service.api] →', method, endpoint, data ? JSON.stringify(data).slice(0, 500) : '');
+      } catch (_) {}
       chrome.runtime.sendMessage(
         {
           action: 'apiRequest',
@@ -466,7 +567,21 @@ class TestPlanningService {
           data: data
         },
         (response) => {
-          resolve(response || { success: false, error: 'No response' });
+          try {
+            if (!response) {
+              console.warn('[Service.api] ← No response');
+              resolve({ success: false, error: 'No response' });
+              return;
+            }
+            if (response.success) {
+              console.log('[Service.api] ← success');
+            } else {
+              console.warn('[Service.api] ← error:', response.error);
+            }
+            resolve(response);
+          } catch (e) {
+            resolve({ success: false, error: e.message || 'Unknown error' });
+          }
         }
       );
     });
@@ -494,4 +609,5 @@ const testPlanningService = new TestPlanningService();
 // Make available globally in content script
 if (typeof window !== 'undefined') {
   window.testPlanningService = testPlanningService;
+}
 }
