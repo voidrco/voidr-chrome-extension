@@ -2,8 +2,8 @@
 
 // Configurações da API - Idêntico à aplicação
 const API_CONFIG = {
-  baseUrl: 'http://localhost:3000/v1',
-  platformUrl: 'http://localhost:3030',
+  baseUrl: 'https://voidr-service-785568282479.us-central1.run.app/v1',
+  platformUrl: 'https://canary.voidr.co',
   auth0: {
     domain: 'bounties4.us.auth0.com',
     clientId: 'c4eLr6uaq98KB2dCKNkmP9bz6sS3gJfS',
@@ -213,7 +213,7 @@ function clearStoredAuth() {
 async function validateToken(token) {
   try {
     // Primeiro tenta o endpoint /auth/me (mesmo da aplicação)
-    const authResponse = await fetch('http://localhost:3000/v1/auth/me', {
+    const authResponse = await fetch(`${API_CONFIG.baseUrl}${API_CONFIG.endpoints.me}`, {
       method: 'GET',
       headers: {
         Authorization: `Bearer ${token}`,
@@ -226,7 +226,7 @@ async function validateToken(token) {
 
       // Tenta buscar o perfil também (mesmo fluxo da aplicação)
       try {
-        const profileResponse = await fetch('http://localhost:3000/v1/profile/me', {
+        const profileResponse = await fetch(`${API_CONFIG.baseUrl}${API_CONFIG.endpoints.profile}`, {
           method: 'GET',
           headers: {
             Authorization: `Bearer ${token}`,
@@ -297,7 +297,7 @@ async function checkPlatformAuth() {
 async function getTokenFromPlatform() {
   return new Promise((resolve) => {
     // Injeta script na plataforma para buscar token
-    chrome.tabs.query({ url: 'http://localhost:3030/*' }, (tabs) => {
+    chrome.tabs.query({ url: 'https://canary.voidr.co/*' }, (tabs) => {
       if (tabs.length > 0) {
         chrome.scripting.executeScript(
           {

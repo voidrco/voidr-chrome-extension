@@ -3063,7 +3063,7 @@ window.showFullTestPlan = function () {
   // Open full test plan in platform
   if (testPlanningContext?.testPlan) {
     chrome.tabs.create({
-      url: `http://localhost:3030/test-planning/${testPlanningContext.testPlan.id}`,
+      url: `https://canary.voidr.co/test-planning/${testPlanningContext.testPlan.id}`,
       active: true
     });
   }

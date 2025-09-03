@@ -2,8 +2,8 @@
 
 // Configurações da API - Idêntico à aplicação
 const API_CONFIG = {
-  baseUrl: 'http://localhost:3000/v1',
-  platformUrl: 'http://localhost:3030',
+  baseUrl: 'https://voidr-service-785568282479.us-central1.run.app/v1',
+  platformUrl: 'https://canary.voidr.co',
   auth0: {
     domain: 'bounties4.us.auth0.com',
     clientId: 'c4eLr6uaq98KB2dCKNkmP9bz6sS3gJfS',
@@ -151,7 +151,7 @@ chrome.runtime.onInstalled.addListener((details) => {
   chrome.storage.sync.set({
     voidrSettings: {
       widgetEnabled: true,
-      apiEndpoint: 'http://localhost:3000/v1',
+      apiEndpoint: 'https://voidr-service-785568282479.us-central1.run.app/v1',
       theme: 'dark'
     }
   });
@@ -679,7 +679,7 @@ async function makeAuthenticatedRequest(endpoint, method = 'GET', data = null) {
       options.body = JSON.stringify(data);
     }
 
-    const url = `http://localhost:3000/v1${endpoint}`;
+    const url = `${API_CONFIG.baseUrl}${endpoint}`;
     const response = await fetch(url, options);
 
     if (!response.ok) {
@@ -780,7 +780,7 @@ chrome.action.onClicked.addListener(() => {
 
 // Listener para detectar quando a plataforma Voidr é acessada
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
-  if (changeInfo.status === 'complete' && tab.url && tab.url.startsWith('http://localhost:3030')) {
+  if (changeInfo.status === 'complete' && tab.url && tab.url.startsWith('https://canary.voidr.co')) {
     console.log('Voidr platform detected, syncing authentication...');
 
     // Verifica se é a rota de conexão da extensão
@@ -883,7 +883,7 @@ async function syncAuthWithPlatform(tabId) {
 // Valida token no background (sem depender da página de auth)
 async function validateTokenInBackground(token) {
   try {
-    const response = await fetch('http://localhost:3000/v1/auth/me', {
+    const response = await fetch(`${API_CONFIG.baseUrl}/auth/me`, {
       method: 'GET',
       headers: {
         Authorization: `Bearer ${token}`,
