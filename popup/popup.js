@@ -1,3 +1,18 @@
+// Recording helpers (popup)
+function buildPopupRecordingContext() {
+  const recordingMode = (typeof currentView !== 'undefined' && currentView === 'defects') ? 'defect' : 'test-case';
+  const timestamp = new Date().toISOString();
+  const defaultName = recordingMode === 'defect' ? `Sample Defect ${timestamp}` : `Sample Test Case ${timestamp}`;
+  const tcName = (formState.newItemName && String(formState.newItemName).trim()) ? formState.newItemName : defaultName;
+  let slug = undefined;
+  if (recordingMode === 'test-case') {
+    try { slug = formState.isEditingExistingCase && formState.editingTestCaseData?.testCase?.slug ? formState.editingTestCaseData.testCase.slug : undefined; } catch (_) {}
+  } else if (recordingMode === 'defect') {
+    try { if (typeof getCurrentDefectSlug === 'function') { slug = getCurrentDefectSlug(); } } catch (_) {}
+  }
+  return { recordingMode, tcName, slug };
+}
+
 // Main Extension Interface - Popup as Primary Interface
 
 // Global state
@@ -213,6 +228,18 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Initialize the extension
   // Force fresh data on popup load by clearing cache first
   try { if (window.testPlanningService) { window.testPlanningService.clearCache(); } } catch (_) {}
+  // Ensure initial skeleton is visible before async work
+  try {
+    const mc = document.getElementById('main-extension-content');
+    if (mc && !mc.firstElementChild) {
+      const skel = document.createElement('div');
+      skel.id = 'initial-skeleton';
+      skel.className = 'voidr-skeleton-container';
+      skel.setAttribute('aria-hidden', 'true');
+      skel.innerHTML = `<div class="voidr-skeleton"></div>`;
+      mc.appendChild(skel);
+    }
+  } catch (_) {}
   await initializeExtension();
 });
 
@@ -555,11 +582,12 @@ function getAuthStatus() {
 function showWelcomeScreen() {
   const contentDiv = document.getElementById('main-extension-content');
   if (!contentDiv) return;
+  // Remove initial skeleton if present
+  try { const sk = document.getElementById('initial-skeleton'); if (sk) sk.remove(); } catch (_) {}
 
   currentView = 'welcome';
 
   contentDiv.innerHTML = `
-    <div id="voidr-org-card"></div>
     <div class="voidr-welcome">
       <div class="voidr-welcome-header">
         <div class="voidr-welcome-icon">
@@ -573,16 +601,7 @@ function showWelcomeScreen() {
       </div>
       
       <div class="voidr-welcome-actions">
-        <div style="display:flex;justify-content:flex-end;margin-bottom:8px;">
-          <button class="voidr-button-secondary voidr-small" onclick="handleSyncAll()" title="Sync now">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="1,4 1,10 7,10"/>
-              <polyline points="23,20 23,14 17,14"/>
-              <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/>
-            </svg>
-            Sync
-          </button>
-        </div>
+        
         <h3>What would you like to do now?</h3>
         
         <div class="voidr-action-cards">
@@ -682,46 +701,25 @@ async function renderOrganizationCard() {
   const container = document.getElementById('voidr-org-card');
   if (!container) return;
   try {
-    const [me, cfg] = await Promise.all([
-      makeAuthenticatedRequest('/auth/me', 'GET'),
-      makeAuthenticatedRequest('/customer-configs', 'GET')
-    ]);
-    const data = (me && (me.data || me)) || {};
+    const cfg = await makeAuthenticatedRequest('/customer-configs', 'GET');
+    const me = await makeAuthenticatedRequest('/auth/me', 'GET');
+    const data = me?.data?.data || {};
     const org = (data && (data.organization || {})) || {};
-    const configData = (cfg && (cfg.data || cfg)) || {};
+    const configData = cfg?.data?.data || {};
     const appName = Array.isArray(configData) ? (configData[0]?.name || '') : (configData?.name || configData?.data?.name || '');
     const orgNameCandidate = org.display_name || org.name || data.teamName || data.name || data.email || '';
     const orgName = orgNameCandidate || appName || 'Unknown Organization';
-    const branding = org.branding || {};
-    let logo = data.logoUrl || branding.logo_url || '';
-    if (!logo) {
-      const site = data.websiteUrl || (Array.isArray(configData) ? configData[0]?.websiteUrl : configData?.websiteUrl);
-      if (site) {
-        try { logo = new URL('/favicon.ico', site).href; } catch (_) {}
-      }
-    }
-
+    
     container.innerHTML = `
       <div class="voidr-org-card">
         <div class="voidr-org-logo">
-          ${logo ? `<img src="${logo}" alt="${orgName} logo" />` : `<div class="voidr-org-logo-fallback" aria-hidden="true"></div>`}
+          <img src="${data?.logoUrl}" alt="${orgName} logo" loading="lazy" decoding="async" />
         </div>
         <div class="voidr-org-info">
           <span class="voidr-org-name">${escapeHtml(orgName || (configData?.name || ''))}</span>
         </div>
       </div>
     `;
-
-    // Robust fallback if image fails to load
-    try {
-      const img = container.querySelector('.voidr-org-logo img');
-      if (img) {
-        img.addEventListener('error', () => {
-          const parent = img.parentElement;
-          if (parent) parent.innerHTML = '<div class="voidr-org-logo-fallback" aria-hidden="true"></div>';
-        });
-      }
-    } catch (_) {}
   } catch (e) {
     // Silent fail: do not block welcome on errors
     container.innerHTML = `
@@ -753,6 +751,7 @@ window.navigateToWelcome = function () {
 function showTestPlanningView() {
   const contentDiv = document.getElementById('main-extension-content');
   if (!contentDiv) return;
+  try { const sk = document.getElementById('initial-skeleton'); if (sk) sk.remove(); } catch (_) {}
 
   contentDiv.innerHTML = `
     <div class="voidr-view-container">
@@ -763,13 +762,6 @@ function showTestPlanningView() {
           </svg>
         </button>
         <h3>Test Planning</h3>
-        <button class="voidr-action-btn" onclick="handleSyncAll()" title="Sync now">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="1,4 1,10 7,10"/>
-            <polyline points="23,20 23,14 17,14"/>
-            <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/>
-          </svg>
-        </button>
       </div>
       <div class="voidr-view-content" id="test-planning-content">
         <!-- Will be populated by updateTestPlanningContent() -->
@@ -788,6 +780,7 @@ function showTestPlanningView() {
 function showDefectsView() {
   const contentDiv = document.getElementById('main-extension-content');
   if (!contentDiv) return;
+  try { const sk = document.getElementById('initial-skeleton'); if (sk) sk.remove(); } catch (_) {}
 
   contentDiv.innerHTML = `
     <div class="voidr-view-container">
@@ -798,13 +791,6 @@ function showDefectsView() {
           </svg>
         </button>
         <h3>Analyze Defects</h3>
-        <button class="voidr-action-btn" onclick="handleSyncAll()" title="Sync now">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="1,4 1,10 7,10"/>
-            <polyline points="23,20 23,14 17,14"/>
-            <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/>
-          </svg>
-        </button>
       </div>
       <div class="voidr-view-content" id="defects-content"></div>
     </div>
@@ -816,6 +802,20 @@ function showDefectsView() {
 // Defects list state for popup
 let popupDefects = { items: [], page: 1, limit: 20 };
 
+async function ensureDefectsServiceLoaded() {
+  if (window.defectsService && typeof window.defectsService.listDefects === 'function') return true;
+  // Wait briefly for script tag execution
+  let attempts = 0;
+  while ((!window.defectsService || typeof window.defectsService.listDefects !== 'function') && attempts < 30) {
+    await new Promise((r) => setTimeout(r, 100));
+    attempts += 1;
+  }
+  if (!window.defectsService || typeof window.defectsService.listDefects !== 'function') {
+    throw new Error('Defects service not available in popup context');
+  }
+  return true;
+}
+
 async function updateDefectsListInPopup() {
   const container = document.getElementById('defects-content');
   if (!container) return;
@@ -826,7 +826,6 @@ async function updateDefectsListInPopup() {
         <p>${testPlanningContext?.application?.environment?.name || ''}</p>
       </div>
       <div style="display:flex; gap:8px;">
-        <button class="voidr-button-secondary voidr-small" id="defects-refresh">Refresh</button>
         <button class="voidr-button-primary voidr-small" id="defects-report">Report Defect</button>
       </div>
     </div>
@@ -834,20 +833,17 @@ async function updateDefectsListInPopup() {
   `;
 
   try {
-    document.getElementById('defects-refresh')?.addEventListener('click', async () => {
-      try { if (window.defectsService && window.defectsService.cache) { window.defectsService.cache.clear(); } } catch (_) {}
-      await updateDefectsListInPopup();
-    });
     document.getElementById('defects-report')?.addEventListener('click', () => showNewDefectFormInPopup());
     const filters = { page: popupDefects.page, limit: popupDefects.limit, sortBy: 'createdAt', sortDir: 'desc' };
     if (testPlanningContext?.application?.id || testPlanningContext?.application?._id) {
       filters.applicationId = testPlanningContext.application.id || testPlanningContext.application._id;
     }
-    let tries = 0; while (!window.defectsService && tries < 30) { await new Promise(r=>setTimeout(r,100)); tries++; }
+    await ensureDefectsServiceLoaded();
     const res = await window.defectsService.listDefects(filters);
-    popupDefects.items = res.items || [];
+    popupDefects.items = Array.isArray(res?.items) ? res.items : [];
     renderDefectsListInPopup();
   } catch (e) {
+    try { console.error('[Popup] Failed to load defects:', e); } catch (_) {}
     const list = document.getElementById('defects-list');
     if (list) list.innerHTML = `<div class=\"voidr-empty-state\"><h4>Failed to load defects</h4><p>${e?.message || 'Unknown error'}</p></div>`;
   }
@@ -868,7 +864,7 @@ function renderDefectsListInPopup() {
     const title = d.title || d.slug || 'Untitled';
     const slug = d.slug || d._id || '';
     return `
-      <div class=\"voidr-defect-item\">
+      <div class=\"voidr-defect-item\" ${slug ? `data-slug=\"${slug}\"` : ''}>
         <div class=\"voidr-defect-main\">
           <div class=\"voidr-defect-title\">${title}</div>
           <div class=\"voidr-defect-meta\">
@@ -882,6 +878,20 @@ function renderDefectsListInPopup() {
     `;
   }).join('');
   list.innerHTML = `<div class=\"voidr-defects-list\">${rows}</div>`;
+  try {
+    const containerEl = list.querySelector('.voidr-defects-list');
+    if (containerEl) {
+      containerEl.querySelectorAll('.voidr-defect-item').forEach((el) => {
+        const s = el.getAttribute('data-slug') || el.querySelector('.voidr-slug')?.textContent?.trim();
+        if (s) {
+          el.style.cursor = 'pointer';
+          el.addEventListener('click', () => {
+            showDefectDetailInPopup(s);
+          });
+        }
+      });
+    }
+  } catch (_) {}
 }
 
 function showNewDefectFormInPopup() {
@@ -942,10 +952,24 @@ function showNewDefectFormInPopup() {
           </select>
         </div>
         <div class="voidr-form-actions">
-          <button type="button" class="voidr-button-secondary" data-action="start-session-recording">Record session</button>
           <button type="submit" class="voidr-button-primary">Create</button>
           <button type="button" class="voidr-button-secondary" id="pdf-cancel">Cancel</button>
+          <button type="button" class="voidr-button-ghost" data-action="start-session-recording">Record session</button>
         </div>
+        ${popupDraft?.sessionId ? `
+        <div class="voidr-form-group" style="margin-top:8px;">
+          <div style="display:flex;align-items:center;gap:8px;background:linear-gradient(180deg,#0b0f14 0%,#070a0f 100%);border:1px solid rgba(255,255,255,0.12);padding:10px 12px;border-radius:10px;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="10"/>
+              <circle cx="12" cy="12" r="3"/>
+            </svg>
+            <div style="display:flex;flex-direction:column;gap:2px;">
+              <span style="font-size:12px;color:var(--text-primary);">Associated session</span>
+              <span id="pdf-associated-session" style="font-size:11px;color:var(--text-secondary);">${popupDraft.sessionId}</span>
+            </div>
+          </div>
+        </div>
+        ` : ''}
         ${formState.lastSessionId ? `
         <div class="voidr-form-group" style="margin-top:8px;">
           <div id="pdf-session-card" style="display:flex;align-items:center;gap:8px;background:linear-gradient(180deg,#0b0f14 0%,#070a0f 100%);border:1px solid rgba(255,255,255,0.12);padding:10px 12px;border-radius:10px;">
@@ -1023,8 +1047,118 @@ async function handlePopupFilesUpload(files) {
       popupDraft.attachments.push(uploaded);
       renderPopupUploadedAttachments();
     } catch (e) {
-      alert('Falha ao subir arquivo: ' + (e?.message || 'Erro'));
+      showNotification('Falha ao subir arquivo: ' + (e?.message || 'Erro'), 'error');
     }
+  }
+}
+
+// Show defect details (prefilled form) inside popup
+async function showDefectDetailInPopup(idOrSlug) {
+  const container = document.getElementById('defects-content');
+  if (!container) return;
+  container.innerHTML = `
+    <div class="voidr-form-container">
+      <div class="voidr-form-header">
+        <button id="back-to-defects" class="voidr-back-button">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15,18 9,12 15,6"/></svg>
+        </button>
+        <h4>Defect Details</h4>
+      </div>
+      <div class="voidr-loading" id="defect-detail-loading">Loading...</div>
+      <div id="defect-detail-form-wrapper" style="display:none;"></div>
+    </div>
+  `;
+
+  try {
+    document.getElementById('back-to-defects')?.addEventListener('click', () => showDefectsView());
+  } catch (_) {}
+
+  try {
+    await ensureDefectsServiceLoaded();
+    const defect = await window.defectsService.getDefect(idOrSlug);
+    const wrapper = document.getElementById('defect-detail-form-wrapper');
+    const loader = document.getElementById('defect-detail-loading');
+    if (!wrapper) return;
+    const title = defect.title || '';
+    const description = defect.description || '';
+    const status = (defect.status || 'open').toLowerCase();
+    const severity = (defect.severity || 'medium').toLowerCase();
+    const priority = (defect.priority || 'p2').toLowerCase();
+    const env = defect.applicationEnvironment || '';
+    const slug = defect.slug || defect._id || idOrSlug;
+    wrapper.innerHTML = `
+      <form id="pdf-edit-form">
+        <div class="voidr-form-group">
+          <label>Slug</label>
+          <input type="text" id="pdf-slug" value="${slug}" readonly />
+        </div>
+        <div class="voidr-form-group">
+          <label>Title</label>
+          <input type="text" id="pdf-title" value="${title}" required />
+        </div>
+        <div class="voidr-form-group">
+          <label>Description</label>
+          <textarea id="pdf-description" required>${description}</textarea>
+        </div>
+        <div class="voidr-form-group">
+          <label>Ambiente</label>
+          <input id="pdf-env" type="text" value="${env}" placeholder="production / staging / development" />
+        </div>
+        <div class="voidr-form-group">
+          <label>Status</label>
+          <select id="pdf-status">
+            ${['open','in_progress','resolved','closed'].map(s => `<option value="${s}" ${status===s?'selected':''}>${s}</option>`).join('')}
+          </select>
+        </div>
+        <div class="voidr-form-group">
+          <label>Severidade</label>
+          <select id="pdf-severity">
+            ${['low','medium','high','critical'].map(s => `<option value="${s}" ${severity===s?'selected':''}>${s}</option>`).join('')}
+          </select>
+        </div>
+        <div class="voidr-form-group">
+          <label>Priority</label>
+          <select id="pdf-priority">
+            ${['p3','p2','p1','p0'].map(s => `<option value="${s}" ${priority===s?'selected':''}>${s.toUpperCase()}</option>`).join('')}
+          </select>
+        </div>
+        <div class="voidr-form-actions">
+          <button type="submit" class="voidr-button-primary">Save</button>
+          <button type="button" class="voidr-button-secondary" id="pdf-cancel">Cancel</button>
+        </div>
+      </form>
+    `;
+    if (loader) loader.style.display = 'none';
+    wrapper.style.display = 'block';
+
+    try { document.getElementById('pdf-cancel')?.addEventListener('click', () => showDefectsView()); } catch (_) {}
+    try {
+      const form = document.getElementById('pdf-edit-form');
+      form?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const updates = {
+          title: document.getElementById('pdf-title').value.trim(),
+          description: document.getElementById('pdf-description').value.trim(),
+          applicationEnvironment: document.getElementById('pdf-env').value.trim(),
+          status: document.getElementById('pdf-status').value,
+          severity: document.getElementById('pdf-severity').value,
+          priority: document.getElementById('pdf-priority').value
+        };
+        try {
+          await window.defectsService.updateDefect(slug, updates);
+          showNotification('Defect updated', 'success');
+          showDefectsView();
+          try { await updateDefectsListInPopup(); } catch (_) {}
+        } catch (err) {
+          showNotification('Failed to update defect: ' + (err?.message || 'Unknown error'), 'error');
+        }
+      });
+    } catch (_) {}
+  } catch (e) {
+    const wrapper = document.getElementById('defect-detail-form-wrapper');
+    const loader = document.getElementById('defect-detail-loading');
+    if (loader) loader.style.display = 'none';
+    if (wrapper) wrapper.innerHTML = `<div class=\"voidr-empty-state\"><h4>Failed to load defect</h4><p>${e?.message || 'Unknown error'}</p></div>`;
   }
 }
 
@@ -1047,7 +1181,7 @@ window.submitNewDefectInPopup = async function (event) {
   const severity = document.getElementById('pdf-severity').value;
   const priority = document.getElementById('pdf-priority').value;
   const reproducibility = document.getElementById('pdf-repro').value;
-  if (!title || !description) { alert('Please fill in title and description'); return; }
+  if (!title || !description) { showNotification('Please fill in title and description', 'error'); return; }
   try {
     const app = testPlanningContext?.application || {};
     // Normalize environment to accepted enum
@@ -1068,10 +1202,10 @@ window.submitNewDefectInPopup = async function (event) {
       sessions: (formState?.lastSessionId ? [formState.lastSessionId] : [])
     };
     await window.defectsService.createDefect(payload);
-    alert('Defect created');
+    showNotification('Defect created', 'success');
     showDefectsView();
   } catch (e) {
-    alert('Failed to create defect: ' + (e?.message || 'Unknown error'));
+    showNotification('Failed to create defect: ' + (e?.message || 'Unknown error'), 'error');
   }
 }
 
@@ -1247,7 +1381,6 @@ function updateTestPlanningContent() {
         </svg>
         <h4>No Application Found</h4>
         <p>This URL is not configured in any Voidr application.</p>
-        <button onclick="refreshTestPlanningContext()" class="voidr-button-secondary">Refresh</button>
       </div>
     `;
     return;
@@ -1325,13 +1458,7 @@ function renderNestedAccordions(container) {
           <h4>📱 ${application.name}</h4>
           <p>${testPlan.name} (${content.modules ? content.modules.length : 0} modules)</p>
         </div>
-        <button onclick="refreshTestPlanningContext()" class="voidr-button-secondary voidr-small">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <polyline points="1,4 1,10 7,10"/>
-            <polyline points="23,20 23,14 17,14"/>
-            <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/>
-          </svg>
-        </button>
+        
       </div>
       
       <!-- Nested Accordions -->
@@ -1421,6 +1548,10 @@ function renderNestedAccordions(container) {
                             <p class="voidr-test-case-objective">${
                               testCase.objective || 'No objective defined'
                             }</p>
+                            ${testCase.sessionId ? `
+                            <div class="voidr-test-case-session" title="Associated session">
+                              <span class="voidr-badge voidr-badge-session">Session: ${testCase.sessionId}</span>
+                            </div>` : ''}
                           </div>
                           <div class="voidr-test-case-actions">
                             <button class="voidr-action-btn" data-action="edit-case" data-case-id="${
@@ -1931,6 +2062,10 @@ function renderCasesList(container) {
               <div class="voidr-test-case-info">
                 <span class="voidr-test-case-name">${testCase.name}</span>
                 <p class="voidr-test-case-objective">${testCase.objective || 'No objective defined'}</p>
+                ${testCase.sessionId ? `
+                <div class="voidr-test-case-session" title="Associated session">
+                  <span class="voidr-badge voidr-badge-session">Session: ${testCase.sessionId}</span>
+                </div>` : ''}
               </div>
               <div class="voidr-test-case-actions">
                 <button class="voidr-action-btn" data-action="edit-case" data-case-id="${testCase.slug}" title="Edit Test Case">
@@ -2037,6 +2172,20 @@ function renderEditTestCaseView() {
             Record session
           </button>
         </div>
+        ${formState.editingTestCaseData?.testCase?.sessionId ? `
+        <div class="voidr-form-group" style="margin-top:8px;">
+          <div style="display:flex;align-items:center;gap:8px;background:linear-gradient(180deg,#0b0f14 0%,#070a0f 100%);border:1px solid rgba(255,255,255,0.12);padding:10px 12px;border-radius:10px;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="10"/>
+              <circle cx="12" cy="12" r="3"/>
+            </svg>
+            <div style="display:flex;flex-direction:column;gap:2px;">
+              <span style="font-size:12px;color:var(--text-primary);">Associated session</span>
+              <span style="font-size:11px;color:var(--text-secondary);">${formState.editingTestCaseData.testCase.sessionId}</span>
+            </div>
+          </div>
+        </div>
+        ` : ''}
         ${formState.lastSessionId ? `
         <div class="voidr-form-group" style="margin-top:8px;">
           <div id="pdf-session-card" style="display:flex;align-items:center;gap:8px;background:linear-gradient(180deg,#0b0f14 0%,#070a0f 100%);border:1px solid rgba(255,255,255,0.12);padding:10px 12px;border-radius:10px;">
@@ -2895,13 +3044,12 @@ async function handleDownloadUploadedFile(index) {
 
 async function handleStartSessionRecording() {
   try {
-    const tcName = formState.newItemName || 'Untitled Test Case';
-    const recordingMode = (typeof currentView !== 'undefined' && currentView === 'defects') ? 'defect' : 'test-case';
+    const { recordingMode, tcName, slug } = buildPopupRecordingContext();
     showNotification('Starting recording...', 'info', 1200);
     chrome.runtime.sendMessage(
       {
       action: 'forwardToLastContent',
-      payload: { action: 'voidr:startSessionRecording', testCaseName: tcName, mode: recordingMode }
+      payload: { action: 'voidr:startSessionRecording', testCaseName: tcName, mode: recordingMode, slug: slug }
       },
       (response) => {
         try {
@@ -3018,7 +3166,7 @@ function showFormProgress(step, total) {
 }
 
 function editTestCase(caseId) {
-  alert(`Edit Test Case ${caseId} - to be implemented`);
+  showNotification(`Edit Test Case ${caseId} - to be implemented`, 'info');
 }
 
 // Global functions for test planning
@@ -3056,14 +3204,16 @@ window.handleSyncAll = async function () {
 };
 
 window.showQuickTestCaseForm = function () {
-  alert('Quick test case form - to be implemented');
+  showNotification('Quick test case form - to be implemented', 'info');
 };
 
 window.showFullTestPlan = function () {
   // Open full test plan in platform
   if (testPlanningContext?.testPlan) {
+    const env = (typeof globalThis !== 'undefined' && globalThis.__VOIDR_ENV__) || {};
+    const platformUrl = env.VOIDR_PLATFORM_URL || 'https://canary.voidr.co';
     chrome.tabs.create({
-      url: `https://canary.voidr.co/test-planning/${testPlanningContext.testPlan.id}`,
+      url: `${platformUrl}/test-planning/${testPlanningContext.testPlan.id}`,
       active: true
     });
   }
@@ -3074,7 +3224,7 @@ window.captureScreenshot = function () {
   chrome.runtime.sendMessage({ action: 'captureScreenshot' }, (response) => {
     if (response?.screenshot) {
       console.log('Screenshot captured:', response.screenshot.length, 'bytes');
-      alert('Screenshot captured successfully!');
+      showNotification('Screenshot captured successfully!', 'success');
     }
   });
 };
@@ -3086,7 +3236,7 @@ window.reportBug = async function () {
   const steps = document.getElementById('bug-steps')?.value;
 
   if (!title?.trim() || !description?.trim()) {
-    alert('Please fill in at least the title and description of the bug.');
+    showNotification('Please fill in at least the title and description of the bug.', 'error');
     return;
   }
 
@@ -3110,7 +3260,7 @@ window.reportBug = async function () {
     });
 
     if (response.success) {
-      alert('Bug reported successfully!');
+      showNotification('Bug reported successfully!', 'success');
       // Clear fields
       document.getElementById('bug-title').value = '';
       document.getElementById('bug-description').value = '';
@@ -3119,11 +3269,11 @@ window.reportBug = async function () {
       // Return to welcome
       navigateToWelcome();
     } else {
-      alert('Error reporting bug: ' + (response.error || 'Unknown error'));
+      showNotification('Error reporting bug: ' + (response.error || 'Unknown error'), 'error');
     }
   } catch (error) {
     console.error('Error reporting bug:', error);
-    alert('Error reporting bug. Check your connection.');
+    showNotification('Error reporting bug. Check your connection.', 'error');
   }
 };
 
@@ -3189,6 +3339,7 @@ window.addEventListener('focus', async () => {
 function updateDefectSessionUI() {
   try {
     const card = document.getElementById('pdf-session-card');
+    const assoc = document.getElementById('pdf-associated-session');
     const sid = (typeof formState !== 'undefined' && formState.lastSessionId) ? formState.lastSessionId : '';
     if (card) {
       const container = card;
@@ -3199,6 +3350,9 @@ function updateDefectSessionUI() {
       } else {
         container.style.display = 'none';
       }
+    }
+    if (assoc && popupDraft?.sessionId) {
+      assoc.textContent = popupDraft.sessionId;
     }
   } catch (_) {}
 }

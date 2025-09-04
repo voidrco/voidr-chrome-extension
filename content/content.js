@@ -322,6 +322,7 @@ function ensureRefocusButtonPresent() {
 // Session recording overlay + collector
 async function startVoidrSessionRecording(testCaseName, options = {}) {
   try {
+    const { mode, slug, userId, effectiveName } = buildRecordingContext(testCaseName, options);
     // Remove existing overlays
     document.querySelectorAll('.voidr-rec-border, .voidr-rec-countdown, .voidr-rec-panel').forEach((n) => n.remove());
 
@@ -356,7 +357,7 @@ async function startVoidrSessionRecording(testCaseName, options = {}) {
       <div class="voidr-rec-icon">
         <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" fill="#ef4444"><circle cx="12" cy="12" r="6" /></svg>
       </div>
-      <div class="voidr-rec-title">Recording session for &quot;${escapeHtml(testCaseName)}&quot;</div>
+      <div class="voidr-rec-title">Recording session for &quot;${escapeHtml(effectiveName)}&quot;</div>
       <div class="voidr-rec-actions">
         <button class="voidr-rec-btn" id="voidr-rec-rollback">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -382,28 +383,10 @@ async function startVoidrSessionRecording(testCaseName, options = {}) {
         .then((cfg) => {
           const cd = cfg && (cfg.data || cfg);
           const apiKey = cd?.apiKey || cd?.data?.apiKey;
-          chrome.runtime.sendMessage({
-            action: 'voidr:injectCollectorAndInit',
-            initOptions: {
-              user: { id: 'voidr-defect-assistant' },
-              apiKey: apiKey,
-              system: true,
-              url: window.location.href,
-              meta: { testCase: testCaseName, mode: options && options.mode ? options.mode : 'test-case' }
-            }
-          }, () => {});
+          sendCollectorInit({ mode, slug, userId, effectiveName, apiKey });
         })
         .catch(() => {
-          chrome.runtime.sendMessage({
-            action: 'voidr:injectCollectorAndInit',
-            initOptions: {
-              user: { id: 'voidr-defect-assistant' },
-              apiKey: undefined,
-              system: true,
-              url: window.location.href,
-              meta: { testCase: testCaseName, mode: options && options.mode ? options.mode : 'test-case' }
-            }
-          }, () => {});
+          sendCollectorInit({ mode, slug, userId, effectiveName, apiKey: undefined });
         });
     } catch (_) {}
 
@@ -430,6 +413,33 @@ async function startVoidrSessionRecording(testCaseName, options = {}) {
 
 function escapeHtml(str) {
   try { return str.replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); } catch (_){ return str; }
+}
+
+// Recording helpers
+function buildRecordingContext(providedName, options = {}) {
+  const mode = (options && options.mode) ? options.mode : 'test-case';
+  const slug = (options && options.slug) ? options.slug : undefined;
+  const timestamp = new Date().toISOString();
+  const effectiveName = (providedName && String(providedName).trim())
+    ? providedName
+    : (mode === 'defect' ? `Sample Defect ${timestamp}` : `Sample Test Case ${timestamp}`);
+  const userId = mode === 'defect' ? 'voidr-defect-assistant' : 'voidr-test-case-assistant';
+  return { mode, slug, userId, effectiveName };
+}
+
+function sendCollectorInit(init) {
+  try {
+    chrome.runtime.sendMessage({
+      action: 'voidr:injectCollectorAndInit',
+      initOptions: {
+        user: { id: init.userId },
+        apiKey: init.apiKey,
+        system: true,
+        url: window.location.href,
+        meta: { testCase: init.effectiveName, mode: init.mode, slug: init.slug }
+      }
+    }, () => {});
+  } catch (_) {}
 }
 
 // Funções do widget
@@ -643,7 +653,7 @@ function captureScreenshot() {
   chrome.runtime.sendMessage({ action: 'captureScreenshot' }, (response) => {
     if (response?.screenshot) {
       console.log('Screenshot capturado:', response.screenshot.length, 'bytes');
-      alert('Screenshot captured successfully!');
+      try { chrome.runtime.sendMessage({ action: 'showToast', type: 'success', message: 'Screenshot captured successfully!' }); } catch (_) {}
     }
   });
 }
@@ -863,7 +873,7 @@ function renderUploadedAttachments() {
 
 window.removeUploadedAttachment = function (idx) { if (idx >= 0 && idx < newDefectDraft.attachments.length) { newDefectDraft.attachments.splice(idx, 1); renderUploadedAttachments(); } };
 
-window.startRecordingForDefect = function () { const titleEl = document.getElementById('df-title'); const name = titleEl && titleEl.value ? titleEl.value : 'Defect Session'; try { startVoidrSessionRecording(name); } catch (_) {} };
+window.startRecordingForDefect = function () { const titleEl = document.getElementById('df-title'); const name = titleEl && titleEl.value ? titleEl.value : 'Defect Session'; try { startVoidrSessionRecording(name, { mode: 'defect' }); } catch (_) {} };
 
 window.linkLastSessionForDefect = function () { if (lastCapturedSessionId) { newDefectDraft.sessionId = lastCapturedSessionId; alert('Linked session: ' + lastCapturedSessionId); } };
 
@@ -954,7 +964,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       showAuthSuccessNotification();
       break;
     case 'voidr:startSessionRecording':
-      startVoidrSessionRecording(request.testCaseName || 'Test Case', { mode: request.mode });
+      startVoidrSessionRecording(request.testCaseName || 'Test Case', { mode: request.mode, slug: request.slug });
       break;
     case 'voidr:sessionCaptured':
       if (request.sessionId) {

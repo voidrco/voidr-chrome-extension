@@ -95,17 +95,35 @@ class DefectsService {
   // List defects with filters
   async listDefects(filters = {}) {
     const params = new URLSearchParams();
-    const { page = 1, limit = 20, sortBy = 'createdAt', sortDir = 'desc' } = filters;
-    params.set('page', String(page));
-    params.set('limit', String(limit));
-    params.set('sortBy', sortBy);
-    params.set('sortDir', sortDir);
-    ['slug', 'status', 'severity', 'priority', 'assignee', 'applicationId', 'applicationEnvironment', 'search']
+
+    const isValid = (val) => val !== null && val !== undefined && String(val).trim() !== '' && String(val).toLowerCase() !== 'undefined' && String(val).toLowerCase() !== 'null';
+
+    // Only include pagination and sorting if explicitly provided and valid
+    if (isValid(filters.page)) {
+      const p = Number(filters.page);
+      if (Number.isFinite(p) && p > 0) params.set('page', String(p));
+    }
+    if (isValid(filters.limit)) {
+      const l = Number(filters.limit);
+      if (Number.isFinite(l) && l > 0) params.set('limit', String(l));
+    }
+    if (isValid(filters.sortBy)) {
+      params.set('sortBy', String(filters.sortBy));
+    }
+    if (isValid(filters.sortDir)) {
+      const dir = String(filters.sortDir).toLowerCase();
+      if (dir === 'asc' || dir === 'desc') params.set('sortDir', dir);
+    }
+
+    ['slug', 'status', 'severity', 'priority', 'assignee', 'applicationEnvironment', 'search']
       .forEach((key) => {
-        if (filters[key]) params.set(key, String(filters[key]));
+        const val = filters[key];
+        if (isValid(val)) params.set(key, String(val));
       });
 
-    const res = await this.makeAPIRequest(`/defects?${params.toString()}`, 'GET');
+    const query = params.toString();
+    const endpoint = query ? `/defects?${query}` : '/defects';
+    const res = await this.makeAPIRequest(endpoint, 'GET');
     if (!res || !res.success) return { items: [], total: 0, page: 1, limit: Number(limit) };
     const payload = res.data || {};
     const data = payload.data || payload || [];

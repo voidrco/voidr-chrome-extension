@@ -1,15 +1,34 @@
 // Background script para a extensão Voidr Testing Assistant
 
-// Configurações da API - Idêntico à aplicação
-const API_CONFIG = {
+// Carrega variáveis de ambiente, se disponíveis
+try { importScripts('config/env.js'); } catch (_) { try { importScripts('../config/env.js'); } catch (__) {} }
+
+// Configurações da API - com overrides via __VOIDR_ENV__
+const __ENV__ = (typeof globalThis !== 'undefined' && globalThis.__VOIDR_ENV__) || {};
+const DEFAULTS = {
   baseUrl: 'https://voidr-service-785568282479.us-central1.run.app/v1',
   platformUrl: 'https://canary.voidr.co',
+  auth0Domain: 'bounties4.us.auth0.com',
+  auth0ClientId: 'c4eLr6uaq98KB2dCKNkmP9bz6sS3gJfS',
+  auth0Audience: 'https://service.bounties4.com/'
+};
+
+const RESOLVED = {
+  baseUrl: __ENV__.VOIDR_API_BASE_URL || DEFAULTS.baseUrl,
+  platformUrl: __ENV__.VOIDR_PLATFORM_URL || DEFAULTS.platformUrl,
+  auth0Domain: __ENV__.VOIDR_AUTH0_DOMAIN || DEFAULTS.auth0Domain,
+  auth0ClientId: __ENV__.VOIDR_AUTH0_CLIENT_ID || DEFAULTS.auth0ClientId,
+  auth0Audience: __ENV__.VOIDR_AUTH0_AUDIENCE || DEFAULTS.auth0Audience
+};
+
+const API_CONFIG = {
+  baseUrl: RESOLVED.baseUrl,
+  platformUrl: RESOLVED.platformUrl,
   auth0: {
-    domain: 'bounties4.us.auth0.com',
-    clientId: 'c4eLr6uaq98KB2dCKNkmP9bz6sS3gJfS',
-    audience: 'https://service.bounties4.com/',
-    cacheKey:
-      '@@auth0spajs@@::c4eLr6uaq98KB2dCKNkmP9bz6sS3gJfS::https://service.bounties4.com/::openid profile email'
+    domain: RESOLVED.auth0Domain,
+    clientId: RESOLVED.auth0ClientId,
+    audience: RESOLVED.auth0Audience,
+    cacheKey: `@@auth0spajs@@::${RESOLVED.auth0ClientId}::${RESOLVED.auth0Audience}::openid profile email`
   }
 };
 
@@ -151,7 +170,7 @@ chrome.runtime.onInstalled.addListener((details) => {
   chrome.storage.sync.set({
     voidrSettings: {
       widgetEnabled: true,
-      apiEndpoint: 'https://voidr-service-785568282479.us-central1.run.app/v1',
+      apiEndpoint: API_CONFIG.baseUrl,
       theme: 'dark'
     }
   });
@@ -780,7 +799,7 @@ chrome.action.onClicked.addListener(() => {
 
 // Listener para detectar quando a plataforma Voidr é acessada
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
-  if (changeInfo.status === 'complete' && tab.url && tab.url.startsWith('https://canary.voidr.co')) {
+  if (changeInfo.status === 'complete' && tab.url && tab.url.startsWith(API_CONFIG.platformUrl)) {
     console.log('Voidr platform detected, syncing authentication...');
 
     // Verifica se é a rota de conexão da extensão

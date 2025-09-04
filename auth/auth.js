@@ -1,15 +1,18 @@
 // Script de autenticação para a extensão Voidr Testing Assistant
 
-// Configurações da API - Idêntico à aplicação
+// Carrega variáveis de ambiente se disponíveis
+const __ENV__ = (typeof globalThis !== 'undefined' && globalThis.__VOIDR_ENV__) || {};
+
+// Configurações da API - respeitando env overrides
 const API_CONFIG = {
-  baseUrl: 'https://voidr-service-785568282479.us-central1.run.app/v1',
-  platformUrl: 'https://canary.voidr.co',
+  baseUrl: __ENV__.VOIDR_API_BASE_URL || 'https://voidr-service-785568282479.us-central1.run.app/v1',
+  platformUrl: __ENV__.VOIDR_PLATFORM_URL || 'https://canary.voidr.co',
   auth0: {
-    domain: 'bounties4.us.auth0.com',
-    clientId: 'c4eLr6uaq98KB2dCKNkmP9bz6sS3gJfS',
-    audience: 'https://service.bounties4.com/',
+    domain: __ENV__.VOIDR_AUTH0_DOMAIN || 'bounties4.us.auth0.com',
+    clientId: __ENV__.VOIDR_AUTH0_CLIENT_ID || 'c4eLr6uaq98KB2dCKNkmP9bz6sS3gJfS',
+    audience: __ENV__.VOIDR_AUTH0_AUDIENCE || 'https://service.bounties4.com/',
     cacheKey:
-      '@@auth0spajs@@::c4eLr6uaq98KB2dCKNkmP9bz6sS3gJfS::https://service.bounties4.com/::openid profile email'
+      `@@auth0spajs@@::${__ENV__.VOIDR_AUTH0_CLIENT_ID || 'c4eLr6uaq98KB2dCKNkmP9bz6sS3gJfS'}::${__ENV__.VOIDR_AUTH0_AUDIENCE || 'https://service.bounties4.com/'}::openid profile email`
   },
   endpoints: {
     me: '/auth/me',
@@ -297,7 +300,7 @@ async function checkPlatformAuth() {
 async function getTokenFromPlatform() {
   return new Promise((resolve) => {
     // Injeta script na plataforma para buscar token
-    chrome.tabs.query({ url: 'https://canary.voidr.co/*' }, (tabs) => {
+    chrome.tabs.query({ url: `${API_CONFIG.platformUrl}/*` }, (tabs) => {
       if (tabs.length > 0) {
         chrome.scripting.executeScript(
           {

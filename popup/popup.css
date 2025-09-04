@@ -69,6 +69,12 @@ body {
   color: var(--text-primary);
 }
 
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .logo-icon {
   height: 24px;
   width: auto;
@@ -488,21 +494,20 @@ body {
   padding: 20px;
 }
 
-/* Organization card (above welcome) */
+/* Organization card (header placement) */
 .voidr-org-card {
-  margin: 12px 20px 0;
-  padding: 10px 12px;
+  padding: 6px 8px;
   display: flex;
   align-items: center;
   gap: 10px;
-  background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.015));
+  background: var(--background-elevated);
   border: 1px solid var(--border-color);
-  border-radius: 10px;
+  border-radius: 8px;
 }
 .voidr-org-logo {
-  width: 28px;
-  height: 28px;
-  border-radius: 6px;
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
   overflow: hidden;
   background: var(--hover-color);
   display: flex;
@@ -1265,6 +1270,71 @@ body {
   opacity: 0.5;
   cursor: not-allowed;
   pointer-events: none;
+}
+
+/* Metallic shimmer skeleton for dark background */
+.voidr-skeleton-container {
+  padding: 20px;
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.voidr-skeleton {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  display: flex;
+  flex: 1 1 auto;
+}
+
+.voidr-skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(110deg, rgba(255,255,255,0), rgba(255,255,255,0.14), rgba(255,255,255,0));
+  transform: translateX(-100%);
+  animation: voidr-shimmer 1.25s ease-in-out infinite;
+}
+
+@keyframes voidr-shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+.voidr-skeleton-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.voidr-skeleton-avatar { width: 32px; height: 32px; border-radius: 50%; background: rgba(255,255,255,0.06); }
+.voidr-skeleton-line { height: 10px; border-radius: 6px; background: rgba(255,255,255,0.06); }
+.voidr-skeleton-line--w1 { width: 35%; }
+.voidr-skeleton-line--w2 { width: 55%; }
+.voidr-skeleton-line--w3 { width: 70%; }
+.voidr-skeleton-line--w4 { width: 90%; }
+
+.voidr-skeleton-body { padding: 16px; display: flex; flex-direction: column; gap: 12px; flex: 1 1 auto; min-height: 0; }
+
+.voidr-skeleton-card {
+  background: var(--background-elevated);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.voidr-skeleton-grid { display: grid; grid-template-columns: 1fr; gap: 12px; height: 100%; grid-auto-rows: minmax(80px, 1fr); align-content: stretch; }
+
+.voidr-skeleton-card .voidr-skeleton-line { width: 100%; height: 12px; }
+.voidr-skeleton-card .voidr-skeleton-line + .voidr-skeleton-line { margin-top: 8px; }
+
+@media (min-width: 440px) {
+  .voidr-skeleton-grid { grid-template-columns: 1fr 1fr; }
 }
 
 .voidr-button-primary:hover:not(:disabled) {
