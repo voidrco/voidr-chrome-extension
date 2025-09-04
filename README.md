@@ -1,212 +1,202 @@
-<p align="center">
-  <img src="assets/logo-light.svg" alt="Voidr logo" width="140" />
-</p>
+# Voidr Testing Assistant
 
-# Voidr Testing Assistant – Chrome Extension (Official)
+<img src="https://unicorn-images.b-cdn.net/277503c3-f842-45d5-88de-69c30719b278?optimizer=gif" width="200" alt="Voidr Logo" />
 
-The official Chrome extension for Voidr’s AI-powered testing assistant. Plan tests and report defects directly on any web page.
+**Chrome extension for in‑context test planning, exploration, and defect reporting**
 
-## 🚀 Features (PoC)
+> **voidr-testing-assistant** brings a floating, workspace‑aware testing experience to any website.
+> It lightly integrates with the Voidr platform, using authenticated API calls and a Manifest V3 service worker.
 
-### Current Version (v1.0.0)
+## Overview
 
-- ✅ Full authentication flow with dark metallic UI
-- ✅ Floating widget injectable on any page (authenticated users)
-- ✅ Test planning interface (API-ready)
-- ✅ Bug report interface (API-ready)
-- ✅ Full-page screenshots
-- ✅ Persistent settings and JWT token management
-- ✅ Popup control with auth check
+A focused, browser‑native assistant for test planning, exploratory testing, and defect reporting directly inside the page under test. Lightly integrated with the Voidr platform, it keeps quality work close to actual user experience while supporting local, staging, and production environments.
 
-### Next Iterations
+### Highlights
+- **Floating popup** that opens instantly and reuses the same window to avoid clutter
+- **Defect reporting** with screenshots, severity/priority, and automatic context
+- **Test planning shortcut** to open the full plan on the platform when needed
+- **Session hooks** to start/stop sessions and capture session identifiers
+- **Authentication sync** with the platform and safe token lifecycle handling
+- **Environment configuration** via `config/env.js` for quick local/prod switching
 
-- 🔄 Interactive element selection with highlight
-- 🔄 Auto-generation of test cases from interactions
-- 🔄 Element-scoped screenshots
-- 🔄 Session recording with replay
-- 🔄 Automated accessibility checks
-- 🔄 Offline sync for collected data
+---
 
-## 📁 Project Structure
+## Features
+
+- **Popup workspace**
+  - Minimal, fast UI with modern icons and responsive layout
+  - Re-focus existing popup windows instead of spawning duplicates
+  - Quick actions: inject widget, capture screenshot, open test plan
+
+- **Defect creation (API-backed)**
+  - Create defects with title, description, severity, priority, reproducibility
+  - Auto‑capture environment details (OS, browser)
+  - File attachments via private storage service
+  - Uses a background service worker to submit authenticated API requests
+
+- **Screenshots**
+  - Capture the visible tab and attach as evidence when needed
+
+- **Widget injection**
+  - Inject the Voidr testing widget in the active tab on demand
+
+- **Sessions**
+  - Optional integration with the Voidr Collector to obtain a `sessionId`
+  - Broadcast session start/stop events to keep UIs in sync
+
+- **Authentication**
+  - Sync with the Voidr platform; validate and refresh state in the background
+  - Clear expired tokens automatically and prompt for reconnection
+
+- **Settings and storage**
+  - Persist user settings and last context via `chrome.storage`
+
+- **Environment config**
+  - `config/env.js` exposes `__VOIDR_ENV__` with sensible defaults:
+    - `VOIDR_API_BASE_URL` (default dev: `http://localhost:8000/v1`)
+    - `VOIDR_PLATFORM_URL` (default dev: `http://localhost:3030`)
+    - Optional: `VOIDR_AUTH0_DOMAIN`, `VOIDR_AUTH0_CLIENT_ID`, `VOIDR_AUTH0_AUDIENCE`
+  - Example template provided at `config/env.example.js`
+
+---
+
+## Project Structure
 
 ```
-chrome-extension/
-├── manifest.json          # Extension configuration
-├── auth/                  # Authentication system
-│   ├── auth.html         # Login interface
-│   ├── auth.css          # Dark metallic styles
-│   └── auth.js           # Authentication logic
+.
+├── manifest.json
+├── assets/
+│   ├── logo-light.svg
+│   └── lucide-icons.js
+├── auth/
+│   ├── auth.css
+│   ├── auth.html
+│   └── auth.js
 ├── background/
-│   └── background.js      # Service worker (API integration)
+│   └── background.js
 ├── content/
-│   ├── content.js         # Injected script (auth check)
-│   └── content.css        # Widget styles
+│   ├── content.css
+│   └── content.js
 ├── popup/
-│   ├── popup.html         # Extension popup UI
-│   ├── popup.css          # Popup styles
-│   └── popup.js           # Popup logic (with auth)
+│   ├── popup.css
+│   ├── popup.html
+│   └── popup.js
+├── services/
+│   ├── defectsService.js
+│   ├── privateStorageService.js
+│   └── testPlanningService.js
 ├── widget/
-│   └── widget.js          # Standalone widget
+│   └── widget.js
 ├── icons/
-│   ├── create-icons.html  # Icon generator
-│   └── README.md          # Icon instructions
-├── build.md               # Build & deploy guide
-└── README.md              # This file
+│   ├── icon16.png
+│   ├── icon32.png
+│   ├── icon48.png
+│   └── icon128.png
+├── config/
+│   ├── env.example.js
+│   └── env.js
+├── build.md
+└── README.md
 ```
 
-## 🛠️ Development Setup
+---
 
-1. Clone the repository:
+## Development Setup
 
-   ```bash
-   git clone [repo-url]
-   cd voidr-chrome-extension
-   ```
-
-2. Open Chrome and navigate to `chrome://extensions/`
-
-3. Enable Developer Mode (top-right toggle)
-
-4. Click "Load unpacked"
-
-5. Select the project folder (this repo root)
-
-6. The extension should appear in the list
-
-## 🎯 Usage
-
-### 1) First Access – Authentication
-
-1. Install the extension (see above)
-2. Click the extension icon in the toolbar
-3. Click "Login" if not authenticated
-4. Login to the Voidr platform in the opened tab (`localhost:3030` in dev)
-5. Return to the extension – it will automatically detect authentication
-
-### 2) Via Popup (Authenticated User)
-
-1. Click the extension icon
-2. View user information at the top
-3. Use the buttons to:
-   - Toggle Widget: show/hide on current page
-   - Force Inject: inject widget into the page
-   - Capture Screen: full-page screenshot
-
-### 3) On the Page (Widget)
-
-1. The widget appears as a floating button (bottom-right)
-2. Click to open a panel with two tabs:
-   - Planning: create test cases (API-ready)
-   - Bug Report: submit issues (API-ready)
-
-### 4) Settings
-
-- Auto-inject: widget automatically on new pages
-- Dark theme by default
-- JWT token managed and refreshed automatically
-
-## 🔧 Development Notes
-
-- `manifest.json`: permissions, scripts, extension configuration
-- `background/background.js`: service worker for communication
-- `content/content.js`: main injected script
-- `popup/`: extension control interface
-- `widget/widget.js`: standalone widget for manual injection
-
-### Component Communication
-
-```
-Popup ←→ Background ←→ Content Script ←→ Widget
-```
-
-- Popup: controls settings and actions
-- Background: storage and messaging
-- Content Script: injects and controls widget
-- Widget: UI for test planning and bug reporting
-
-### Next Development Steps
-
-1. API Integration
-
-   ```javascript
-   const API_BASE = 'https://voidr-service-785568282479.us-central1.run.app';
-   ```
-
-2. Element Selection
-
-   - Element highlight
-   - CSS selector capture
-   - Auto-generate test cases
-
-3. Advanced Capture
-
-   - Element-only screenshots
-   - Interaction recording
-   - Performance data
-
-## 🚨 Current Limitations
-
-- Mocked UI (no live API integration)
-- Element selection not implemented
-- Basic screenshots (full page only)
-- No persistence for collected test data
-
-## 🔒 Permissions
-
-The extension requests the following permissions:
-
-- `activeTab`: access the active tab
-- `storage`: save extension settings
-- `scripting`: inject scripts into pages
-- `host_permissions`: run on all sites
-
-## 🐛 Debugging
-
-1. Popup: right‑click icon → "Inspect popup"
-2. Background: go to `chrome://extensions/` → "Service worker"
-3. Content Script: DevTools on the target page
-4. Logs: all components log to console
-
-## 📝 Implementation Notes
-
-- Manifest V3
-- Isolated styles with max z-index
-- Asynchronous messaging between components
-- Settings persist between sessions
-- Responsive widget (mobile-friendly)
-
-## 🎨 Design System
-
-- Colors: gradient #667eea → #764ba2
-- Theme: dark by default
-- Typography: system fonts (-apple-system, etc.)
-- Components: consistent with Voidr platform
-
-## 📦 Production Build
-
-Use these steps to produce a ZIP ready for the Chrome Web Store.
-
-1) Prepare assets
-- Ensure `icons/icon16.png`, `icons/icon32.png`, `icons/icon48.png`, `icons/icon128.png` exist
-- Bump `version` in `manifest.json` and point API URLs to production
-
-2) Optional minification
-- You may minify JS/CSS using `uglify-js` and `clean-css-cli` (see `build.md`)
-
-3) Create the ZIP
+1) Clone and install
 
 ```bash
-cd /Users/mjnr/projects/voidr-chrome-extension
-zip -r voidr-extension.zip . -x "*.md" "*.git*" "node_modules/*"
+git clone <repo-url>
+cd voidr-chrome-extension
+npm install
 ```
 
-4) Local QA
-- Go to `chrome://extensions/`
-- Enable Developer Mode
-- Click "Load unpacked" (dev) or "Load packed" (select `voidr-extension.zip`)
+2) Load unpacked in Chrome
 
-5) Publish
-- Upload `voidr-extension.zip` to the Chrome Web Store Developer Console
-- Add screenshots and description; submit for review
+```text
+chrome://extensions → Enable Developer Mode → Load unpacked → select this folder
+```
 
-See `build.md` for the full production guide and checklist.
+3) Configure environment (optional)
+
+```text
+Copy config/env.example.js → config/env.js and adjust values as needed
+Defaults for local dev:
+- VOIDR_API_BASE_URL = http://localhost:8000/v1
+- VOIDR_PLATFORM_URL = http://localhost:3030
+```
+
+---
+
+## Usage
+
+1) Click the extension icon to open the popup
+
+2) Authenticate (if prompted). The extension syncs with the Voidr platform and validates your session.
+
+3) Use quick actions:
+- Inject the widget into the active tab
+- Capture a screenshot of the visible area
+- Open the full test plan in the platform
+
+4) Report a defect
+- Provide title, description, severity/priority, and reproducibility
+- Attach screenshots or files if needed
+- The background worker sends authenticated API requests on your behalf
+
+---
+
+## Permissions
+
+- `activeTab`: interact with the current tab when you initiate an action
+- `storage`: persist settings and local auth state
+- `scripting`: inject the widget and helper scripts on demand
+- `notifications`: lightweight user feedback
+- `host_permissions`: operate across arbitrary domains under test
+
+---
+
+## Build and Packaging
+
+The repository includes scripts to generate a Chrome Web Store‑ready ZIP in `dist/`.
+
+```bash
+# Build without minification
+npm run extension:build
+
+# Optional: minify JS/CSS then build
+npm run extension:build:minified
+
+# Clean generated ZIP
+npm run extension:clean
+```
+
+See `build.md` for a full production guide (icons, versioning, checklist).
+
+---
+
+## Security & Privacy
+
+- No hidden collection: the extension only injects or captures data when you explicitly trigger an action.
+- Token lifecycle: expired tokens are cleared and you’ll be asked to reconnect securely.
+- Minimal surface: permissions are limited to what’s necessary for testing workflows.
+
+---
+
+## Troubleshooting
+
+- Inspect the popup: right‑click the extension icon → “Inspect popup”
+- Service worker logs: `chrome://extensions` → click the extension → “Service worker”
+- Content script logs: open DevTools in the page you’re testing
+
+---
+
+## About Voidr (brief)
+
+Voidr provides a modern, AI‑enhanced testing platform spanning planning, automation, service virtualization, synthetic data, and analytics—designed to work in your cloud and integrate with CI/CD. This extension keeps day‑to‑day testing close to the page under test while remaining a light companion to the broader platform.
+
+---
+
+## License
+
+UNLICENSED
