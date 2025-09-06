@@ -2847,6 +2847,8 @@ async function handleSubmitTestCase() {
         }
       }
       showNotification('Test case created successfully', 'success');
+      // Clear captured session after successful association to avoid leaking it into other views/forms
+      updateFormState({ lastSessionId: null });
     }
 
     // Reset states and refresh
@@ -2940,8 +2942,8 @@ async function handleSaveEditedTestCase() {
 
     // Refresh content and go back to cases list
     resetFormState();
-    // Preserve last captured session id in case user wants to keep recording across edits
-    updateFormState({ lastSessionId: formState.lastSessionId });
+    // Clear captured session after association to avoid displaying it on unrelated cases
+    updateFormState({ lastSessionId: null });
     await refreshTestPlanningAndShow();
     handleAction('nav-cases', { moduleId: getDomKey(module), suiteId: getDomKey(suite) });
   } catch (error) {

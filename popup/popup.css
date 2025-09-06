@@ -95,6 +95,9 @@ body {
   display: flex;
   flex-direction: column;
   min-height: 0; /* permite que filhos com overflow funcionem */
+  /* Ensure long forms don't get covered by the footer */
+  overflow-y: auto;
+  padding-bottom: 80px; /* space for footer height */
 }
 
 /* User Section */

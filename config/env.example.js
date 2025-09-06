@@ -1,16 +1,17 @@
 (function initializeVoidrEnv() {
-  var defaultEnv = {
+  var env = {
     ENVIRONMENT: 'development',
-    VOIDR_API_BASE_URL: '',
-    VOIDR_API_TOKEN: ''
+    // Local development overrides
+    VOIDR_API_BASE_URL: 'http://localhost:8000/v1',
+    VOIDR_PLATFORM_URL: 'http://localhost:3030',
   };
 
   if (typeof globalThis !== 'undefined') {
-    globalThis.__VOIDR_ENV__ = defaultEnv;
+    globalThis.__VOIDR_ENV__ = env;
   } else if (typeof window !== 'undefined') {
-    window.__VOIDR_ENV__ = defaultEnv;
+    window.__VOIDR_ENV__ = env;
   } else if (typeof self !== 'undefined') {
-    self.__VOIDR_ENV__ = defaultEnv;
+    self.__VOIDR_ENV__ = env;
   }
 })();
 
