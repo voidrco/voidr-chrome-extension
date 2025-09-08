@@ -264,15 +264,15 @@ window.showExtensionInfo = function () {
     timestamp: new Date().toISOString(),
     viewport: {
       width: window.innerWidth,
-      height: window.innerHeight
+      height: window.innerHeight,
     },
     elements: {
       total: document.querySelectorAll('*').length,
       forms: document.querySelectorAll('form').length,
       buttons: document.querySelectorAll('button').length,
       links: document.querySelectorAll('a').length,
-      images: document.querySelectorAll('img').length
-    }
+      images: document.querySelectorAll('img').length,
+    },
   };
 
   console.log('Informações da página:', info);

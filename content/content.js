@@ -44,11 +44,15 @@ async function initVoidrExtension() {
       // Reinsert defensively on navigation/visibility changes
       if (!window.__voidr_refocus_check__) {
         window.__voidr_refocus_check__ = setInterval(() => {
-          try { ensureRefocusButtonPresent(); } catch (_) {}
+          try {
+            ensureRefocusButtonPresent();
+          } catch (_) {}
         }, 3000);
       }
       ['visibilitychange', 'pageshow', 'focus', 'popstate', 'hashchange'].forEach((evt) => {
-        try { window.addEventListener(evt, ensureRefocusButtonPresent, { passive: true }); } catch (_) {}
+        try {
+          window.addEventListener(evt, ensureRefocusButtonPresent, { passive: true });
+        } catch (_) {}
       });
     } catch (_) {}
 
@@ -74,8 +78,15 @@ async function initVoidrExtension() {
     // Inicializa test planning context (force fresh on each init)
     try {
       // wait service and clear cache to force fresh
-      let tries = 0; while (!window.testPlanningService && tries < 30) { await new Promise(r=>setTimeout(r,100)); tries++; }
-      if (window.testPlanningService && typeof window.testPlanningService.clearCache === 'function') {
+      let tries = 0;
+      while (!window.testPlanningService && tries < 30) {
+        await new Promise((r) => setTimeout(r, 100));
+        tries++;
+      }
+      if (
+        window.testPlanningService &&
+        typeof window.testPlanningService.clearCache === 'function'
+      ) {
         window.testPlanningService.clearCache();
       }
     } catch (_) {}
@@ -240,7 +251,7 @@ function setupPageListeners() {
   observer.observe(document.body, {
     childList: true,
     subtree: true,
-    attributes: true
+    attributes: true,
   });
 }
 
@@ -300,9 +311,9 @@ function createRefocusButton() {
         chrome.runtime.sendMessage(
           {
             action: 'focusOrOpenPopup',
-            position: { left, top }
+            position: { left, top },
           },
-          () => {}
+          () => {},
         );
       } catch (e) {}
     });
@@ -324,14 +335,18 @@ async function startVoidrSessionRecording(testCaseName, options = {}) {
   try {
     const { mode, slug, userId, effectiveName } = buildRecordingContext(testCaseName, options);
     // Remove existing overlays
-    document.querySelectorAll('.voidr-rec-border, .voidr-rec-countdown, .voidr-rec-panel').forEach((n) => n.remove());
+    document
+      .querySelectorAll('.voidr-rec-border, .voidr-rec-countdown, .voidr-rec-panel')
+      .forEach((n) => n.remove());
 
     // Countdown 3..2..1
     const countdown = document.createElement('div');
     countdown.className = 'voidr-rec-countdown';
     document.documentElement.appendChild(countdown);
     const border = document.createElement('div');
-    border.className = 'voidr-rec-border' + (options && options.mode === 'defect' ? ' voidr-rec-border--defect' : '');
+    border.className =
+      'voidr-rec-border' +
+      (options && options.mode === 'defect' ? ' voidr-rec-border--defect' : '');
     document.documentElement.appendChild(border);
 
     let value = 3;
@@ -357,7 +372,9 @@ async function startVoidrSessionRecording(testCaseName, options = {}) {
       <div class="voidr-rec-icon">
         <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" fill="#ef4444"><circle cx="12" cy="12" r="6" /></svg>
       </div>
-      <div class="voidr-rec-title">Recording session for &quot;${escapeHtml(effectiveName)}&quot;</div>
+      <div class="voidr-rec-title">Recording session for &quot;${escapeHtml(
+        effectiveName,
+      )}&quot;</div>
       <div class="voidr-rec-actions">
         <button class="voidr-rec-btn" id="voidr-rec-rollback">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -412,33 +429,46 @@ async function startVoidrSessionRecording(testCaseName, options = {}) {
 // Deprecated: collector injection handled by background in MAIN world to satisfy CSP
 
 function escapeHtml(str) {
-  try { return str.replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); } catch (_){ return str; }
+  try {
+    return str.replace(
+      /[&<>"]/g,
+      (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]),
+    );
+  } catch (_) {
+    return str;
+  }
 }
 
 // Recording helpers
 function buildRecordingContext(providedName, options = {}) {
-  const mode = (options && options.mode) ? options.mode : 'test-case';
-  const slug = (options && options.slug) ? options.slug : undefined;
+  const mode = options && options.mode ? options.mode : 'test-case';
+  const slug = options && options.slug ? options.slug : undefined;
   const timestamp = new Date().toISOString();
-  const effectiveName = (providedName && String(providedName).trim())
-    ? providedName
-    : (mode === 'defect' ? `Sample Defect ${timestamp}` : `Sample Test Case ${timestamp}`);
+  const effectiveName =
+    providedName && String(providedName).trim()
+      ? providedName
+      : mode === 'defect'
+      ? `Sample Defect ${timestamp}`
+      : `Sample Test Case ${timestamp}`;
   const userId = mode === 'defect' ? 'voidr-defect-assistant' : 'voidr-test-case-assistant';
   return { mode, slug, userId, effectiveName };
 }
 
 function sendCollectorInit(init) {
   try {
-    chrome.runtime.sendMessage({
-      action: 'voidr:injectCollectorAndInit',
-      initOptions: {
-        user: { id: init.userId },
-        apiKey: init.apiKey,
-        system: true,
-        url: window.location.href,
-        meta: { testCase: init.effectiveName, mode: init.mode, slug: init.slug }
-      }
-    }, () => {});
+    chrome.runtime.sendMessage(
+      {
+        action: 'voidr:injectCollectorAndInit',
+        initOptions: {
+          user: { id: init.userId },
+          apiKey: init.apiKey,
+          system: true,
+          url: window.location.href,
+          meta: { testCase: init.effectiveName, mode: init.mode, slug: init.slug },
+        },
+      },
+      () => {},
+    );
   } catch (_) {}
 }
 
@@ -646,14 +676,20 @@ function showBugReportView() {
 }
 
 // Funções de funcionalidade
- 
+
 // Funções antigas removidas - agora usamos o sistema de navegação interno
 
 function captureScreenshot() {
   chrome.runtime.sendMessage({ action: 'captureScreenshot' }, (response) => {
     if (response?.screenshot) {
       console.log('Screenshot capturado:', response.screenshot.length, 'bytes');
-      try { chrome.runtime.sendMessage({ action: 'showToast', type: 'success', message: 'Screenshot captured successfully!' }); } catch (_) {}
+      try {
+        chrome.runtime.sendMessage({
+          action: 'showToast',
+          type: 'success',
+          message: 'Screenshot captured successfully!',
+        });
+      } catch (_) {}
     }
   });
 }
@@ -663,8 +699,14 @@ async function updateDefectsContent() {
   const container = document.getElementById('defects-content');
   if (!container) return;
 
-  const appId = testPlanningContext?.application?.id || testPlanningContext?.application?._id || null;
-  const filters = { page: defectsContext.page, limit: defectsContext.limit, sortBy: 'createdAt', sortDir: 'desc' };
+  const appId =
+    testPlanningContext?.application?.id || testPlanningContext?.application?._id || null;
+  const filters = {
+    page: defectsContext.page,
+    limit: defectsContext.limit,
+    sortBy: 'createdAt',
+    sortDir: 'desc',
+  };
   if (appId) filters.applicationId = appId;
 
   container.innerHTML = `
@@ -685,17 +727,23 @@ async function updateDefectsContent() {
 
   try {
     let tries = 0;
-    while (!window.defectsService && tries < 30) { await new Promise((r) => setTimeout(r, 100)); tries += 1; }
+    while (!window.defectsService && tries < 30) {
+      await new Promise((r) => setTimeout(r, 100));
+      tries += 1;
+    }
     if (!window.defectsService) throw new Error('Defects service not available');
     const res = await window.defectsService.listDefects(filters);
     defectsContext.items = res.items || [];
     defectsContext.page = res.page || 1;
     defectsContext.limit = res.limit || 20;
-    defectsContext.hasMore = (res.total || 0) > (res.page * res.limit);
+    defectsContext.hasMore = (res.total || 0) > res.page * res.limit;
     renderDefectsList();
   } catch (e) {
     const list = document.getElementById('defects-list');
-    if (list) list.innerHTML = `<div class=\"voidr-empty-state\"><h4>Failed to load defects</h4><p>${(e && e.message) || 'Unknown error'}</p></div>`;
+    if (list)
+      list.innerHTML = `<div class=\"voidr-empty-state\"><h4>Failed to load defects</h4><p>${
+        (e && e.message) || 'Unknown error'
+      }</p></div>`;
   }
 }
 
@@ -707,13 +755,14 @@ function renderDefectsList() {
     list.innerHTML = `<div class=\"voidr-empty-state\"><h4>No defects found</h4><p>Create your first defect for this application.</p></div>`;
     return;
   }
-  const rows = items.map((d) => {
-    const status = (d.status || 'open').toLowerCase();
-    const sev = (d.severity || 'medium').toLowerCase();
-    const pri = (d.priority || 'p2').toUpperCase();
-    const title = d.title || d.slug || 'Untitled';
-    const slug = d.slug || d._id || '';
-    return `
+  const rows = items
+    .map((d) => {
+      const status = (d.status || 'open').toLowerCase();
+      const sev = (d.severity || 'medium').toLowerCase();
+      const pri = (d.priority || 'p2').toUpperCase();
+      const title = d.title || d.slug || 'Untitled';
+      const slug = d.slug || d._id || '';
+      return `
       <div class=\"voidr-defect-item\">
         <div class=\"voidr-defect-main\">
           <div class=\"voidr-defect-title\">${title}</div>
@@ -725,15 +774,20 @@ function renderDefectsList() {
           </div>
         </div>
         <div class=\"voidr-defect-actions\">
-          <button class=\"voidr-button-secondary voidr-small\" onclick=\"viewDefect('${encodeURIComponent(slug)}')\">View</button>
+          <button class=\"voidr-button-secondary voidr-small\" onclick=\"viewDefect('${encodeURIComponent(
+            slug,
+          )}')\">View</button>
         </div>
       </div>
     `;
-  }).join('');
+    })
+    .join('');
   list.innerHTML = `<div class=\"voidr-defects-list\">${rows}</div>`;
 }
 
-window.refreshDefectsList = function () { updateDefectsContent(); };
+window.refreshDefectsList = function () {
+  updateDefectsContent();
+};
 
 window.showNewDefectForm = function () {
   const container = document.getElementById('defects-content');
@@ -757,7 +811,9 @@ window.showNewDefectForm = function () {
         </div>
         <div style=\"display:flex; gap:8px;\">
           <button class=\"voidr-button-secondary voidr-small\" onclick=\"startRecordingForDefect()\">Record Session</button>
-          <button class=\"voidr-button-secondary voidr-small\" onclick=\"linkLastSessionForDefect()\" ${lastCapturedSessionId ? '' : 'disabled'}>${lastCapturedSessionId ? 'Link Last Session' : 'No Session'}</button>
+          <button class=\"voidr-button-secondary voidr-small\" onclick=\"linkLastSessionForDefect()\" ${
+            lastCapturedSessionId ? '' : 'disabled'
+          }>${lastCapturedSessionId ? 'Link Last Session' : 'No Session'}</button>
         </div>
       </div>
 
@@ -772,11 +828,15 @@ window.showNewDefectForm = function () {
         </div>
         <div class=\"voidr-form-group\">
           <label>Application Environment</label>
-          <input id=\"df-env\" type=\"text\" value=\"${optApplication?.environment?.name || ''}\" placeholder=\"production / staging / development\" />
+          <input id=\"df-env\" type=\"text\" value=\"${
+            optApplication?.environment?.name || ''
+          }\" placeholder=\"production / staging / development\" />
         </div>
         <div class=\"voidr-form-group\">
           <label>Session</label>
-          <input id=\"df-session\" type=\"text\" value=\"${lastCapturedSessionId || ''}\" placeholder=\"Session ID (optional)\" />
+          <input id=\"df-session\" type=\"text\" value=\"${
+            lastCapturedSessionId || ''
+          }\" placeholder=\"Session ID (optional)\" />
         </div>
         <div class=\"voidr-form-group\">
           <label>Severity</label>
@@ -825,10 +885,16 @@ window.showNewDefectForm = function () {
     const zone = document.getElementById('df-upload-zone');
     const input = document.getElementById('df-file');
     if (zone) {
-      zone.addEventListener('dragover', (e) => { e.preventDefault(); zone.classList.add('voidr-upload-over'); });
-      zone.addEventListener('dragleave', () => { zone.classList.remove('voidr-upload-over'); });
+      zone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        zone.classList.add('voidr-upload-over');
+      });
+      zone.addEventListener('dragleave', () => {
+        zone.classList.remove('voidr-upload-over');
+      });
       zone.addEventListener('drop', (e) => {
-        e.preventDefault(); zone.classList.remove('voidr-upload-over');
+        e.preventDefault();
+        zone.classList.remove('voidr-upload-over');
         const files = Array.from(e.dataTransfer.files || []);
         if (files.length) handleFilesUpload(files);
       });
@@ -844,9 +910,14 @@ async function handleFilesUpload(files) {
   for (const file of files) {
     try {
       let tries = 0;
-      while (!window.privateStorageService && tries < 30) { await new Promise((r) => setTimeout(r, 100)); tries += 1; }
+      while (!window.privateStorageService && tries < 30) {
+        await new Promise((r) => setTimeout(r, 100));
+        tries += 1;
+      }
       if (!window.privateStorageService) throw new Error('Storage service not available');
-      const uploaded = await window.defectsService.uploadAttachment(file, { pageUrl: window.location.href });
+      const uploaded = await window.defectsService.uploadAttachment(file, {
+        pageUrl: window.location.href,
+      });
       newDefectDraft.attachments.push(uploaded);
       renderUploadedAttachments();
     } catch (e) {
@@ -858,8 +929,13 @@ async function handleFilesUpload(files) {
 function renderUploadedAttachments() {
   const list = document.getElementById('df-uploaded');
   if (!list) return;
-  if (!newDefectDraft.attachments.length) { list.innerHTML = ''; return; }
-  list.innerHTML = newDefectDraft.attachments.map((a, idx) => `
+  if (!newDefectDraft.attachments.length) {
+    list.innerHTML = '';
+    return;
+  }
+  list.innerHTML = newDefectDraft.attachments
+    .map(
+      (a, idx) => `
     <div class=\"voidr-uploaded-item\">
       <div class=\"voidr-uploaded-name\">${a.name}</div>
       <div class=\"voidr-uploaded-actions\">
@@ -868,22 +944,47 @@ function renderUploadedAttachments() {
         </button>
       </div>
     </div>
-  `).join('');
+  `,
+    )
+    .join('');
 }
 
-window.removeUploadedAttachment = function (idx) { if (idx >= 0 && idx < newDefectDraft.attachments.length) { newDefectDraft.attachments.splice(idx, 1); renderUploadedAttachments(); } };
+window.removeUploadedAttachment = function (idx) {
+  if (idx >= 0 && idx < newDefectDraft.attachments.length) {
+    newDefectDraft.attachments.splice(idx, 1);
+    renderUploadedAttachments();
+  }
+};
 
-window.startRecordingForDefect = function () { const titleEl = document.getElementById('df-title'); const name = titleEl && titleEl.value ? titleEl.value : 'Defect Session'; try { startVoidrSessionRecording(name, { mode: 'defect' }); } catch (_) {} };
+window.startRecordingForDefect = function () {
+  const titleEl = document.getElementById('df-title');
+  const name = titleEl && titleEl.value ? titleEl.value : 'Defect Session';
+  try {
+    startVoidrSessionRecording(name, { mode: 'defect' });
+  } catch (_) {}
+};
 
-window.linkLastSessionForDefect = function () { if (lastCapturedSessionId) { newDefectDraft.sessionId = lastCapturedSessionId; alert('Linked session: ' + lastCapturedSessionId); } };
+window.linkLastSessionForDefect = function () {
+  if (lastCapturedSessionId) {
+    newDefectDraft.sessionId = lastCapturedSessionId;
+    alert('Linked session: ' + lastCapturedSessionId);
+  }
+};
 
 window.viewDefect = async function (idOrSlug) {
   try {
-    let tries = 0; while (!window.defectsService && tries < 30) { await new Promise((r) => setTimeout(r, 100)); tries += 1; }
+    let tries = 0;
+    while (!window.defectsService && tries < 30) {
+      await new Promise((r) => setTimeout(r, 100));
+      tries += 1;
+    }
     if (!window.defectsService) throw new Error('Defects service not available');
     const defect = await window.defectsService.getDefect(decodeURIComponent(idOrSlug));
-    const container = document.getElementById('defects-content'); if (!container) return;
-    const status = (defect.status || 'open').toLowerCase(); const sev = (defect.severity || 'medium').toLowerCase(); const pri = (defect.priority || 'p2').toUpperCase();
+    const container = document.getElementById('defects-content');
+    if (!container) return;
+    const status = (defect.status || 'open').toLowerCase();
+    const sev = (defect.severity || 'medium').toLowerCase();
+    const pri = (defect.priority || 'p2').toUpperCase();
     container.innerHTML = `
       <div class=\"voidr-form-header\">
         <button onclick=\"updateDefectsContent()\" class=\"voidr-back-button\">
@@ -899,47 +1000,79 @@ window.viewDefect = async function (idOrSlug) {
         </div>
       </div>
       <div style=\"margin-top:12px;\">
-        <p style=\"white-space:pre-wrap; color: var(--text-primary);\">${(defect.description || '').replace(/</g,'&lt;')}</p>
+        <p style=\"white-space:pre-wrap; color: var(--text-primary);\">${(
+          defect.description || ''
+        ).replace(/</g, '&lt;')}</p>
       </div>
     `;
-  } catch (e) { alert('Failed to open defect: ' + (e?.message || 'Unknown error')); }
+  } catch (e) {
+    alert('Failed to open defect: ' + (e?.message || 'Unknown error'));
+  }
 };
 
 window.submitNewDefect = async function (event) {
   event.preventDefault();
   const title = document.getElementById('df-title').value.trim();
   const description = document.getElementById('df-description').value.trim();
-  const envName = (document.getElementById('df-env') && document.getElementById('df-env').value.trim()) || '';
-  const sessionInput = (document.getElementById('df-session') && document.getElementById('df-session').value.trim()) || '';
+  const envName =
+    (document.getElementById('df-env') && document.getElementById('df-env').value.trim()) || '';
+  const sessionInput =
+    (document.getElementById('df-session') && document.getElementById('df-session').value.trim()) ||
+    '';
   const severity = document.getElementById('df-severity').value;
   const priority = document.getElementById('df-priority').value;
   const reproducibility = document.getElementById('df-repro').value;
-  if (!title || !description) { alert('Please fill title and description'); return; }
+  if (!title || !description) {
+    alert('Please fill title and description');
+    return;
+  }
   try {
-    let tries = 0; while (!window.defectsService && tries < 30) { await new Promise((r) => setTimeout(r, 100)); tries += 1; }
+    let tries = 0;
+    while (!window.defectsService && tries < 30) {
+      await new Promise((r) => setTimeout(r, 100));
+      tries += 1;
+    }
     if (!window.defectsService) throw new Error('Defects service not available');
     const app = testPlanningContext?.application || {};
     // Normalize environment enum
-    const envLower = String(envName || (app.environment && (app.environment.type || app.environment.name)) || '').toLowerCase();
-    const envNormalized = ['production','staging','development'].includes(envLower)
+    const envLower = String(
+      envName || (app.environment && (app.environment.type || app.environment.name)) || '',
+    ).toLowerCase();
+    const envNormalized = ['production', 'staging', 'development'].includes(envLower)
       ? envLower
-      : (envLower.startsWith('prod') ? 'production' : envLower.startsWith('stag') ? 'staging' : 'development');
+      : envLower.startsWith('prod')
+      ? 'production'
+      : envLower.startsWith('stag')
+      ? 'staging'
+      : 'development';
     // Reporter from content auth status
     const auth = await getAuthStatus();
-    const reporter = auth && auth.user && (auth.user.id || auth.user._id || auth.user.email) || undefined;
+    const reporter =
+      (auth && auth.user && (auth.user.id || auth.user._id || auth.user.email)) || undefined;
     const payload = {
-      title, description, severity, priority, status: 'open', reproducibility,
+      title,
+      description,
+      severity,
+      priority,
+      status: 'open',
+      reproducibility,
       applicationId: app.id || app._id,
       applicationEnvironment: envNormalized,
       reportedBy: reporter,
       platform: { os: navigator.platform, browser: navigator.userAgent },
       attachments: newDefectDraft.attachments || [],
-      sessions: sessionInput ? [sessionInput] : (newDefectDraft.sessionId ? [newDefectDraft.sessionId] : [])
+      sessions: sessionInput
+        ? [sessionInput]
+        : newDefectDraft.sessionId
+        ? [newDefectDraft.sessionId]
+        : [],
     };
     await window.defectsService.createDefect(payload);
     alert('Defect created successfully');
     updateDefectsContent();
-  } catch (e) { alert('Failed to create defect: ' + (e?.message || 'Unknown error')); }
+  } catch (e) {
+    alert('Failed to create defect: ' + (e?.message || 'Unknown error'));
+  }
 };
 
 // Listener para mensagens do background script
@@ -964,7 +1097,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       showAuthSuccessNotification();
       break;
     case 'voidr:startSessionRecording':
-      startVoidrSessionRecording(request.testCaseName || 'Test Case', { mode: request.mode, slug: request.slug });
+      startVoidrSessionRecording(request.testCaseName || 'Test Case', {
+        mode: request.mode,
+        slug: request.slug,
+      });
       break;
     case 'voidr:sessionCaptured':
       if (request.sessionId) {
@@ -973,7 +1109,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       break;
   }
   // Signal background we are ready to receive forwards
-  try { chrome.runtime.sendMessage({ action: 'contentReady' }); } catch (_) {}
+  try {
+    chrome.runtime.sendMessage({ action: 'contentReady' });
+  } catch (_) {}
 });
 
 // Mostra notificação de sucesso da autenticação
@@ -1044,11 +1182,11 @@ function makeAuthenticatedRequest(endpoint, method = 'GET', data = null) {
         action: 'apiRequest',
         endpoint: endpoint,
         method: method,
-        data: data
+        data: data,
       },
       (response) => {
         resolve(response || { error: 'No response' });
-      }
+      },
     );
   });
 }
@@ -1180,7 +1318,7 @@ function renderTestPlanningInterface(container) {
                           }</p>
                         </div>
                       </div>
-                    `
+                    `,
                       )
                       .join('')}
                     <button onclick="addTestCase('${module.slug}', '${
@@ -1194,7 +1332,7 @@ function renderTestPlanningInterface(container) {
                     </button>
                   </div>
                 </div>
-              `
+              `,
                 )
                 .join('')}
               <button onclick="addSuite('${
@@ -1208,7 +1346,7 @@ function renderTestPlanningInterface(container) {
               </button>
             </div>
           </div>
-        `
+        `,
           )
           .join('')}
       </div>
@@ -1439,14 +1577,14 @@ window.submitTestCase = async function (event, moduleSlug, suiteSlug) {
       objective: objective.trim(),
       prerequisites: prerequisites.trim() ? [prerequisites.trim()] : [],
       expectedResult: expectedResult.trim(),
-      attachments: []
+      attachments: [],
     };
 
     await window.testPlanningService.createTestCase(
       testPlanningContext.testPlan.id,
       moduleSlug,
       suiteSlug,
-      testCaseData
+      testCaseData,
     );
 
     // Refresh context and return to main view
@@ -1474,13 +1612,13 @@ window.submitSuite = async function (event, moduleSlug) {
   try {
     const suiteData = {
       name: name.trim(),
-      description: description.trim()
+      description: description.trim(),
     };
 
     await window.testPlanningService.createSuite(
       testPlanningContext.testPlan.id,
       moduleSlug,
-      suiteData
+      suiteData,
     );
 
     // Refresh context and return to main view
@@ -1510,7 +1648,7 @@ window.submitModule = async function (event) {
     const moduleData = {
       name: name.trim(),
       description: description.trim(),
-      severity: severity
+      severity: severity,
     };
 
     await window.testPlanningService.createModule(testPlanningContext.testPlan.id, moduleData);
@@ -1630,14 +1768,14 @@ window.submitQuickTestCase = async function (event) {
       objective: objective.trim(),
       prerequisites: [],
       expectedResult: '',
-      attachments: []
+      attachments: [],
     };
 
     await window.testPlanningService.createTestCase(
       testPlanningContext.testPlan.id,
       moduleSlug,
       suiteSlug,
-      testCaseData
+      testCaseData,
     );
 
     // Refresh and return to main view

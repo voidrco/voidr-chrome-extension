@@ -14,5 +14,3 @@
     self.__VOIDR_ENV__ = env;
   }
 })();
-
-

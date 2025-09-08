@@ -5,19 +5,21 @@ const __ENV__ = (typeof globalThis !== 'undefined' && globalThis.__VOIDR_ENV__) 
 
 // Configurações da API - respeitando env overrides
 const API_CONFIG = {
-  baseUrl: __ENV__.VOIDR_API_BASE_URL || 'https://voidr-service-785568282479.us-central1.run.app/v1',
+  baseUrl:
+    __ENV__.VOIDR_API_BASE_URL || 'https://voidr-service-785568282479.us-central1.run.app/v1',
   platformUrl: __ENV__.VOIDR_PLATFORM_URL || 'https://canary.voidr.co',
   auth0: {
     domain: __ENV__.VOIDR_AUTH0_DOMAIN || 'bounties4.us.auth0.com',
     clientId: __ENV__.VOIDR_AUTH0_CLIENT_ID || 'c4eLr6uaq98KB2dCKNkmP9bz6sS3gJfS',
     audience: __ENV__.VOIDR_AUTH0_AUDIENCE || 'https://service.bounties4.com/',
-    cacheKey:
-      `@@auth0spajs@@::${__ENV__.VOIDR_AUTH0_CLIENT_ID || 'c4eLr6uaq98KB2dCKNkmP9bz6sS3gJfS'}::${__ENV__.VOIDR_AUTH0_AUDIENCE || 'https://service.bounties4.com/'}::openid profile email`
+    cacheKey: `@@auth0spajs@@::${
+      __ENV__.VOIDR_AUTH0_CLIENT_ID || 'c4eLr6uaq98KB2dCKNkmP9bz6sS3gJfS'
+    }::${__ENV__.VOIDR_AUTH0_AUDIENCE || 'https://service.bounties4.com/'}::openid profile email`,
   },
   endpoints: {
     me: '/auth/me',
-    profile: '/profile/me'
-  }
+    profile: '/profile/me',
+  },
 };
 
 // Estado da autenticação
@@ -25,7 +27,7 @@ let authState = {
   isAuthenticated: false,
   user: null,
   token: null,
-  checking: true
+  checking: true,
 };
 
 // Elementos DOM
@@ -67,7 +69,7 @@ function initializeElements() {
     userEmail: document.getElementById('user-email'),
 
     // Mensagens
-    errorMessage: document.getElementById('error-message')
+    errorMessage: document.getElementById('error-message'),
   };
 }
 
@@ -120,13 +122,13 @@ async function checkAuthentication() {
           user: validationResult.user, // Atualiza com dados mais recentes
           token: storedAuth.token, // Mantém o token
           isAuthenticated: true,
-          checking: false
+          checking: false,
         };
 
         // Atualiza storage com dados mais recentes
         await storeAuth({
           token: storedAuth.token,
-          user: validationResult.user
+          user: validationResult.user,
         });
 
         showAuthenticatedState();
@@ -150,7 +152,7 @@ async function checkAuthentication() {
       authState = {
         ...platformAuth,
         isAuthenticated: true,
-        checking: false
+        checking: false,
       };
 
       // Notifica background script imediatamente
@@ -159,8 +161,8 @@ async function checkAuthentication() {
         authData: {
           token: platformAuth.token,
           user: platformAuth.user,
-          isAuthenticated: true
-        }
+          isAuthenticated: true,
+        },
       });
 
       showAuthenticatedState();
@@ -192,7 +194,7 @@ function storeAuth(authData) {
       token: authData.token,
       user: authData.user,
       expiresAt: Date.now() + 24 * 60 * 60 * 1000, // 24 horas
-      isAuthenticated: true
+      isAuthenticated: true,
     };
 
     chrome.storage.local.set({ voidrAuth: dataToStore }, () => {
@@ -220,8 +222,8 @@ async function validateToken(token) {
       method: 'GET',
       headers: {
         Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json'
-      }
+        'Content-Type': 'application/json',
+      },
     });
 
     if (authResponse.ok) {
@@ -229,13 +231,16 @@ async function validateToken(token) {
 
       // Tenta buscar o perfil também (mesmo fluxo da aplicação)
       try {
-        const profileResponse = await fetch(`${API_CONFIG.baseUrl}${API_CONFIG.endpoints.profile}`, {
-          method: 'GET',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          }
-        });
+        const profileResponse = await fetch(
+          `${API_CONFIG.baseUrl}${API_CONFIG.endpoints.profile}`,
+          {
+            method: 'GET',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+          },
+        );
 
         if (profileResponse.ok) {
           const profileData = await profileResponse.json();
@@ -243,8 +248,8 @@ async function validateToken(token) {
             isValid: true,
             user: {
               ...authData.data,
-              profile: profileData.data
-            }
+              profile: profileData.data,
+            },
           };
         }
       } catch (profileError) {
@@ -284,7 +289,7 @@ async function checkPlatformAuth() {
       return {
         token: token,
         user: validationResult.user,
-        isAuthenticated: true
+        isAuthenticated: true,
       };
     } else {
       console.log('Platform token is invalid');
@@ -319,7 +324,7 @@ async function getTokenFromPlatform() {
                 return null;
               }
             },
-            args: [API_CONFIG.auth0.cacheKey]
+            args: [API_CONFIG.auth0.cacheKey],
           },
           (results) => {
             if (results && results[0] && results[0].result) {
@@ -327,7 +332,7 @@ async function getTokenFromPlatform() {
             } else {
               resolve(null);
             }
-          }
+          },
         );
       } else {
         resolve(null);
@@ -401,7 +406,7 @@ function openPlatformVoidr() {
 
   // Envia mensagem para o background script abrir a plataforma
   chrome.runtime.sendMessage({
-    action: 'openPlatformForAuth'
+    action: 'openPlatformForAuth',
   });
 }
 
@@ -431,8 +436,8 @@ function continueToExtension() {
     authData: {
       token: authState.token,
       user: authState.user,
-      isAuthenticated: true
-    }
+      isAuthenticated: true,
+    },
   });
 }
 
@@ -447,7 +452,7 @@ async function logout() {
       isAuthenticated: false,
       user: null,
       token: null,
-      checking: false
+      checking: false,
     };
 
     // Mostra estado de login
@@ -455,7 +460,7 @@ async function logout() {
 
     // Notifica background script
     chrome.runtime.sendMessage({
-      action: 'authLogout'
+      action: 'authLogout',
     });
   } catch (error) {
     console.error('Logout error:', error);
@@ -489,7 +494,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         isAuthenticated: true,
         user: request.user,
         token: null, // Será carregado na próxima verificação
-        checking: false
+        checking: false,
       };
       showAuthenticatedState();
       break;

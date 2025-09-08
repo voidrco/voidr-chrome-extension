@@ -1,14 +1,28 @@
 // Recording helpers (popup)
 function buildPopupRecordingContext() {
-  const recordingMode = (typeof currentView !== 'undefined' && currentView === 'defects') ? 'defect' : 'test-case';
+  const recordingMode =
+    typeof currentView !== 'undefined' && currentView === 'defects' ? 'defect' : 'test-case';
   const timestamp = new Date().toISOString();
-  const defaultName = recordingMode === 'defect' ? `Sample Defect ${timestamp}` : `Sample Test Case ${timestamp}`;
-  const tcName = (formState.newItemName && String(formState.newItemName).trim()) ? formState.newItemName : defaultName;
+  const defaultName =
+    recordingMode === 'defect' ? `Sample Defect ${timestamp}` : `Sample Test Case ${timestamp}`;
+  const tcName =
+    formState.newItemName && String(formState.newItemName).trim()
+      ? formState.newItemName
+      : defaultName;
   let slug = undefined;
   if (recordingMode === 'test-case') {
-    try { slug = formState.isEditingExistingCase && formState.editingTestCaseData?.testCase?.slug ? formState.editingTestCaseData.testCase.slug : undefined; } catch (_) {}
+    try {
+      slug =
+        formState.isEditingExistingCase && formState.editingTestCaseData?.testCase?.slug
+          ? formState.editingTestCaseData.testCase.slug
+          : undefined;
+    } catch (_) {}
   } else if (recordingMode === 'defect') {
-    try { if (typeof getCurrentDefectSlug === 'function') { slug = getCurrentDefectSlug(); } } catch (_) {}
+    try {
+      if (typeof getCurrentDefectSlug === 'function') {
+        slug = getCurrentDefectSlug();
+      }
+    } catch (_) {}
   }
   return { recordingMode, tcName, slug };
 }
@@ -41,7 +55,7 @@ let uiState = {
   // Simple router state
   route: 'modules', // 'modules' | 'suites' | 'cases'
   selectedModuleKey: null,
-  selectedSuiteKey: null
+  selectedSuiteKey: null,
 };
 
 // Form State Management - Replicating useEditingState
@@ -57,7 +71,7 @@ let formState = {
     prerequisites: [''],
     expectedResult: '',
     attachments: [],
-    uploadedFiles: []
+    uploadedFiles: [],
   },
 
   // Editing states
@@ -66,7 +80,7 @@ let formState = {
   isEditingSuite: false,
   editingModuleData: null,
   editingSuiteData: null,
-  editingTestCaseData: null
+  editingTestCaseData: null,
 };
 
 // Helper functions for state management
@@ -121,7 +135,7 @@ function resetAddingStates() {
     isAddingCase: false,
     selectedModuleForSuite: null,
     selectedModuleForCase: null,
-    selectedSuiteForCase: null
+    selectedSuiteForCase: null,
   });
 }
 
@@ -134,14 +148,14 @@ function resetFormState() {
       objective: '',
       prerequisites: [''],
       expectedResult: '',
-      attachments: []
+      attachments: [],
     },
     isEditingExistingCase: false,
     isEditingModule: false,
     isEditingSuite: false,
     editingModuleData: null,
     editingSuiteData: null,
-    editingTestCaseData: null
+    editingTestCaseData: null,
   });
 }
 
@@ -171,14 +185,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         const tcBtn = document.querySelector('[data-action="start-session-recording"]');
         if (tcBtn) {
           const original = tcBtn.innerHTML;
-          tcBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20,6 9,17 4,12"/></svg> Session captured';
+          tcBtn.innerHTML =
+            '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20,6 9,17 4,12"/></svg> Session captured';
           setTimeout(() => (tcBtn.innerHTML = original), 2000);
         }
         // Defects form feedback
         const dfBtn = document.getElementById('pdf-rec');
         if (dfBtn) {
           const original = dfBtn.innerHTML;
-          dfBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20,6 9,17 4,12"/></svg> Session captured';
+          dfBtn.innerHTML =
+            '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20,6 9,17 4,12"/></svg> Session captured';
           setTimeout(() => (dfBtn.innerHTML = original), 2000);
         }
 
@@ -193,7 +209,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                   testPlanningContext.testPlan.id,
                   module.slug,
                   suite.slug,
-                  formState.editingTestCaseData.testCase.slug
+                  formState.editingTestCaseData.testCase.slug,
                 );
                 updateFormState({ editingTestCaseData: { testCase: details } });
                 // Re-render edit view to show associated session
@@ -212,7 +228,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (request.sessionId) {
           updateFormState({ lastSessionId: request.sessionId });
           // Also reflect in defects draft if open
-          try { popupDraft.sessionId = request.sessionId; } catch (_) {}
+          try {
+            popupDraft.sessionId = request.sessionId;
+          } catch (_) {}
           if (formState.isEditingExistingCase) {
             renderEditTestCaseView();
           } else if (uiState.isAddingCase) {
@@ -227,7 +245,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Initialize the extension
   // Force fresh data on popup load by clearing cache first
-  try { if (window.testPlanningService) { window.testPlanningService.clearCache(); } } catch (_) {}
+  try {
+    if (window.testPlanningService) {
+      window.testPlanningService.clearCache();
+    }
+  } catch (_) {}
   // Ensure initial skeleton is visible before async work
   try {
     const mc = document.getElementById('main-extension-content');
@@ -308,12 +330,20 @@ function handleAction(action, data) {
       break;
     case 'nav-suites':
       if (!data.moduleId) return;
-      updateUiState({ route: 'suites', selectedModuleKey: String(data.moduleId), selectedSuiteKey: null });
+      updateUiState({
+        route: 'suites',
+        selectedModuleKey: String(data.moduleId),
+        selectedSuiteKey: null,
+      });
       updateTestPlanningContent();
       break;
     case 'nav-cases':
       if (!data.moduleId || !data.suiteId) return;
-      updateUiState({ route: 'cases', selectedModuleKey: String(data.moduleId), selectedSuiteKey: String(data.suiteId) });
+      updateUiState({
+        route: 'cases',
+        selectedModuleKey: String(data.moduleId),
+        selectedSuiteKey: String(data.suiteId),
+      });
       updateTestPlanningContent();
       break;
     case 'create-test-plan':
@@ -350,7 +380,7 @@ function handleAction(action, data) {
       updateUiState({
         isAddingSuite: true,
         selectedModuleForSuite: data.moduleId,
-        expandedModule: data.moduleId // Keep for consistency, though route drives view
+        expandedModule: data.moduleId, // Keep for consistency, though route drives view
       });
       showSuiteForm();
       updateTestPlanningContent(); // Re-render to show form
@@ -368,7 +398,7 @@ function handleAction(action, data) {
         selectedModuleForCase: String(data.moduleId),
         selectedSuiteForCase: String(data.suiteId),
         expandedModule: data.moduleId,
-        expandedSuite: data.suiteId
+        expandedSuite: data.suiteId,
       });
       showTestCaseForm();
       updateTestPlanningContent(); // Re-render to show form
@@ -583,7 +613,10 @@ function showWelcomeScreen() {
   const contentDiv = document.getElementById('main-extension-content');
   if (!contentDiv) return;
   // Remove initial skeleton if present
-  try { const sk = document.getElementById('initial-skeleton'); if (sk) sk.remove(); } catch (_) {}
+  try {
+    const sk = document.getElementById('initial-skeleton');
+    if (sk) sk.remove();
+  } catch (_) {}
 
   currentView = 'welcome';
 
@@ -693,7 +726,9 @@ function showWelcomeScreen() {
   `;
 
   // Render organization card above the welcome section
-  try { renderOrganizationCard(); } catch (_) {}
+  try {
+    renderOrganizationCard();
+  } catch (_) {}
 }
 
 // Renders organization info card (logo + name) above welcome section
@@ -706,17 +741,20 @@ async function renderOrganizationCard() {
     const data = me?.data?.data || {};
     const org = (data && (data.organization || {})) || {};
     const configData = cfg?.data?.data || {};
-    const appName = Array.isArray(configData) ? (configData[0]?.name || '') : (configData?.name || configData?.data?.name || '');
-    const orgNameCandidate = org.display_name || org.name || data.teamName || data.name || data.email || '';
+    const appName = Array.isArray(configData)
+      ? configData[0]?.name || ''
+      : configData?.name || configData?.data?.name || '';
+    const orgNameCandidate =
+      org.display_name || org.name || data.teamName || data.name || data.email || '';
     const orgName = orgNameCandidate || appName || 'Unknown Organization';
-    
+
     container.innerHTML = `
       <div class="voidr-org-card">
         <div class="voidr-org-logo">
           <img src="${data?.logoUrl}" alt="${orgName} logo" loading="lazy" decoding="async" />
         </div>
         <div class="voidr-org-info">
-          <span class="voidr-org-name">${escapeHtml(orgName || (configData?.name || ''))}</span>
+          <span class="voidr-org-name">${escapeHtml(orgName || configData?.name || '')}</span>
         </div>
       </div>
     `;
@@ -751,7 +789,10 @@ window.navigateToWelcome = function () {
 function showTestPlanningView() {
   const contentDiv = document.getElementById('main-extension-content');
   if (!contentDiv) return;
-  try { const sk = document.getElementById('initial-skeleton'); if (sk) sk.remove(); } catch (_) {}
+  try {
+    const sk = document.getElementById('initial-skeleton');
+    if (sk) sk.remove();
+  } catch (_) {}
 
   contentDiv.innerHTML = `
     <div class="voidr-view-container">
@@ -780,7 +821,10 @@ function showTestPlanningView() {
 function showDefectsView() {
   const contentDiv = document.getElementById('main-extension-content');
   if (!contentDiv) return;
-  try { const sk = document.getElementById('initial-skeleton'); if (sk) sk.remove(); } catch (_) {}
+  try {
+    const sk = document.getElementById('initial-skeleton');
+    if (sk) sk.remove();
+  } catch (_) {}
 
   contentDiv.innerHTML = `
     <div class="voidr-view-container">
@@ -806,7 +850,10 @@ async function ensureDefectsServiceLoaded() {
   if (window.defectsService && typeof window.defectsService.listDefects === 'function') return true;
   // Wait briefly for script tag execution
   let attempts = 0;
-  while ((!window.defectsService || typeof window.defectsService.listDefects !== 'function') && attempts < 30) {
+  while (
+    (!window.defectsService || typeof window.defectsService.listDefects !== 'function') &&
+    attempts < 30
+  ) {
     await new Promise((r) => setTimeout(r, 100));
     attempts += 1;
   }
@@ -833,19 +880,32 @@ async function updateDefectsListInPopup() {
   `;
 
   try {
-    document.getElementById('defects-report')?.addEventListener('click', () => showNewDefectFormInPopup());
-    const filters = { page: popupDefects.page, limit: popupDefects.limit, sortBy: 'createdAt', sortDir: 'desc' };
+    document
+      .getElementById('defects-report')
+      ?.addEventListener('click', () => showNewDefectFormInPopup());
+    const filters = {
+      page: popupDefects.page,
+      limit: popupDefects.limit,
+      sortBy: 'createdAt',
+      sortDir: 'desc',
+    };
     if (testPlanningContext?.application?.id || testPlanningContext?.application?._id) {
-      filters.applicationId = testPlanningContext.application.id || testPlanningContext.application._id;
+      filters.applicationId =
+        testPlanningContext.application.id || testPlanningContext.application._id;
     }
     await ensureDefectsServiceLoaded();
     const res = await window.defectsService.listDefects(filters);
     popupDefects.items = Array.isArray(res?.items) ? res.items : [];
     renderDefectsListInPopup();
   } catch (e) {
-    try { console.error('[Popup] Failed to load defects:', e); } catch (_) {}
+    try {
+      console.error('[Popup] Failed to load defects:', e);
+    } catch (_) {}
     const list = document.getElementById('defects-list');
-    if (list) list.innerHTML = `<div class=\"voidr-empty-state\"><h4>Failed to load defects</h4><p>${e?.message || 'Unknown error'}</p></div>`;
+    if (list)
+      list.innerHTML = `<div class=\"voidr-empty-state\"><h4>Failed to load defects</h4><p>${
+        e?.message || 'Unknown error'
+      }</p></div>`;
   }
 }
 
@@ -857,13 +917,14 @@ function renderDefectsListInPopup() {
     list.innerHTML = `<div class=\"voidr-empty-state\"><h4>No defects</h4><p>Use \"Report Defect\" to create a new one.</p></div>`;
     return;
   }
-  const rows = items.map((d) => {
-    const status = (d.status || 'open').toLowerCase();
-    const sev = (d.severity || 'medium').toLowerCase();
-    const pri = (d.priority || 'p2').toUpperCase();
-    const title = d.title || d.slug || 'Untitled';
-    const slug = d.slug || d._id || '';
-    return `
+  const rows = items
+    .map((d) => {
+      const status = (d.status || 'open').toLowerCase();
+      const sev = (d.severity || 'medium').toLowerCase();
+      const pri = (d.priority || 'p2').toUpperCase();
+      const title = d.title || d.slug || 'Untitled';
+      const slug = d.slug || d._id || '';
+      return `
       <div class=\"voidr-defect-item\" ${slug ? `data-slug=\"${slug}\"` : ''}>
         <div class=\"voidr-defect-main\">
           <div class=\"voidr-defect-title\">${title}</div>
@@ -876,13 +937,15 @@ function renderDefectsListInPopup() {
         </div>
       </div>
     `;
-  }).join('');
+    })
+    .join('');
   list.innerHTML = `<div class=\"voidr-defects-list\">${rows}</div>`;
   try {
     const containerEl = list.querySelector('.voidr-defects-list');
     if (containerEl) {
       containerEl.querySelectorAll('.voidr-defect-item').forEach((el) => {
-        const s = el.getAttribute('data-slug') || el.querySelector('.voidr-slug')?.textContent?.trim();
+        const s =
+          el.getAttribute('data-slug') || el.querySelector('.voidr-slug')?.textContent?.trim();
         if (s) {
           el.style.cursor = 'pointer';
           el.addEventListener('click', () => {
@@ -922,7 +985,9 @@ function showNewDefectFormInPopup() {
         </div>
         <div class="voidr-form-group">
           <label>Ambiente</label>
-          <input id="pdf-env" type="text" value="${testPlanningContext?.application?.environment?.name || ''}" placeholder="production / staging / development" />
+          <input id="pdf-env" type="text" value="${
+            testPlanningContext?.application?.environment?.name || ''
+          }" placeholder="production / staging / development" />
         </div>
         <div class="voidr-form-group">
           <label>Severidade</label>
@@ -956,7 +1021,9 @@ function showNewDefectFormInPopup() {
           <button type="button" class="voidr-button-secondary" id="pdf-cancel">Cancel</button>
           <button type="button" class="voidr-button-ghost" data-action="start-session-recording">Record session</button>
         </div>
-        ${popupDraft?.sessionId ? `
+        ${
+          popupDraft?.sessionId
+            ? `
         <div class="voidr-form-group" style="margin-top:8px;">
           <div style="display:flex;align-items:center;gap:8px;background:linear-gradient(180deg,#0b0f14 0%,#070a0f 100%);border:1px solid rgba(255,255,255,0.12);padding:10px 12px;border-radius:10px;">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -969,8 +1036,12 @@ function showNewDefectFormInPopup() {
             </div>
           </div>
         </div>
-        ` : ''}
-        ${formState.lastSessionId ? `
+        `
+            : ''
+        }
+        ${
+          formState.lastSessionId
+            ? `
         <div class="voidr-form-group" style="margin-top:8px;">
           <div id="pdf-session-card" style="display:flex;align-items:center;gap:8px;background:linear-gradient(180deg,#0b0f14 0%,#070a0f 100%);border:1px solid rgba(255,255,255,0.12);padding:10px 12px;border-radius:10px;">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -982,7 +1053,9 @@ function showNewDefectFormInPopup() {
             </div>
           </div>
         </div>
-        ` : ''}
+        `
+            : ''
+        }
       </form>
     </div>
     <div class="voidr-form-container" style="margin-top:12px;">
@@ -1016,7 +1089,7 @@ function showNewDefectFormInPopup() {
                 </button>
               </div>
             </div>
-          `
+          `,
                 )
                 .join('') +
               `</div>`
@@ -1042,7 +1115,11 @@ let popupDraft = { attachments: [] };
 async function handlePopupFilesUpload(files) {
   for (const file of files) {
     try {
-      let tries = 0; while (!window.privateStorageService && tries < 30) { await new Promise(r=>setTimeout(r,100)); tries++; }
+      let tries = 0;
+      while (!window.privateStorageService && tries < 30) {
+        await new Promise((r) => setTimeout(r, 100));
+        tries++;
+      }
       const uploaded = await window.defectsService.uploadAttachment(file, { source: 'popup' });
       popupDraft.attachments.push(uploaded);
       renderPopupUploadedAttachments();
@@ -1107,19 +1184,30 @@ async function showDefectDetailInPopup(idOrSlug) {
         <div class="voidr-form-group">
           <label>Status</label>
           <select id="pdf-status">
-            ${['open','in_progress','resolved','closed'].map(s => `<option value="${s}" ${status===s?'selected':''}>${s}</option>`).join('')}
+            ${['open', 'in_progress', 'resolved', 'closed']
+              .map((s) => `<option value="${s}" ${status === s ? 'selected' : ''}>${s}</option>`)
+              .join('')}
           </select>
         </div>
         <div class="voidr-form-group">
           <label>Severidade</label>
           <select id="pdf-severity">
-            ${['low','medium','high','critical'].map(s => `<option value="${s}" ${severity===s?'selected':''}>${s}</option>`).join('')}
+            ${['low', 'medium', 'high', 'critical']
+              .map((s) => `<option value="${s}" ${severity === s ? 'selected' : ''}>${s}</option>`)
+              .join('')}
           </select>
         </div>
         <div class="voidr-form-group">
           <label>Priority</label>
           <select id="pdf-priority">
-            ${['p3','p2','p1','p0'].map(s => `<option value="${s}" ${priority===s?'selected':''}>${s.toUpperCase()}</option>`).join('')}
+            ${['p3', 'p2', 'p1', 'p0']
+              .map(
+                (s) =>
+                  `<option value="${s}" ${
+                    priority === s ? 'selected' : ''
+                  }>${s.toUpperCase()}</option>`,
+              )
+              .join('')}
           </select>
         </div>
         <div class="voidr-form-actions">
@@ -1131,7 +1219,9 @@ async function showDefectDetailInPopup(idOrSlug) {
     if (loader) loader.style.display = 'none';
     wrapper.style.display = 'block';
 
-    try { document.getElementById('pdf-cancel')?.addEventListener('click', () => showDefectsView()); } catch (_) {}
+    try {
+      document.getElementById('pdf-cancel')?.addEventListener('click', () => showDefectsView());
+    } catch (_) {}
     try {
       const form = document.getElementById('pdf-edit-form');
       form?.addEventListener('submit', async (e) => {
@@ -1142,15 +1232,20 @@ async function showDefectDetailInPopup(idOrSlug) {
           applicationEnvironment: document.getElementById('pdf-env').value.trim(),
           status: document.getElementById('pdf-status').value,
           severity: document.getElementById('pdf-severity').value,
-          priority: document.getElementById('pdf-priority').value
+          priority: document.getElementById('pdf-priority').value,
         };
         try {
           await window.defectsService.updateDefect(slug, updates);
           showNotification('Defect updated', 'success');
           showDefectsView();
-          try { await updateDefectsListInPopup(); } catch (_) {}
+          try {
+            await updateDefectsListInPopup();
+          } catch (_) {}
         } catch (err) {
-          showNotification('Failed to update defect: ' + (err?.message || 'Unknown error'), 'error');
+          showNotification(
+            'Failed to update defect: ' + (err?.message || 'Unknown error'),
+            'error',
+          );
         }
       });
     } catch (_) {}
@@ -1158,19 +1253,29 @@ async function showDefectDetailInPopup(idOrSlug) {
     const wrapper = document.getElementById('defect-detail-form-wrapper');
     const loader = document.getElementById('defect-detail-loading');
     if (loader) loader.style.display = 'none';
-    if (wrapper) wrapper.innerHTML = `<div class=\"voidr-empty-state\"><h4>Failed to load defect</h4><p>${e?.message || 'Unknown error'}</p></div>`;
+    if (wrapper)
+      wrapper.innerHTML = `<div class=\"voidr-empty-state\"><h4>Failed to load defect</h4><p>${
+        e?.message || 'Unknown error'
+      }</p></div>`;
   }
 }
 
 function renderPopupUploadedAttachments() {
   const list = document.getElementById('pdf-uploaded');
   if (!list) return;
-  if (!popupDraft.attachments.length) { list.innerHTML = ''; return; }
-  list.innerHTML = popupDraft.attachments.map((a, idx) => `
+  if (!popupDraft.attachments.length) {
+    list.innerHTML = '';
+    return;
+  }
+  list.innerHTML = popupDraft.attachments
+    .map(
+      (a, idx) => `
     <div class=\"voidr-uploaded-item\">
       <div class=\"voidr-uploaded-name\">${a.name}</div>
     </div>
-  `).join('');
+  `,
+    )
+    .join('');
 }
 
 window.submitNewDefectInPopup = async function (event) {
@@ -1181,25 +1286,47 @@ window.submitNewDefectInPopup = async function (event) {
   const severity = document.getElementById('pdf-severity').value;
   const priority = document.getElementById('pdf-priority').value;
   const reproducibility = document.getElementById('pdf-repro').value;
-  if (!title || !description) { showNotification('Please fill in title and description', 'error'); return; }
+  if (!title || !description) {
+    showNotification('Please fill in title and description', 'error');
+    return;
+  }
   try {
     const app = testPlanningContext?.application || {};
     // Normalize environment to accepted enum
     const envRaw = env || (app.environment && (app.environment.type || app.environment.name)) || '';
     const envLower = String(envRaw || '').toLowerCase();
-    const envNormalized = ['production','staging','development'].includes(envLower)
+    const envNormalized = ['production', 'staging', 'development'].includes(envLower)
       ? envLower
-      : (envLower.startsWith('prod') ? 'production' : envLower.startsWith('stag') ? 'staging' : 'development');
+      : envLower.startsWith('prod')
+      ? 'production'
+      : envLower.startsWith('stag')
+      ? 'staging'
+      : 'development';
     // Reporter from auth status
-    const reporter = (authStatus && authStatus.user && (authStatus.user.id || authStatus.user._id || authStatus.user.email)) || undefined;
+    const reporter =
+      (authStatus &&
+        authStatus.user &&
+        (authStatus.user.id || authStatus.user._id || authStatus.user.email)) ||
+      undefined;
     const payload = {
-      title, description, severity, priority, status: 'open', reproducibility,
+      title,
+      description,
+      severity,
+      priority,
+      status: 'open',
+      reproducibility,
       applicationId: app.id || app._id,
       applicationEnvironment: envNormalized,
       reportedBy: reporter,
       platform: { os: navigator.platform, browser: navigator.userAgent },
-      attachments: (formState?.newTestCase?.uploadedFiles || []).map((f) => ({ id: f.id, name: f.name, url: f.url, size: f.size, type: f.type })),
-      sessions: (formState?.lastSessionId ? [formState.lastSessionId] : [])
+      attachments: (formState?.newTestCase?.uploadedFiles || []).map((f) => ({
+        id: f.id,
+        name: f.name,
+        url: f.url,
+        size: f.size,
+        type: f.type,
+      })),
+      sessions: formState?.lastSessionId ? [formState.lastSessionId] : [],
     };
     await window.defectsService.createDefect(payload);
     showNotification('Defect created', 'success');
@@ -1207,7 +1334,7 @@ window.submitNewDefectInPopup = async function (event) {
   } catch (e) {
     showNotification('Failed to create defect: ' + (e?.message || 'Unknown error'), 'error');
   }
-}
+};
 
 // Show authentication required screen
 function showAuthenticationRequired() {
@@ -1343,7 +1470,7 @@ window.checkAuthenticationStatus = async function () {
       const currentContent = contentDiv.innerHTML;
       contentDiv.innerHTML = currentContent.replace(
         'Click here after completing login',
-        'Still not authenticated - please complete login first'
+        'Still not authenticated - please complete login first',
       );
 
       // Revert after 3 seconds
@@ -1394,7 +1521,10 @@ function updateTestPlanningContent() {
           <p>Environment: ${testPlanningContext.application.environment.name}</p>
         </div>
       </div>
-      ${uiState.isCreatingTestPlan ? '' : `
+      ${
+        uiState.isCreatingTestPlan
+          ? ''
+          : `
       <div class="voidr-empty-state">
         <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M10 2v7.527a2 2 0 0 1-.211.896L4.72 20.55a1 1 0 0 0 .9 1.45h12.76a1 1 0 0 0 .9-1.45l-5.069-10.127A2 2 0 0 1 14 9.527V2"/>
@@ -1405,7 +1535,8 @@ function updateTestPlanningContent() {
         <p>Create a test plan for this application to start testing.</p>
         <button class="voidr-button-primary" data-action="create-test-plan">Create Test Plan</button>
       </div>
-      `}
+      `
+      }
     `;
     if (uiState.isCreatingTestPlan) {
       renderCreateTestPlanForm(contentDiv);
@@ -1471,7 +1602,7 @@ function renderNestedAccordions(container) {
           <div class="voidr-module-item" data-module-id="${getDomKey(module)}">
             <!-- Module Header -->
             <div class="voidr-module-header" data-action="toggle-module" data-module-id="${getDomKey(
-              module
+              module,
             )}">
               <div class="voidr-accordion-toggle">
                 <svg class="voidr-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1500,7 +1631,9 @@ function renderNestedAccordions(container) {
             </div>
             
             <!-- Module Content (Suites) -->
-            <div class="voidr-module-content" id="module-content-${getDomKey(module)}" style="display: none;">
+            <div class="voidr-module-content" id="module-content-${getDomKey(
+              module,
+            )}" style="display: none;">
               ${
                 module.suites && module.suites.length > 0
                   ? module.suites
@@ -1509,7 +1642,7 @@ function renderNestedAccordions(container) {
                 <div class="voidr-suite-item" data-suite-id="${getDomKey(suite)}">
                   <!-- Suite Header -->
                   <div class="voidr-suite-header" data-action="toggle-suite" data-module-id="${getDomKey(
-                    module
+                    module,
                   )}" data-suite-id="${getDomKey(suite)}">
                     <div class="voidr-accordion-toggle">
                       <svg class="voidr-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1522,7 +1655,7 @@ function renderNestedAccordions(container) {
                         suite.cases ? suite.cases.length : 0
                       } cases</span>
                       <button class="voidr-action-btn" data-action="add-case" data-module-id="${getDomKey(
-                        module
+                        module,
                       )}" data-suite-id="${getDomKey(suite)}" title="Add Test Case">
                         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                           <line x1="12" y1="5" x2="12" y2="19"/>
@@ -1533,9 +1666,9 @@ function renderNestedAccordions(container) {
                   </div>
                   
                   <!-- Suite Content (Test Cases) -->
-                  <div class="voidr-suite-content" id="suite-content-${getDomKey(module)}-${getDomKey(
-                    suite
-                  )}" style="display: none;">
+                  <div class="voidr-suite-content" id="suite-content-${getDomKey(
+                    module,
+                  )}-${getDomKey(suite)}" style="display: none;">
                     ${
                       suite.cases && suite.cases.length > 0
                         ? suite.cases
@@ -1548,10 +1681,14 @@ function renderNestedAccordions(container) {
                             <p class="voidr-test-case-objective">${
                               testCase.objective || 'No objective defined'
                             }</p>
-                            ${testCase.sessionId ? `
+                            ${
+                              testCase.sessionId
+                                ? `
                             <div class="voidr-test-case-session" title="Associated session">
                               <span class="voidr-badge voidr-badge-session">Session: ${testCase.sessionId}</span>
-                            </div>` : ''}
+                            </div>`
+                                : ''
+                            }
                           </div>
                           <div class="voidr-test-case-actions">
                             <button class="voidr-action-btn" data-action="edit-case" data-case-id="${
@@ -1565,7 +1702,7 @@ function renderNestedAccordions(container) {
                           </div>
                         </div>
                       </div>
-                    `
+                    `,
                             )
                             .join('')
                         : `
@@ -1576,7 +1713,7 @@ function renderNestedAccordions(container) {
                     }
                   </div>
                 </div>
-              `
+              `,
                       )
                       .join('')
                   : `
@@ -1592,7 +1729,7 @@ function renderNestedAccordions(container) {
               }
             </div>
           </div>
-        `
+        `,
                 )
                 .join('')
             : `
@@ -1793,7 +1930,7 @@ function renderTestCaseForm(container) {
         <div class="voidr-form-group">
           <label>Prerequisites:</label>
           <textarea id="testcase-prerequisites" placeholder="What needs to be set up before this test?" rows="2">${formState.newTestCase.prerequisites.join(
-            '\\n'
+            '\\n',
           )}</textarea>
         </div>
         
@@ -1811,7 +1948,9 @@ function renderTestCaseForm(container) {
           <button class="voidr-button-secondary" data-action="cancel-form">Cancel</button>
           <button class="voidr-button-ghost" data-action="start-session-recording">Record session</button>
         </div>
-        ${formState.lastSessionId ? `
+        ${
+          formState.lastSessionId
+            ? `
         <div class="voidr-form-group" style="margin-top:8px;">
           <div id="pdf-session-card" style="display:flex;align-items:center;gap:8px;background:linear-gradient(180deg,#0b0f14 0%,#070a0f 100%);border:1px solid rgba(255,255,255,0.12);padding:10px 12px;border-radius:10px;">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -1823,7 +1962,9 @@ function renderTestCaseForm(container) {
             </div>
           </div>
         </div>
-        ` : ''}
+        `
+            : ''
+        }
       </div>
     </div>
     <div class="voidr-form-container" style="margin-top:12px;">
@@ -1857,7 +1998,7 @@ function renderTestCaseForm(container) {
                 </button>
               </div>
             </div>
-          `
+          `,
                 )
                 .join('') +
               `</div>`
@@ -1889,7 +2030,7 @@ function renderModulesList(container) {
                   (module) => `
           <div class="voidr-module-item">
             <div class="voidr-module-header" data-action="nav-suites" data-module-id="${getDomKey(
-              module
+              module,
             )}">
               <div class="voidr-accordion-toggle">
                 <svg class="voidr-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1897,12 +2038,18 @@ function renderModulesList(container) {
                 </svg>
                 <div class="voidr-module-info">
                   <span class="voidr-module-name">${module.name}</span>
-                  <span class="voidr-severity voidr-severity-${module.severity.toLowerCase()}">${module.severity}</span>
+                  <span class="voidr-severity voidr-severity-${module.severity.toLowerCase()}">${
+                    module.severity
+                  }</span>
                 </div>
               </div>
               <div class="voidr-module-actions">
-                <span class="voidr-module-count">${module.suites ? module.suites.length : 0} suites</span>
-                <button class="voidr-action-btn" data-action="nav-suites" data-module-id="${getDomKey(module)}" title="Open Suites">
+                <span class="voidr-module-count">${
+                  module.suites ? module.suites.length : 0
+                } suites</span>
+                <button class="voidr-action-btn" data-action="nav-suites" data-module-id="${getDomKey(
+                  module,
+                )}" title="Open Suites">
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <polyline points="9,18 15,12 9,6"/>
                   </svg>
@@ -1910,7 +2057,7 @@ function renderModulesList(container) {
               </div>
             </div>
           </div>
-        `
+        `,
                 )
                 .join('')
             : `
@@ -1955,7 +2102,9 @@ function renderSuitesList(container) {
           <h4>📦 ${module.name}</h4>
           <p>${module.suites ? module.suites.length : 0} suites</p>
         </div>
-        <button class="voidr-button-secondary voidr-small" data-action="add-suite" data-module-id="${getDomKey(module)}">Add Suite</button>
+        <button class="voidr-button-secondary voidr-small" data-action="add-suite" data-module-id="${getDomKey(
+          module,
+        )}">Add Suite</button>
       </div>
       <div class="voidr-modules-accordion">
         ${
@@ -1965,7 +2114,7 @@ function renderSuitesList(container) {
                   (suite) => `
           <div class="voidr-suite-item" data-suite-id="${getDomKey(suite)}">
             <div class="voidr-suite-header" data-action="nav-cases" data-module-id="${getDomKey(
-              module
+              module,
             )}" data-suite-id="${getDomKey(suite)}">
               <div class="voidr-accordion-toggle">
                 <svg class="voidr-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1975,7 +2124,9 @@ function renderSuitesList(container) {
               </div>
               <div class="voidr-suite-actions">
                 <span class="voidr-suite-count">${suite.cases ? suite.cases.length : 0} cases</span>
-                <button class="voidr-action-btn" data-action="nav-cases" data-module-id="${getDomKey(module)}" data-suite-id="${getDomKey(suite)}" title="Open Cases">
+                <button class="voidr-action-btn" data-action="nav-cases" data-module-id="${getDomKey(
+                  module,
+                )}" data-suite-id="${getDomKey(suite)}" title="Open Cases">
                   <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <polyline points="9,18 15,12 9,6"/>
                   </svg>
@@ -1983,13 +2134,15 @@ function renderSuitesList(container) {
               </div>
             </div>
           </div>
-        `
+        `,
                 )
                 .join('')
             : `
           <div class="voidr-empty-state">
             <p>No suites yet</p>
-            <button class="voidr-button-secondary voidr-small" data-action="add-suite" data-module-id="${getDomKey(module)}">Add First Suite</button>
+            <button class="voidr-button-secondary voidr-small" data-action="add-suite" data-module-id="${getDomKey(
+              module,
+            )}">Add First Suite</button>
           </div>
         `
         }
@@ -2019,7 +2172,7 @@ function renderCasesList(container) {
         const fetched = await window.testPlanningService.getSuiteCases(
           testPlanningContext.testPlan.id,
           module.slug,
-          suite.slug
+          suite.slug,
         );
         suite.cases = fetched || [];
         // Also refresh details for the selected case if we're returning from edit
@@ -2028,7 +2181,7 @@ function renderCasesList(container) {
             testPlanningContext.testPlan.id,
             module.slug,
             suite.slug,
-            formState.editingTestCaseData.testCase.slug
+            formState.editingTestCaseData.testCase.slug,
           );
           // Replace in list if found
           const idx = suite.cases.findIndex((c) => c.slug === refreshed.slug);
@@ -2044,12 +2197,16 @@ function renderCasesList(container) {
   container.innerHTML = `
     <div class="voidr-test-planning">
       <div class="voidr-app-context">
-        <button class="voidr-button-secondary voidr-small" data-action="nav-suites" data-module-id="${getDomKey(module)}">Back</button>
+        <button class="voidr-button-secondary voidr-small" data-action="nav-suites" data-module-id="${getDomKey(
+          module,
+        )}">Back</button>
         <div class="voidr-app-info">
           <h4>🧪 ${suite.name}</h4>
           <p>${cases.length} cases</p>
         </div>
-        <button class="voidr-button-secondary voidr-small" data-action="add-case" data-module-id="${getDomKey(module)}" data-suite-id="${getDomKey(suite)}">Add Case</button>
+        <button class="voidr-button-secondary voidr-small" data-action="add-case" data-module-id="${getDomKey(
+          module,
+        )}" data-suite-id="${getDomKey(suite)}">Add Case</button>
       </div>
       <div class="voidr-module-content">
         ${
@@ -2061,14 +2218,22 @@ function renderCasesList(container) {
             <div class="voidr-test-case-header">
               <div class="voidr-test-case-info">
                 <span class="voidr-test-case-name">${testCase.name}</span>
-                <p class="voidr-test-case-objective">${testCase.objective || 'No objective defined'}</p>
-                ${testCase.sessionId ? `
+                <p class="voidr-test-case-objective">${
+                  testCase.objective || 'No objective defined'
+                }</p>
+                ${
+                  testCase.sessionId
+                    ? `
                 <div class="voidr-test-case-session" title="Associated session">
                   <span class="voidr-badge voidr-badge-session">Session: ${testCase.sessionId}</span>
-                </div>` : ''}
+                </div>`
+                    : ''
+                }
               </div>
               <div class="voidr-test-case-actions">
-                <button class="voidr-action-btn" data-action="edit-case" data-case-id="${testCase.slug}" title="Edit Test Case">
+                <button class="voidr-action-btn" data-action="edit-case" data-case-id="${
+                  testCase.slug
+                }" title="Edit Test Case">
                   <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
                     <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
@@ -2077,7 +2242,7 @@ function renderCasesList(container) {
               </div>
             </div>
           </div>
-        `
+        `,
                 )
                 .join('')
             : `
@@ -2102,7 +2267,7 @@ async function startEditTestCase(testCaseSlug) {
       testPlanningContext.testPlan.id,
       module.slug,
       suite.slug,
-      testCaseSlug
+      testCaseSlug,
     );
     hideLoadingState();
     updateFormState({
@@ -2119,13 +2284,13 @@ async function startEditTestCase(testCaseSlug) {
           url: att.url,
           size: att.size || 0,
           type: att.type || 'application/octet-stream',
-          storage: { key: att.url, fileName: att.name, contentType: att.type, size: att.size }
-        }))
+          storage: { key: att.url, fileName: att.name, contentType: att.type, size: att.size },
+        })),
       },
       isEditingExistingCase: true,
       editingTestCaseData: {
-        testCase: details
-      }
+        testCase: details,
+      },
     });
     renderEditTestCaseView();
   } catch (error) {
@@ -2142,7 +2307,9 @@ function renderEditTestCaseView() {
   container.innerHTML = `
     <div class="voidr-form-container">
       <div class="voidr-form-header">
-        <button class="voidr-back-button" data-action="nav-cases" data-module-id="${getDomKey(module)}" data-suite-id="${getDomKey(suite)}">
+        <button class="voidr-back-button" data-action="nav-cases" data-module-id="${getDomKey(
+          module,
+        )}" data-suite-id="${getDomKey(suite)}">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <polyline points="15,18 9,12 15,6"/>
           </svg>
@@ -2152,7 +2319,9 @@ function renderEditTestCaseView() {
       <div class="voidr-form-content">
         <div class="voidr-form-group">
           <label>Test Case Name:</label>
-          <input type="text" id="testcase-name" value="${formState.newItemName}" placeholder="Enter test case name..." required>
+          <input type="text" id="testcase-name" value="${
+            formState.newItemName
+          }" placeholder="Enter test case name..." required>
         </div>
         <div class="voidr-form-group">
           <label>Objective:</label>
@@ -2160,11 +2329,15 @@ function renderEditTestCaseView() {
         </div>
         <div class="voidr-form-group">
           <label>Prerequisites:</label>
-          <textarea id="testcase-prerequisites" rows="2">${(formState.newTestCase.prerequisites || []).join('\n')}</textarea>
+          <textarea id="testcase-prerequisites" rows="2">${(
+            formState.newTestCase.prerequisites || []
+          ).join('\n')}</textarea>
         </div>
         <div class="voidr-form-group">
           <label>Expected Result:</label>
-          <textarea id="testcase-expected" rows="3">${formState.newTestCase.expectedResult}</textarea>
+          <textarea id="testcase-expected" rows="3">${
+            formState.newTestCase.expectedResult
+          }</textarea>
         </div>
         <div class="voidr-form-actions" style="margin-top:8px;">
           <button class="voidr-button-secondary" data-action="start-session-recording">
@@ -2172,7 +2345,9 @@ function renderEditTestCaseView() {
             Record session
           </button>
         </div>
-        ${formState.editingTestCaseData?.testCase?.sessionId ? `
+        ${
+          formState.editingTestCaseData?.testCase?.sessionId
+            ? `
         <div class="voidr-form-group" style="margin-top:8px;">
           <div style="display:flex;align-items:center;gap:8px;background:linear-gradient(180deg,#0b0f14 0%,#070a0f 100%);border:1px solid rgba(255,255,255,0.12);padding:10px 12px;border-radius:10px;">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -2185,8 +2360,12 @@ function renderEditTestCaseView() {
             </div>
           </div>
         </div>
-        ` : ''}
-        ${formState.lastSessionId ? `
+        `
+            : ''
+        }
+        ${
+          formState.lastSessionId
+            ? `
         <div class="voidr-form-group" style="margin-top:8px;">
           <div id="pdf-session-card" style="display:flex;align-items:center;gap:8px;background:linear-gradient(180deg,#0b0f14 0%,#070a0f 100%);border:1px solid rgba(255,255,255,0.12);padding:10px 12px;border-radius:10px;">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -2198,7 +2377,9 @@ function renderEditTestCaseView() {
             </div>
           </div>
         </div>
-        ` : ''}
+        `
+            : ''
+        }
         <div class="voidr-form-group">
           <label>Attachments:</label>
           <input type="file" id="testcase-files" multiple />
@@ -2228,7 +2409,7 @@ function renderEditTestCaseView() {
                 </button> 
               </div>
             </div>
-          `
+          `,
                 )
                 .join('') +
               `</div>`
@@ -2236,7 +2417,9 @@ function renderEditTestCaseView() {
         }
         <div class="voidr-form-actions">
           <button class="voidr-button-primary" data-action="save-test-case">Save Changes</button>
-          <button class="voidr-button-secondary" data-action="nav-cases" data-module-id="${getDomKey(module)}" data-suite-id="${getDomKey(suite)}">Cancel</button>
+          <button class="voidr-button-secondary" data-action="nav-cases" data-module-id="${getDomKey(
+            module,
+          )}" data-suite-id="${getDomKey(suite)}">Cancel</button>
         </div>
       </div>
     </div>
@@ -2261,12 +2444,16 @@ function renderCreateTestPlanForm(container) {
       <div class="voidr-form-content">
         <div class="voidr-form-group">
           <label>Plan Name:</label>
-          <input type="text" id="plan-name" placeholder="Enter plan name..." value="${formState.newItemName}" required>
+          <input type="text" id="plan-name" placeholder="Enter plan name..." value="${
+            formState.newItemName
+          }" required>
         </div>
 
         <div class="voidr-form-group">
           <label>Description:</label>
-          <textarea id="plan-description" placeholder="Describe this test plan..." rows="3">${formState.newItemDescription}</textarea>
+          <textarea id="plan-description" placeholder="Describe this test plan..." rows="3">${
+            formState.newItemDescription
+          }</textarea>
         </div>
 
         <div class="voidr-form-group">
@@ -2289,9 +2476,14 @@ function renderCreateTestPlanForm(container) {
   const nameEl = document.getElementById('plan-name');
   const descEl = document.getElementById('plan-description');
   const statusEl = document.getElementById('plan-status');
-  if (nameEl) nameEl.addEventListener('input', (e) => updateFormState({ newItemName: e.target.value }));
-  if (descEl) descEl.addEventListener('input', (e) => updateFormState({ newItemDescription: e.target.value }));
-  if (statusEl) statusEl.addEventListener('change', (e) => updateFormState({ planStatus: e.target.value }));
+  if (nameEl)
+    nameEl.addEventListener('input', (e) => updateFormState({ newItemName: e.target.value }));
+  if (descEl)
+    descEl.addEventListener('input', (e) =>
+      updateFormState({ newItemDescription: e.target.value }),
+    );
+  if (statusEl)
+    statusEl.addEventListener('change', (e) => updateFormState({ planStatus: e.target.value }));
 }
 
 // Setup form field listeners to update state
@@ -2351,7 +2543,7 @@ function setupFormFieldListeners() {
   if (tcObjectiveEl) {
     tcObjectiveEl.addEventListener('input', (e) => {
       updateFormState({
-        newTestCase: { ...formState.newTestCase, objective: e.target.value }
+        newTestCase: { ...formState.newTestCase, objective: e.target.value },
       });
     });
   }
@@ -2360,7 +2552,7 @@ function setupFormFieldListeners() {
     tcPrereqEl.addEventListener('input', (e) => {
       const prerequisites = e.target.value.split('\\n').filter((p) => p.trim());
       updateFormState({
-        newTestCase: { ...formState.newTestCase, prerequisites }
+        newTestCase: { ...formState.newTestCase, prerequisites },
       });
     });
   }
@@ -2368,7 +2560,7 @@ function setupFormFieldListeners() {
   if (tcExpectedEl) {
     tcExpectedEl.addEventListener('input', (e) => {
       updateFormState({
-        newTestCase: { ...formState.newTestCase, expectedResult: e.target.value }
+        newTestCase: { ...formState.newTestCase, expectedResult: e.target.value },
       });
     });
   }
@@ -2380,7 +2572,7 @@ function setupFormFieldListeners() {
       if (!files || files.length === 0) return;
       const uploaded = [...(formState.newTestCase.uploadedFiles || [])];
       const existingKeys = new Set(
-        uploaded.map((f) => (typeof f.url === 'string' ? f.url : String(f.url)))
+        uploaded.map((f) => (typeof f.url === 'string' ? f.url : String(f.url))),
       );
       showLoadingState('Uploading files...');
       try {
@@ -2394,12 +2586,12 @@ function setupFormFieldListeners() {
           }
           existingKeys.add(res.key);
           uploaded.push({
-            id: (crypto && crypto.randomUUID) ? crypto.randomUUID() : `${Date.now()}_${i}`,
+            id: crypto && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}_${i}`,
             name: res.fileName,
             url: res.key,
             size: res.size,
             type: res.contentType,
-            storage: res
+            storage: res,
           });
         }
         // Dedupe safety by url
@@ -2418,14 +2610,22 @@ function setupFormFieldListeners() {
           formState.isEditingExistingCase &&
           uiState.selectedModuleKey &&
           uiState.selectedSuiteKey &&
-          formState.editingTestCaseData && formState.editingTestCaseData.testCase && formState.editingTestCaseData.testCase.slug
+          formState.editingTestCaseData &&
+          formState.editingTestCaseData.testCase &&
+          formState.editingTestCaseData.testCase.slug
         ) {
           const module = findModuleByKey(uiState.selectedModuleKey);
           const suite = findSuiteByKey(module, uiState.selectedSuiteKey);
           if (module && suite && module.slug && suite.slug) {
             const combined = [
-              ...((formState.newTestCase.attachments || [])),
-              ...uploaded.map((f) => ({ id: f.id, name: f.name, url: f.url, size: f.size, type: f.type }))
+              ...(formState.newTestCase.attachments || []),
+              ...uploaded.map((f) => ({
+                id: f.id,
+                name: f.name,
+                url: f.url,
+                size: f.size,
+                type: f.type,
+              })),
             ];
             // Dedupe by url for PATCH
             const mapByUrl = new Map();
@@ -2438,14 +2638,14 @@ function setupFormFieldListeners() {
               module.slug,
               suite.slug,
               formState.editingTestCaseData.testCase.slug,
-              { attachments: newAttachments }
+              { attachments: newAttachments },
             );
             // Fetch canonical details and re-render editor with backend data
             const details = await window.testPlanningService.getTestCase(
               testPlanningContext.testPlan.id,
               module.slug,
               suite.slug,
-              formState.editingTestCaseData.testCase.slug
+              formState.editingTestCaseData.testCase.slug,
             );
             // Map back from canonical details, dedup by url
             const attach = details.attachments || [];
@@ -2461,7 +2661,12 @@ function setupFormFieldListeners() {
                 url: att.url,
                 size: att.size || 0,
                 type: att.type || 'application/octet-stream',
-                storage: { key: att.url, fileName: att.name, contentType: att.type, size: att.size }
+                storage: {
+                  key: att.url,
+                  fileName: att.name,
+                  contentType: att.type,
+                  size: att.size,
+                },
               });
             }
             updateFormState({
@@ -2471,8 +2676,8 @@ function setupFormFieldListeners() {
                 prerequisites: Array.isArray(details.prerequisites) ? details.prerequisites : [],
                 expectedResult: details.expectedResult || '',
                 attachments: attach,
-                uploadedFiles
-              }
+                uploadedFiles,
+              },
             });
             renderEditTestCaseView();
           }
@@ -2582,11 +2787,14 @@ function computeUploadContext() {
       testPlanId: planId || undefined,
       moduleSlug: module?.slug || undefined,
       suiteSlug: suite?.slug || undefined,
-      source: 'extension'
+      source: 'extension',
     };
     return { folder, metadata };
   } catch (_) {
-    return { folder: 'test-cases', metadata: { module: 'test-plans', type: 'test-case', source: 'extension' } };
+    return {
+      folder: 'test-cases',
+      metadata: { module: 'test-plans', type: 'test-case', source: 'extension' },
+    };
   }
 }
 
@@ -2597,14 +2805,18 @@ async function uploadFileFlow(file, folder, metadata) {
     fileName: file.name,
     contentType: file.type,
     folder,
-    metadata
+    metadata,
   });
   if (!presign?.success) throw new Error(presign?.error || 'Failed to generate upload URL');
   const { uploadUrl, fileKey } = presign.data?.data || presign.data || presign;
   if (!uploadUrl || !fileKey) throw new Error('Invalid presign response');
 
   // Step 2: upload to signed URL
-  const putRes = await fetch(uploadUrl, { method: 'PUT', body: file, headers: { 'Content-Type': file.type } });
+  const putRes = await fetch(uploadUrl, {
+    method: 'PUT',
+    body: file,
+    headers: { 'Content-Type': file.type },
+  });
   if (!putRes.ok) throw new Error(`Upload failed: ${putRes.status} ${putRes.statusText}`);
 
   // Step 3: confirm
@@ -2613,7 +2825,7 @@ async function uploadFileFlow(file, folder, metadata) {
     fileName: file.name,
     contentType: file.type,
     size: file.size,
-    metadata
+    metadata,
   });
   if (!confirm?.success) throw new Error(confirm?.error || 'Failed to confirm upload');
   const payload = confirm.data?.data || confirm.data || confirm;
@@ -2623,7 +2835,7 @@ async function uploadFileFlow(file, folder, metadata) {
     fileName: payload.fileName || file.name,
     contentType: payload.contentType || file.type,
     size: payload.size || file.size,
-    metadata: payload.metadata || metadata
+    metadata: payload.metadata || metadata,
   };
 }
 
@@ -2654,8 +2866,8 @@ async function handleSubmitModule() {
         {
           name: formState.newItemName,
           description: formState.newItemDescription,
-          severity: formState.selectedSeverity
-        }
+          severity: formState.selectedSeverity,
+        },
       );
       showNotification('Module updated successfully', 'success');
     } else {
@@ -2663,12 +2875,12 @@ async function handleSubmitModule() {
       const moduleData = {
         name: formState.newItemName,
         description: formState.newItemDescription,
-        severity: formState.selectedSeverity
+        severity: formState.selectedSeverity,
       };
 
       const newModule = await window.testPlanningService.createModule(
         testPlanningContext.testPlan.id,
-        moduleData
+        moduleData,
       );
 
       // Expand the newly created module
@@ -2724,14 +2936,14 @@ async function handleSubmitSuite() {
         formState.editingSuiteData.suite.slug,
         {
           name: formState.newItemName,
-          description: formState.newItemDescription
-        }
+          description: formState.newItemDescription,
+        },
       );
       showNotification('Suite updated successfully', 'success');
     } else {
       const created = await window.testPlanningService.createSuite(testPlanId, module.slug, {
         name: formState.newItemName,
-        description: formState.newItemDescription
+        description: formState.newItemDescription,
       });
 
       const newSuite = created?.data || created || null;
@@ -2740,13 +2952,13 @@ async function handleSubmitSuite() {
         module.suites.unshift({
           ...newSuite,
           id: newSuite.id || newSuite._id,
-          cases: []
+          cases: [],
         });
         updateUiState({
           expandedModule: moduleKey,
           expandedSuite: newSuite.id || newSuite._id,
           highlightModuleId: String(module.id || module._id || module.slug),
-          highlightSuiteId: String(newSuite.id || newSuite._id || newSuite.slug)
+          highlightSuiteId: String(newSuite.id || newSuite._id || newSuite.slug),
         });
       }
 
@@ -2795,7 +3007,7 @@ async function handleSubmitTestCase() {
       name: formState.newItemName,
       objective: formState.newTestCase.objective,
       prerequisites: formState.newTestCase.prerequisites.filter((p) => p.trim()),
-      expectedResult: formState.newTestCase.expectedResult
+      expectedResult: formState.newTestCase.expectedResult,
     };
 
     if (formState.isEditingExistingCase && formState.editingTestCaseData) {
@@ -2808,7 +3020,7 @@ async function handleSubmitTestCase() {
         {
           ...testCaseData,
           // On edit, allow in-place attachment update via the separate upload flow already implemented
-        }
+        },
       );
       showNotification('Test case updated successfully', 'success');
     } else {
@@ -2819,8 +3031,8 @@ async function handleSubmitTestCase() {
         suite.slug,
         {
           ...testCaseData,
-          sessionId: formState.lastSessionId || undefined
-        }
+          sessionId: formState.lastSessionId || undefined,
+        },
       );
       // After create, if there are uploaded files, associate them via PATCH
       const pendingUploads = (formState.newTestCase.uploadedFiles || []).map((f) => ({
@@ -2828,11 +3040,12 @@ async function handleSubmitTestCase() {
         name: f.name,
         url: f.url,
         size: f.size,
-        type: f.type
+        type: f.type,
       }));
       if (pendingUploads.length > 0) {
-        const createdSlug = (created && created.slug) || (created && created.data && created.data.slug) || null;
-        const testCaseSlug = createdSlug || (formState.editingTestCaseData?.testCase?.slug) || null;
+        const createdSlug =
+          (created && created.slug) || (created && created.data && created.data.slug) || null;
+        const testCaseSlug = createdSlug || formState.editingTestCaseData?.testCase?.slug || null;
         if (testCaseSlug) {
           await window.testPlanningService.updateTestCase(
             testPlanningContext.testPlan.id,
@@ -2841,8 +3054,8 @@ async function handleSubmitTestCase() {
             testCaseSlug,
             {
               attachments: pendingUploads,
-              sessionId: formState.lastSessionId || undefined
-            }
+              sessionId: formState.lastSessionId || undefined,
+            },
           );
         }
       }
@@ -2878,8 +3091,8 @@ async function handleSubmitTestPlan() {
       {
         name: formState.newItemName,
         description: formState.newItemDescription,
-        status: formState.planStatus || 'DRAFT'
-      }
+        status: formState.planStatus || 'DRAFT',
+      },
     );
 
     showNotification('Test plan created successfully', 'success');
@@ -2900,7 +3113,13 @@ async function handleSaveEditedTestCase() {
   try {
     const module = findModuleByKey(uiState.selectedModuleKey);
     const suite = findSuiteByKey(module, uiState.selectedSuiteKey);
-    if (!module || !suite || !module.slug || !suite.slug || !formState.editingTestCaseData?.testCase?.slug) {
+    if (
+      !module ||
+      !suite ||
+      !module.slug ||
+      !suite.slug ||
+      !formState.editingTestCaseData?.testCase?.slug
+    ) {
       showNotification('Context not available for saving', 'error');
       return;
     }
@@ -2921,7 +3140,7 @@ async function handleSaveEditedTestCase() {
       expectedResult: expectedEl?.value || '',
       attachments: formState.newTestCase.attachments || [],
       // If a fresh session was captured, include it in the PATCH
-      ...(formState.lastSessionId ? { sessionId: formState.lastSessionId } : {})
+      ...(formState.lastSessionId ? { sessionId: formState.lastSessionId } : {}),
     };
 
     if (!updates.name) {
@@ -2935,7 +3154,7 @@ async function handleSaveEditedTestCase() {
       module.slug,
       suite.slug,
       formState.editingTestCaseData.testCase.slug,
-      updates
+      updates,
     );
     hideLoadingState();
     showNotification('Test case updated successfully', 'success');
@@ -2968,19 +3187,21 @@ async function handleRemoveUploadedFile(index) {
       const module = findModuleByKey(uiState.selectedModuleKey);
       const suite = findSuiteByKey(module, uiState.selectedSuiteKey);
       if (module && suite && module.slug && suite.slug) {
-        const remaining = (formState.newTestCase.attachments || []).filter((att) => att.url !== file.url);
+        const remaining = (formState.newTestCase.attachments || []).filter(
+          (att) => att.url !== file.url,
+        );
         await window.testPlanningService.updateTestCase(
           testPlanningContext.testPlan.id,
           module.slug,
           suite.slug,
           formState.editingTestCaseData.testCase.slug,
-          { attachments: remaining }
+          { attachments: remaining },
         );
         const details = await window.testPlanningService.getTestCase(
           testPlanningContext.testPlan.id,
           module.slug,
           suite.slug,
-          formState.editingTestCaseData.testCase.slug
+          formState.editingTestCaseData.testCase.slug,
         );
         updateFormState({
           newTestCase: {
@@ -2995,9 +3216,9 @@ async function handleRemoveUploadedFile(index) {
               url: att.url,
               size: att.size || 0,
               type: att.type || 'application/octet-stream',
-              storage: { key: att.url, fileName: att.name, contentType: att.type, size: att.size }
-            }))
-          }
+              storage: { key: att.url, fileName: att.name, contentType: att.type, size: att.size },
+            })),
+          },
         });
         renderEditTestCaseView();
       }
@@ -3023,7 +3244,10 @@ async function handleDownloadUploadedFile(index) {
     // If storage key (non-blob), get presigned download first
     const isBlob = typeof file.url === 'string' && file.url.startsWith('blob:');
     if (!isBlob) {
-      const dl = await makeAuthenticatedRequest(`/private-storage/presign-download?key=${encodeURIComponent(file.url)}`, 'GET');
+      const dl = await makeAuthenticatedRequest(
+        `/private-storage/presign-download?key=${encodeURIComponent(file.url)}`,
+        'GET',
+      );
       if (dl && dl.success) {
         const data = dl.data?.data || dl.data || dl;
         const url = data.url || null;
@@ -3050,8 +3274,13 @@ async function handleStartSessionRecording() {
     showNotification('Starting recording...', 'info', 1200);
     chrome.runtime.sendMessage(
       {
-      action: 'forwardToLastContent',
-      payload: { action: 'voidr:startSessionRecording', testCaseName: tcName, mode: recordingMode, slug: slug }
+        action: 'forwardToLastContent',
+        payload: {
+          action: 'voidr:startSessionRecording',
+          testCaseName: tcName,
+          mode: recordingMode,
+          slug: slug,
+        },
       },
       (response) => {
         try {
@@ -3060,7 +3289,7 @@ async function handleStartSessionRecording() {
             showNotification(`Could not start recording: ${msg}`, 'error', 3000);
           }
         } catch (_) {}
-      }
+      },
     );
   } catch (_) {}
 }
@@ -3103,7 +3332,7 @@ function showNotification(message, type = 'info', duration = 3000) {
     success: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20,6 9,17 4,12"/></svg>`,
     error: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>`,
     warning: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m21,8l-8-5L5,8v9a3,3,0,0,0,3,3h8a3,3,0,0,0,3-3Z"/><polyline points="10,9 14,9 14,13 10,13"/></svg>`,
-    info: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>`
+    info: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>`,
   };
 
   notification.innerHTML = `
@@ -3173,7 +3402,11 @@ function editTestCase(caseId) {
 
 // Global functions for test planning
 window.refreshTestPlanningContext = async function () {
-  try { if (window.testPlanningService) { window.testPlanningService.clearCache(); } } catch (_) {}
+  try {
+    if (window.testPlanningService) {
+      window.testPlanningService.clearCache();
+    }
+  } catch (_) {}
   await initializeTestPlanningContext();
   if (currentView === 'test-planning') {
     showTestPlanningView();
@@ -3186,8 +3419,16 @@ window.refreshTestPlanningContext = async function () {
 window.handleSyncAll = async function () {
   try {
     showNotification('Sincronizando...', 'info', 1200);
-    try { if (window.testPlanningService) { window.testPlanningService.clearCache(); } } catch (_) {}
-    try { if (window.defectsService && window.defectsService.cache) { window.defectsService.cache.clear(); } } catch (_) {}
+    try {
+      if (window.testPlanningService) {
+        window.testPlanningService.clearCache();
+      }
+    } catch (_) {}
+    try {
+      if (window.defectsService && window.defectsService.cache) {
+        window.defectsService.cache.clear();
+      }
+    } catch (_) {}
     await initializeTestPlanningContext();
     if (currentView === 'defects') {
       await updateDefectsListInPopup();
@@ -3216,7 +3457,7 @@ window.showFullTestPlan = function () {
     const platformUrl = env.VOIDR_PLATFORM_URL || 'https://canary.voidr.co';
     chrome.tabs.create({
       url: `${platformUrl}/test-planning/${testPlanningContext.testPlan.id}`,
-      active: true
+      active: true,
     });
   }
 };
@@ -3254,11 +3495,11 @@ window.reportBug = async function () {
       platform: {
         os: navigator.platform,
         browser: navigator.userAgent.split(' ').pop(),
-        url: await getCurrentTabUrl()
+        url: await getCurrentTabUrl(),
       },
       attachments: [],
       sessions: [],
-      relations: []
+      relations: [],
     });
 
     if (response.success) {
@@ -3287,11 +3528,11 @@ function makeAuthenticatedRequest(endpoint, method = 'GET', data = null) {
         action: 'apiRequest',
         endpoint: endpoint,
         method: method,
-        data: data
+        data: data,
       },
       (response) => {
         resolve(response || { error: 'No response' });
-      }
+      },
     );
   });
 }
@@ -3299,7 +3540,10 @@ function makeAuthenticatedRequest(endpoint, method = 'GET', data = null) {
 // Small helper to escape HTML in dynamic strings
 function escapeHtml(str) {
   try {
-    return String(str).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    return String(str).replace(
+      /[&<>"]/g,
+      (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]),
+    );
   } catch (_) {
     return str;
   }
@@ -3342,7 +3586,8 @@ function updateDefectSessionUI() {
   try {
     const card = document.getElementById('pdf-session-card');
     const assoc = document.getElementById('pdf-associated-session');
-    const sid = (typeof formState !== 'undefined' && formState.lastSessionId) ? formState.lastSessionId : '';
+    const sid =
+      typeof formState !== 'undefined' && formState.lastSessionId ? formState.lastSessionId : '';
     if (card) {
       const container = card;
       if (sid) {
