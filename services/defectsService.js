@@ -13,14 +13,12 @@ if (typeof window !== 'undefined' && window.defectsService) {
     // Make authenticated API request via background script
     async makeAPIRequest(endpoint, method = 'GET', data = null) {
       return new Promise((resolve) => {
-        try {
-          console.log(
-            '[DefectsService.api] →',
-            method,
-            endpoint,
-            data ? JSON.stringify(data).slice(0, 500) : '',
-          );
-        } catch (_) {}
+        console.log(
+          '[DefectsService.api] →',
+          method,
+          endpoint,
+          data ? JSON.stringify(data).slice(0, 500) : '',
+        );
         chrome.runtime.sendMessage(
           {
             action: 'apiRequest',
@@ -53,7 +51,8 @@ if (typeof window !== 'undefined' && window.defectsService) {
           .replace(/\s+/g, '-')
           .slice(0, 10);
         return `DEF-${titlePart}-${timestamp}`.toUpperCase();
-      } catch (_) {
+      } catch (e) {
+        console.error('[DefectsService.generateDefectSlug] Failed to generate slug:', e);
         return `DEF-${Date.now()}`;
       }
     }

@@ -3,10 +3,9 @@
 // Carrega variáveis de ambiente, se disponíveis
 try {
   importScripts('config/env.js');
-} catch (_) {
-  try {
-    importScripts('../config/env.js');
-  } catch (__) {}
+} catch (e) {
+  console.error('Error importing env.js:', e);
+  importScripts('../config/env.js');
 }
 
 // Configurações da API - com overrides via __VOIDR_ENV__
@@ -52,23 +51,15 @@ let lastActiveContentTabId = null;
 
 // Helpers to persist assistant window id across service worker restarts
 async function getStoredAssistantWindowId() {
-  try {
-    const res = await chrome.storage.local.get(['assistantWindowId']);
-    return res.assistantWindowId || null;
-  } catch (_) {
-    return null;
-  }
+  const res = await chrome.storage.local.get(['assistantWindowId']);
+  return res.assistantWindowId || null;
 }
 async function setStoredAssistantWindowId(id) {
-  try {
-    await chrome.storage.local.set({ assistantWindowId: id || null });
-  } catch (_) {}
+  await chrome.storage.local.set({ assistantWindowId: id || null });
 }
 async function clearStoredAssistantWindowId(id) {
-  try {
-    const current = await getStoredAssistantWindowId();
-    if (!id || current === id) await chrome.storage.local.remove(['assistantWindowId']);
-  } catch (_) {}
+  const current = await getStoredAssistantWindowId();
+  if (!id || current === id) await chrome.storage.local.remove(['assistantWindowId']);
 }
 
 // On window removed, clear stored id if it matches
@@ -80,12 +71,8 @@ chrome.windows.onRemoved.addListener(async (removedId) => {
 async function focusExistingAssistantWindow() {
   // 1) Try memory id
   if (lastPopupWindowId) {
-    try {
-      await chrome.windows.update(lastPopupWindowId, { focused: true, drawAttention: true });
-      return lastPopupWindowId;
-    } catch (_) {
-      /* fallthrough */
-    }
+    await chrome.windows.update(lastPopupWindowId, { focused: true, drawAttention: true });
+    return lastPopupWindowId;
   }
   // 2) Try stored id
   const storedId = await getStoredAssistantWindowId();
@@ -94,29 +81,24 @@ async function focusExistingAssistantWindow() {
       await chrome.windows.update(storedId, { focused: true, drawAttention: true });
       lastPopupWindowId = storedId;
       return storedId;
-    } catch (_) {
+    } catch (e) {
+      console.error('Error focusing existing assistant window:', e);
       await clearStoredAssistantWindowId(storedId);
     }
   }
   // 3) Scan all windows by URL
-  try {
-    const wins = await chrome.windows.getAll({ populate: true, windowTypes: ['popup', 'normal'] });
-    const targetUrl = chrome.runtime.getURL('popup/popup.html');
-    for (const w of wins) {
-      const match = (w.tabs || []).find((tab) => tab.url && tab.url.startsWith(targetUrl));
-      if (match) {
-        try {
-          await chrome.tabs.update(match.id, { active: true });
-        } catch (_) {}
-        try {
-          await chrome.windows.update(w.id, { focused: true, drawAttention: true });
-        } catch (_) {}
-        lastPopupWindowId = w.id;
-        await setStoredAssistantWindowId(w.id);
-        return w.id;
-      }
+  const wins = await chrome.windows.getAll({ populate: true, windowTypes: ['popup', 'normal'] });
+  const targetUrl = chrome.runtime.getURL('popup/popup.html');
+  for (const w of wins) {
+    const match = (w.tabs || []).find((tab) => tab.url && tab.url.startsWith(targetUrl));
+    if (match) {
+      await chrome.tabs.update(match.id, { active: true });
+      await chrome.windows.update(w.id, { focused: true, drawAttention: true });
+      lastPopupWindowId = w.id;
+      await setStoredAssistantWindowId(w.id);
+      return w.id;
     }
-  } catch (_) {}
+  }
   return null;
 }
 
@@ -142,7 +124,8 @@ async function openAssistantWindowAt(position) {
 function isHttpUrl(u) {
   try {
     return /^https?:/i.test(String(u || ''));
-  } catch (_) {
+  } catch (e) {
+    console.error('Error checking if URL is HTTP:', e);
     return false;
   }
 }
@@ -150,30 +133,22 @@ function isHttpUrl(u) {
 async function resolveReturnUrl() {
   // 1) Prefer lastActiveContentTabId
   if (lastActiveContentTabId) {
-    try {
-      const tab = await chrome.tabs.get(lastActiveContentTabId);
-      if (tab && isHttpUrl(tab.url)) return tab.url;
-    } catch (_) {}
+    const tab = await chrome.tabs.get(lastActiveContentTabId);
+    if (tab && isHttpUrl(tab.url)) return tab.url;
   }
   // 2) Active tab in focused window
-  try {
-    const tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-    const t = tabs && tabs[0];
-    if (t && isHttpUrl(t.url)) return t.url;
-  } catch (_) {}
+  const tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  const t = tabs && tabs[0];
+  if (t && isHttpUrl(t.url)) return t.url;
   // 3) Any http(s) tab across windows
-  try {
-    const wins = await chrome.windows.getAll({ populate: true, windowTypes: ['normal'] });
-    for (const w of wins) {
-      const httpTab = (w.tabs || []).find((tab) => isHttpUrl(tab.url));
-      if (httpTab) return httpTab.url;
-    }
-  } catch (_) {}
+  const wins = await chrome.windows.getAll({ populate: true, windowTypes: ['normal'] });
+  for (const w of wins) {
+    const httpTab = (w.tabs || []).find((tab) => isHttpUrl(tab.url));
+    if (httpTab) return httpTab.url;
+  }
   // 4) Stored fallback
-  try {
-    const stored = await chrome.storage.local.get(['lastActiveContentUrl']);
-    if (isHttpUrl(stored.lastActiveContentUrl)) return stored.lastActiveContentUrl;
-  } catch (_) {}
+  const stored = await chrome.storage.local.get(['lastActiveContentUrl']);
+  if (isHttpUrl(stored.lastActiveContentUrl)) return stored.lastActiveContentUrl;
   return '';
 }
 
@@ -292,20 +267,18 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           // Decide target tab: prefer sender.tab.id, else lastActiveContentTabId, else find an http(s) tab
           let targetTabId = sender?.tab?.id || lastActiveContentTabId;
           if (!targetTabId) {
-            try {
-              const wins = await chrome.windows.getAll({ populate: true, windowTypes: ['normal'] });
-              const focused = wins.find((w) => w.focused);
-              const candidates = focused ? [focused, ...wins.filter((w) => w !== focused)] : wins;
-              for (const w of candidates) {
-                const activeTab = (w.tabs || []).find(
-                  (t) => t.active && t.url && /^https?:/i.test(t.url),
-                );
-                if (activeTab) {
-                  targetTabId = activeTab.id;
-                  break;
-                }
+            const wins = await chrome.windows.getAll({ populate: true, windowTypes: ['normal'] });
+            const focused = wins.find((w) => w.focused);
+            const candidates = focused ? [focused, ...wins.filter((w) => w !== focused)] : wins;
+            for (const w of candidates) {
+              const activeTab = (w.tabs || []).find(
+                (t) => t.active && t.url && /^https?:/i.test(t.url),
+              );
+              if (activeTab) {
+                targetTabId = activeTab.id;
+                break;
               }
-            } catch (_) {}
+            }
           }
           if (!targetTabId) {
             sendResponse({ success: false, error: 'No eligible tab for injection' });
@@ -350,41 +323,36 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           });
 
           // Retrieve sessionId after init and broadcast to extension UIs
-          try {
-            const res = await chrome.scripting.executeScript({
-              target: { tabId: targetTabId },
-              world: 'MAIN',
-              func: () => {
-                try {
-                  return (
-                    (window.VoidrCollector &&
-                      window.VoidrCollector.getSessionId &&
-                      window.VoidrCollector.getSessionId()) ||
-                    null
-                  );
-                } catch (_) {
-                  return null;
-                }
-              },
-            });
-            const sessionId = (res && res[0] && res[0].result) || null;
-            try {
-              chrome.runtime.sendMessage({
-                action: 'voidr:sessionStarted',
-                sessionId: sessionId,
-                testCaseName:
-                  (request.initOptions &&
-                    request.initOptions.meta &&
-                    request.initOptions.meta.testCase) ||
-                  null,
-                mode:
-                  (request.initOptions &&
-                    request.initOptions.meta &&
-                    request.initOptions.meta.mode) ||
-                  'test-case',
-              });
-            } catch (_) {}
-          } catch (_) {}
+          const res2 = await chrome.scripting.executeScript({
+            target: { tabId: targetTabId },
+            world: 'MAIN',
+            func: () => {
+              try {
+                return (
+                  (window.VoidrCollector &&
+                    window.VoidrCollector.getSessionId &&
+                    window.VoidrCollector.getSessionId()) ||
+                  null
+                );
+              } catch (e) {
+                console.error('Error getting sessionId:', _);
+                return null;
+              }
+            },
+          });
+          const sessionId = (res2 && res2[0] && res2[0].result) || null;
+          chrome.runtime.sendMessage({
+            action: 'voidr:sessionStarted',
+            sessionId: sessionId,
+            testCaseName:
+              (request.initOptions &&
+                request.initOptions.meta &&
+                request.initOptions.meta.testCase) ||
+              null,
+            mode:
+              (request.initOptions && request.initOptions.meta && request.initOptions.meta.mode) ||
+              'test-case',
+          });
 
           sendResponse({ success: true });
         } catch (e) {
@@ -525,9 +493,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         if (t && t.id && /^https?:/i.test(t.url || '')) {
           lastActiveContentTabId = t.id;
         }
-        try {
-          await chrome.storage.local.set({ lastActiveContentUrl: url });
-        } catch (_) {}
+        await chrome.storage.local.set({ lastActiveContentUrl: url });
 
         // Tenta focar uma janela existente (memória, storage, varredura)
         const existingId = await focusExistingAssistantWindow();
@@ -585,7 +551,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
               targetTabId = chosen.id;
               lastActiveContentTabId = chosen.id;
             }
-          } catch (e) {}
+          } catch (e) {
+            throw e;
+          }
         }
         if (!targetTabId) {
           sendResponse({ success: false, error: 'No content tab to forward to' });
@@ -596,17 +564,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           sendResponse({ success: true, forwarded: true, tabId: targetTabId });
         } catch (e) {
           // Fallback: inject content script and retry once
-          try {
-            await chrome.scripting.executeScript({
-              target: { tabId: targetTabId },
-              files: ['content/content.js'],
-            });
-            await new Promise((r) => setTimeout(r, 100));
-            await chrome.tabs.sendMessage(targetTabId, payload);
-            sendResponse({ success: true, forwarded: true, injected: true, tabId: targetTabId });
-          } catch (e2) {
-            sendResponse({ success: false, error: e2?.message || 'Failed to send message' });
-          }
+          await chrome.scripting.executeScript({
+            target: { tabId: targetTabId },
+            files: ['content/content.js'],
+          });
+          await new Promise((r) => setTimeout(r, 100));
+          await chrome.tabs.sendMessage(targetTabId, payload);
+          sendResponse({ success: true, forwarded: true, injected: true, tabId: targetTabId });
         }
       })();
       return true;
@@ -616,20 +580,18 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         try {
           let targetTabId = sender?.tab?.id || lastActiveContentTabId;
           if (!targetTabId) {
-            try {
-              const wins = await chrome.windows.getAll({ populate: true, windowTypes: ['normal'] });
-              const focused = wins.find((w) => w.focused);
-              const candidates = focused ? [focused, ...wins.filter((w) => w !== focused)] : wins;
-              for (const w of candidates) {
-                const activeTab = (w.tabs || []).find(
-                  (t) => t.active && t.url && /^https?:/i.test(t.url),
-                );
-                if (activeTab) {
-                  targetTabId = activeTab.id;
-                  break;
-                }
+            const wins = await chrome.windows.getAll({ populate: true, windowTypes: ['normal'] });
+            const focused = wins.find((w) => w.focused);
+            const candidates = focused ? [focused, ...wins.filter((w) => w !== focused)] : wins;
+            for (const w of candidates) {
+              const activeTab = (w.tabs || []).find(
+                (t) => t.active && t.url && /^https?:/i.test(t.url),
+              );
+              if (activeTab) {
+                targetTabId = activeTab.id;
+                break;
               }
-            } catch (_) {}
+            }
           }
           if (!targetTabId) {
             sendResponse({ success: false, error: 'No eligible tab to get sessionId' });
@@ -647,29 +609,24 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                   null
                 );
               } catch (_) {
+                console.error('Error getting sessionId:', _);
                 return null;
               }
             },
           });
           const sessionId = (res && res[0] && res[0].result) || null;
-          try {
-            chrome.runtime.sendMessage({ action: 'voidr:sessionCaptured', sessionId });
-          } catch (_) {}
+          chrome.runtime.sendMessage({ action: 'voidr:sessionCaptured', sessionId });
 
           // After broadcasting, request the collector to end the session
-          try {
-            await chrome.scripting.executeScript({
-              target: { tabId: targetTabId },
-              world: 'MAIN',
-              func: () => {
-                try {
-                  window.VoidrCollector &&
-                    window.VoidrCollector.endSession &&
-                    window.VoidrCollector.endSession();
-                } catch (_) {}
-              },
-            });
-          } catch (_) {}
+          await chrome.scripting.executeScript({
+            target: { tabId: targetTabId },
+            world: 'MAIN',
+            func: () => {
+              window.VoidrCollector &&
+                window.VoidrCollector.endSession &&
+                window.VoidrCollector.endSession();
+            },
+          });
 
           sendResponse({ success: true, sessionId });
         } catch (e) {
@@ -695,42 +652,34 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         if (typeof desired.top === 'number') specs.top = Math.max(0, desired.top);
 
         const focusExisting = async (winId) => {
-          try {
-            if (!winId && lastPopupWindowId) winId = lastPopupWindowId;
-            if (!winId) return false;
-            await chrome.windows.update(winId, { focused: true, drawAttention: true });
-            return true;
-          } catch (e) {
-            return false;
-          }
+          if (!winId && lastPopupWindowId) winId = lastPopupWindowId;
+          if (!winId) return false;
+          await chrome.windows.update(winId, { focused: true, drawAttention: true });
+          return true;
         };
 
         let focused = await focusExisting(request.windowId || lastPopupWindowId);
         if (!focused) {
           // Try to find any existing assistant popup by URL
-          try {
-            const wins = await chrome.windows.getAll({
-              populate: true,
-              windowTypes: ['popup', 'normal'],
-            });
-            const targetUrl = chrome.runtime.getURL('popup/popup.html');
-            let existing = null;
-            for (const w of wins) {
-              const match = (w.tabs || []).find((t) => t.url && t.url.startsWith(targetUrl));
-              if (match) {
-                existing = w;
-                break;
-              }
+          const wins = await chrome.windows.getAll({
+            populate: true,
+            windowTypes: ['popup', 'normal'],
+          });
+          const targetUrl = chrome.runtime.getURL('popup/popup.html');
+          let existing = null;
+          for (const w of wins) {
+            const match = (w.tabs || []).find((t) => t.url && t.url.startsWith(targetUrl));
+            if (match) {
+              existing = w;
+              break;
             }
-            if (existing && existing.id) {
-              lastPopupWindowId = existing.id;
-              try {
-                const tab = (existing.tabs || []).find((t) => t.url && t.url.startsWith(targetUrl));
-                if (tab && tab.id) await chrome.tabs.update(tab.id, { active: true });
-              } catch (_) {}
-              focused = await focusExisting(existing.id);
-            }
-          } catch (_) {}
+          }
+          if (existing && existing.id) {
+            lastPopupWindowId = existing.id;
+            const tab = (existing.tabs || []).find((t) => t.url && t.url.startsWith(targetUrl));
+            if (tab && tab.id) await chrome.tabs.update(tab.id, { active: true });
+            focused = await focusExisting(existing.id);
+          }
         }
         if (focused) {
           sendResponse({ success: true, refocused: true, windowId: lastPopupWindowId });
@@ -762,13 +711,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 chrome.tabs.onActivated.addListener((activeInfo) => {
   console.log('Aba ativada:', activeInfo.tabId);
   // Atualiza última aba http(s) ativa
-  try {
-    chrome.tabs.get(activeInfo.tabId, (tab) => {
-      if (tab && tab.id && tab.url && /^https?:/i.test(tab.url)) {
-        lastActiveContentTabId = tab.id;
-      }
-    });
-  } catch (_) {}
+  chrome.tabs.get(activeInfo.tabId, (tab) => {
+    if (tab && tab.id && tab.url && /^https?:/i.test(tab.url)) {
+      lastActiveContentTabId = tab.id;
+    }
+  });
 });
 
 // Listener para atualizações de URL
@@ -821,9 +768,7 @@ async function makeAuthenticatedRequest(endpoint, method = 'GET', data = null) {
         throw new Error('Authentication expired');
       }
       let bodyText = '';
-      try {
-        bodyText = await response.text();
-      } catch (_) {}
+      bodyText = await response.text();
       console.warn('[API] ←', method, endpoint, response.status, response.statusText, bodyText);
       throw new Error(`API request failed: ${response.status} ${response.statusText}`);
     }
@@ -877,18 +822,19 @@ async function checkAndReopenExtension() {
 }
 
 // Verifica autenticação periodicamente (a cada 30 minutos)
-setInterval(() => {
-  checkAuthenticationStatus();
-}, 30 * 60 * 1000);
+setInterval(
+  () => {
+    checkAuthenticationStatus();
+  },
+  30 * 60 * 1000,
+);
 
 // Quando o usuário clica no ícone da extensão, abre a janela flutuante
 chrome.action.onClicked.addListener(() => {
   chrome.tabs.query({ active: true, lastFocusedWindow: true }, async (tabs) => {
     const t = tabs && tabs[0] ? tabs[0] : null;
     const url = t && t.url && /^https?:/i.test(t.url) ? t.url : '';
-    try {
-      await chrome.storage.local.set({ lastActiveContentUrl: url });
-    } catch (_) {}
+    await chrome.storage.local.set({ lastActiveContentUrl: url });
 
     const existingId = await focusExistingAssistantWindow();
     if (existingId) return;

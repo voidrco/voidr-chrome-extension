@@ -3,8 +3,16 @@
   "name": "Voidr Testing Assistant",
   "version": "1.0.0",
   "description": "Widget for test planning and bug reporting directly on web pages",
-  "permissions": ["activeTab", "storage", "scripting", "notifications"],
-  "host_permissions": ["http://*/*", "https://*/*"],
+  "permissions": [
+    "activeTab",
+    "storage",
+    "scripting",
+    "notifications"
+  ],
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
   "action": {
     "default_title": "Voidr Testing Assistant",
     "default_icon": {
@@ -14,21 +22,21 @@
       "128": "icons/icon128.png"
     }
   },
-  "content_scripts": [
-    {
-      "matches": ["<all_urls>"],
-      "js": ["content/content.js"],
-      "css": ["content/content.css"],
-      "run_at": "document_end"
-    }
-  ],
   "background": {
     "service_worker": "background/background.js"
   },
   "web_accessible_resources": [
     {
-      "resources": ["widget/*", "icons/*", "auth/*", "assets/*", "services/*"],
-      "matches": ["<all_urls>"]
+      "resources": [
+        "widget/*",
+        "icons/*",
+        "auth/*",
+        "assets/*",
+        "services/*"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
     }
   ],
   "icons": {

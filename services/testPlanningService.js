@@ -1,6 +1,5 @@
 // Test Planning Service for Voidr Extension
 // Replicates the platform's test planning functionality
-
 if (typeof window !== 'undefined' && window.testPlanningService) {
   // Already defined – avoid double registration
 } else {
@@ -345,8 +344,8 @@ if (typeof window !== 'undefined' && window.testPlanningService) {
           prerequisites: Array.isArray(testCaseData.prerequisites)
             ? testCaseData.prerequisites
             : testCaseData.prerequisites
-            ? [testCaseData.prerequisites]
-            : [],
+              ? [testCaseData.prerequisites]
+              : [],
           expectedResult: testCaseData.expectedResult || '',
           type: 'MANUAL', // Default to MANUAL for extension-created cases
           attachments: testCaseData.attachments || [],
@@ -403,8 +402,8 @@ if (typeof window !== 'undefined' && window.testPlanningService) {
           apiData.prerequisites = Array.isArray(updates.prerequisites)
             ? updates.prerequisites
             : updates.prerequisites
-            ? [updates.prerequisites]
-            : [];
+              ? [updates.prerequisites]
+              : [];
         }
         if (Object.prototype.hasOwnProperty.call(updates, 'expectedResult')) {
           apiData.expectedResult = updates.expectedResult;
@@ -560,14 +559,12 @@ if (typeof window !== 'undefined' && window.testPlanningService) {
     // Make authenticated API request via background script
     async makeAPIRequest(endpoint, method = 'GET', data = null) {
       return new Promise((resolve) => {
-        try {
-          console.log(
-            '[Service.api] →',
-            method,
-            endpoint,
-            data ? JSON.stringify(data).slice(0, 500) : '',
-          );
-        } catch (_) {}
+        console.log(
+          '[Service.api] →',
+          method,
+          endpoint,
+          data ? JSON.stringify(data).slice(0, 500) : '',
+        );
         chrome.runtime.sendMessage(
           {
             action: 'apiRequest',

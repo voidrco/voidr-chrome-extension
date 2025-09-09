@@ -11,18 +11,14 @@ function buildPopupRecordingContext() {
       : defaultName;
   let slug = undefined;
   if (recordingMode === 'test-case') {
-    try {
-      slug =
-        formState.isEditingExistingCase && formState.editingTestCaseData?.testCase?.slug
-          ? formState.editingTestCaseData.testCase.slug
-          : undefined;
-    } catch (_) {}
+    slug =
+      formState.isEditingExistingCase && formState.editingTestCaseData?.testCase?.slug
+        ? formState.editingTestCaseData.testCase.slug
+        : undefined;
   } else if (recordingMode === 'defect') {
-    try {
-      if (typeof getCurrentDefectSlug === 'function') {
-        slug = getCurrentDefectSlug();
-      }
-    } catch (_) {}
+    if (typeof getCurrentDefectSlug === 'function') {
+      slug = getCurrentDefectSlug();
+    }
   }
   return { recordingMode, tcName, slug };
 }
@@ -166,102 +162,86 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupEventDelegation();
 
   // Sync button in header
-  try {
-    document.getElementById('sync-all-btn')?.addEventListener('click', async () => {
-      await handleSyncAll();
-    });
-  } catch (_) {}
+  document.getElementById('sync-all-btn')?.addEventListener('click', async () => {
+    await handleSyncAll();
+  });
 
   // Listen session started to store sessionId for later PATCH
   chrome.runtime.onMessage.addListener((request) => {
     if (request && request.action === 'voidr:sessionStarted') {
-      try {
-        updateFormState({ lastSessionId: request.sessionId || null });
-        showNotification('Recording started', 'success', 1800);
-      } catch (_) {}
+      updateFormState({ lastSessionId: request.sessionId || null });
+      showNotification('Recording started', 'success', 1800);
     } else if (request && request.action === 'voidr:sessionStopped') {
-      try {
-        // Visual feedback on the button
-        const tcBtn = document.querySelector('[data-action="start-session-recording"]');
-        if (tcBtn) {
-          const original = tcBtn.innerHTML;
-          tcBtn.innerHTML =
-            '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20,6 9,17 4,12"/></svg> Session captured';
-          setTimeout(() => (tcBtn.innerHTML = original), 2000);
-        }
-        // Defects form feedback
-        const dfBtn = document.getElementById('pdf-rec');
-        if (dfBtn) {
-          const original = dfBtn.innerHTML;
-          dfBtn.innerHTML =
-            '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20,6 9,17 4,12"/></svg> Session captured';
-          setTimeout(() => (dfBtn.innerHTML = original), 2000);
-        }
+      // Visual feedback on the button
+      const tcBtn = document.querySelector('[data-action="start-session-recording"]');
+      if (tcBtn) {
+        const original = tcBtn.innerHTML;
+        tcBtn.innerHTML =
+          '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20,6 9,17 4,12"/></svg> Session captured';
+        setTimeout(() => (tcBtn.innerHTML = original), 2000);
+      }
+      // Defects form feedback
+      const dfBtn = document.getElementById('pdf-rec');
+      if (dfBtn) {
+        const original = dfBtn.innerHTML;
+        dfBtn.innerHTML =
+          '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20,6 9,17 4,12"/></svg> Session captured';
+        setTimeout(() => (dfBtn.innerHTML = original), 2000);
+      }
 
-        // If editing an existing case, fetch details to reflect sessionId
-        if (formState.isEditingExistingCase && formState.editingTestCaseData?.testCase?.slug) {
-          const module = findModuleByKey(uiState.selectedModuleKey);
-          const suite = findSuiteByKey(module, uiState.selectedSuiteKey);
-          if (module && suite && module.slug && suite.slug) {
-            (async () => {
-              try {
-                const details = await window.testPlanningService.getTestCase(
-                  testPlanningContext.testPlan.id,
-                  module.slug,
-                  suite.slug,
-                  formState.editingTestCaseData.testCase.slug,
-                );
-                updateFormState({ editingTestCaseData: { testCase: details } });
-                // Re-render edit view to show associated session
-                renderEditTestCaseView();
-              } catch (_) {}
-            })();
-          }
-        } else if (uiState.isAddingCase) {
-          // If we are on the create test case form, re-render to show the captured session card
-          updateTestPlanningContent();
+      // If editing an existing case, fetch details to reflect sessionId
+      if (formState.isEditingExistingCase && formState.editingTestCaseData?.testCase?.slug) {
+        const module = findModuleByKey(uiState.selectedModuleKey);
+        const suite = findSuiteByKey(module, uiState.selectedSuiteKey);
+        if (module && suite && module.slug && suite.slug) {
+          (async () => {
+            const details = await window.testPlanningService.getTestCase(
+              testPlanningContext.testPlan.id,
+              module.slug,
+              suite.slug,
+              formState.editingTestCaseData.testCase.slug,
+            );
+            updateFormState({ editingTestCaseData: { testCase: details } });
+            // Re-render edit view to show associated session
+            renderEditTestCaseView();
+          })();
         }
-      } catch (_) {}
+      } else if (uiState.isAddingCase) {
+        // If we are on the create test case form, re-render to show the captured session card
+        updateTestPlanningContent();
+      }
     } else if (request && request.action === 'voidr:sessionCaptured') {
       // Background fetched sessionId on stop; store and reflect UI immediately
-      try {
-        if (request.sessionId) {
-          updateFormState({ lastSessionId: request.sessionId });
-          // Also reflect in defects draft if open
-          try {
-            popupDraft.sessionId = request.sessionId;
-          } catch (_) {}
-          if (formState.isEditingExistingCase) {
-            renderEditTestCaseView();
-          } else if (uiState.isAddingCase) {
-            updateTestPlanningContent();
-          } else if (currentView === 'defects') {
-            updateDefectSessionUI();
-          }
+      if (request.sessionId) {
+        updateFormState({ lastSessionId: request.sessionId });
+        // Also reflect in defects draft if open
+        popupDraft.sessionId = request.sessionId;
+        if (formState.isEditingExistingCase) {
+          renderEditTestCaseView();
+        } else if (uiState.isAddingCase) {
+          updateTestPlanningContent();
+        } else if (currentView === 'defects') {
+          updateDefectSessionUI();
         }
-      } catch (_) {}
+      }
     }
   });
 
   // Initialize the extension
   // Force fresh data on popup load by clearing cache first
-  try {
-    if (window.testPlanningService) {
-      window.testPlanningService.clearCache();
-    }
-  } catch (_) {}
+  if (window.testPlanningService) {
+    window.testPlanningService.clearCache();
+  }
   // Ensure initial skeleton is visible before async work
-  try {
-    const mc = document.getElementById('main-extension-content');
-    if (mc && !mc.firstElementChild) {
-      const skel = document.createElement('div');
-      skel.id = 'initial-skeleton';
-      skel.className = 'voidr-skeleton-container';
-      skel.setAttribute('aria-hidden', 'true');
-      skel.innerHTML = `<div class="voidr-skeleton"></div>`;
-      mc.appendChild(skel);
-    }
-  } catch (_) {}
+  const mc = document.getElementById('main-extension-content');
+  if (mc && !mc.firstElementChild) {
+    const skel = document.createElement('div');
+    skel.id = 'initial-skeleton';
+    skel.className = 'voidr-skeleton-container';
+    skel.setAttribute('aria-hidden', 'true');
+    skel.innerHTML = `<div class="voidr-skeleton"></div>`;
+    mc.appendChild(skel);
+  }
   await initializeExtension();
 });
 
@@ -566,10 +546,8 @@ async function initializeTestPlanningContext() {
     // Get current tab URL or fallback to lastActiveContentUrl for floating window
     let currentUrl = await getCurrentTabUrl();
     if (!currentUrl) {
-      try {
-        const stored = await chrome.storage.local.get(['lastActiveContentUrl']);
-        currentUrl = stored.lastActiveContentUrl || null;
-      } catch (_) {}
+      const stored = await chrome.storage.local.get(['lastActiveContentUrl']);
+      currentUrl = stored.lastActiveContentUrl || null;
     }
 
     if (!currentUrl) {
@@ -580,6 +558,7 @@ async function initializeTestPlanningContext() {
     // Initialize for current page
     testPlanningContext = await window.testPlanningService.initializeForCurrentPage(currentUrl);
   } catch (error) {
+    console.error('Error initializing test planning context:', error);
     testPlanningContext = { hasApplication: false, error: error.message };
   }
 }
@@ -613,10 +592,8 @@ function showWelcomeScreen() {
   const contentDiv = document.getElementById('main-extension-content');
   if (!contentDiv) return;
   // Remove initial skeleton if present
-  try {
-    const sk = document.getElementById('initial-skeleton');
-    if (sk) sk.remove();
-  } catch (_) {}
+  const sk = document.getElementById('initial-skeleton');
+  if (sk) sk.remove();
 
   currentView = 'welcome';
 
@@ -726,9 +703,7 @@ function showWelcomeScreen() {
   `;
 
   // Render organization card above the welcome section
-  try {
-    renderOrganizationCard();
-  } catch (_) {}
+  renderOrganizationCard();
 }
 
 // Renders organization info card (logo + name) above welcome section
@@ -789,10 +764,8 @@ window.navigateToWelcome = function () {
 function showTestPlanningView() {
   const contentDiv = document.getElementById('main-extension-content');
   if (!contentDiv) return;
-  try {
-    const sk = document.getElementById('initial-skeleton');
-    if (sk) sk.remove();
-  } catch (_) {}
+  const sk = document.getElementById('initial-skeleton');
+  if (sk) sk.remove();
 
   contentDiv.innerHTML = `
     <div class="voidr-view-container">
@@ -821,10 +794,8 @@ function showTestPlanningView() {
 function showDefectsView() {
   const contentDiv = document.getElementById('main-extension-content');
   if (!contentDiv) return;
-  try {
-    const sk = document.getElementById('initial-skeleton');
-    if (sk) sk.remove();
-  } catch (_) {}
+  const sk = document.getElementById('initial-skeleton');
+  if (sk) sk.remove();
 
   contentDiv.innerHTML = `
     <div class="voidr-view-container">
@@ -898,9 +869,7 @@ async function updateDefectsListInPopup() {
     popupDefects.items = Array.isArray(res?.items) ? res.items : [];
     renderDefectsListInPopup();
   } catch (e) {
-    try {
-      console.error('[Popup] Failed to load defects:', e);
-    } catch (_) {}
+    console.error('[Popup] Failed to load defects:', e);
     const list = document.getElementById('defects-list');
     if (list)
       list.innerHTML = `<div class=\"voidr-empty-state\"><h4>Failed to load defects</h4><p>${
@@ -940,21 +909,19 @@ function renderDefectsListInPopup() {
     })
     .join('');
   list.innerHTML = `<div class=\"voidr-defects-list\">${rows}</div>`;
-  try {
-    const containerEl = list.querySelector('.voidr-defects-list');
-    if (containerEl) {
-      containerEl.querySelectorAll('.voidr-defect-item').forEach((el) => {
-        const s =
-          el.getAttribute('data-slug') || el.querySelector('.voidr-slug')?.textContent?.trim();
-        if (s) {
-          el.style.cursor = 'pointer';
-          el.addEventListener('click', () => {
-            showDefectDetailInPopup(s);
-          });
-        }
-      });
-    }
-  } catch (_) {}
+  const containerEl = list.querySelector('.voidr-defects-list');
+  if (containerEl) {
+    containerEl.querySelectorAll('.voidr-defect-item').forEach((el) => {
+      const s =
+        el.getAttribute('data-slug') || el.querySelector('.voidr-slug')?.textContent?.trim();
+      if (s) {
+        el.style.cursor = 'pointer';
+        el.addEventListener('click', () => {
+          showDefectDetailInPopup(s);
+        });
+      }
+    });
+  }
 }
 
 function showNewDefectFormInPopup() {
@@ -1099,15 +1066,13 @@ function showNewDefectFormInPopup() {
     </div>
   `;
 
-  try {
-    document.getElementById('back-to-defects')?.addEventListener('click', () => showDefectsView());
-    const form = document.getElementById('pdf-form');
-    form?.addEventListener('submit', (e) => submitNewDefectInPopup(e));
-    document.getElementById('pdf-cancel')?.addEventListener('click', () => showDefectsView());
-    // Reuse shared listeners from test case form
-    setupFormFieldListeners();
-    setupUploadZoneListeners();
-  } catch (_) {}
+  document.getElementById('back-to-defects')?.addEventListener('click', () => showDefectsView());
+  const form = document.getElementById('pdf-form');
+  form?.addEventListener('submit', (e) => submitNewDefectInPopup(e));
+  document.getElementById('pdf-cancel')?.addEventListener('click', () => showDefectsView());
+  // Reuse shared listeners from test case form
+  setupFormFieldListeners();
+  setupUploadZoneListeners();
 }
 
 let popupDraft = { attachments: [] };
@@ -1146,9 +1111,7 @@ async function showDefectDetailInPopup(idOrSlug) {
     </div>
   `;
 
-  try {
-    document.getElementById('back-to-defects')?.addEventListener('click', () => showDefectsView());
-  } catch (_) {}
+  document.getElementById('back-to-defects')?.addEventListener('click', () => showDefectsView());
 
   try {
     await ensureDefectsServiceLoaded();
@@ -1219,36 +1182,27 @@ async function showDefectDetailInPopup(idOrSlug) {
     if (loader) loader.style.display = 'none';
     wrapper.style.display = 'block';
 
-    try {
-      document.getElementById('pdf-cancel')?.addEventListener('click', () => showDefectsView());
-    } catch (_) {}
-    try {
-      const form = document.getElementById('pdf-edit-form');
-      form?.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const updates = {
-          title: document.getElementById('pdf-title').value.trim(),
-          description: document.getElementById('pdf-description').value.trim(),
-          applicationEnvironment: document.getElementById('pdf-env').value.trim(),
-          status: document.getElementById('pdf-status').value,
-          severity: document.getElementById('pdf-severity').value,
-          priority: document.getElementById('pdf-priority').value,
-        };
-        try {
-          await window.defectsService.updateDefect(slug, updates);
-          showNotification('Defect updated', 'success');
-          showDefectsView();
-          try {
-            await updateDefectsListInPopup();
-          } catch (_) {}
-        } catch (err) {
-          showNotification(
-            'Failed to update defect: ' + (err?.message || 'Unknown error'),
-            'error',
-          );
-        }
-      });
-    } catch (_) {}
+    document.getElementById('pdf-cancel')?.addEventListener('click', () => showDefectsView());
+    const form = document.getElementById('pdf-edit-form');
+    form?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const updates = {
+        title: document.getElementById('pdf-title').value.trim(),
+        description: document.getElementById('pdf-description').value.trim(),
+        applicationEnvironment: document.getElementById('pdf-env').value.trim(),
+        status: document.getElementById('pdf-status').value,
+        severity: document.getElementById('pdf-severity').value,
+        priority: document.getElementById('pdf-priority').value,
+      };
+      try {
+        await window.defectsService.updateDefect(slug, updates);
+        showNotification('Defect updated', 'success');
+        showDefectsView();
+        await updateDefectsListInPopup();
+      } catch (err) {
+        showNotification('Failed to update defect: ' + (err?.message || 'Unknown error'), 'error');
+      }
+    });
   } catch (e) {
     const wrapper = document.getElementById('defect-detail-form-wrapper');
     const loader = document.getElementById('defect-detail-loading');
@@ -1298,10 +1252,10 @@ window.submitNewDefectInPopup = async function (event) {
     const envNormalized = ['production', 'staging', 'development'].includes(envLower)
       ? envLower
       : envLower.startsWith('prod')
-      ? 'production'
-      : envLower.startsWith('stag')
-      ? 'staging'
-      : 'development';
+        ? 'production'
+        : envLower.startsWith('stag')
+          ? 'staging'
+          : 'development';
     // Reporter from auth status
     const reporter =
       (authStatus &&
@@ -1453,9 +1407,12 @@ window.openPlatformForAuth = function () {
   }, 2000);
 
   // Stop checking after 5 minutes
-  setTimeout(() => {
-    clearInterval(authCheckInterval);
-  }, 5 * 60 * 1000);
+  setTimeout(
+    () => {
+      clearInterval(authCheckInterval);
+    },
+    5 * 60 * 1000,
+  );
 };
 
 // Check authentication status manually
@@ -2168,28 +2125,25 @@ function renderCasesList(container) {
       </div>
     `;
     (async () => {
-      try {
-        const fetched = await window.testPlanningService.getSuiteCases(
+      const fetched = await window.testPlanningService.getSuiteCases(
+        testPlanningContext.testPlan.id,
+        module.slug,
+        suite.slug,
+      );
+      suite.cases = fetched || [];
+      // Also refresh details for the selected case if we're returning from edit
+      if (formState.editingTestCaseData?.testCase?.slug) {
+        const refreshed = await window.testPlanningService.getTestCase(
           testPlanningContext.testPlan.id,
           module.slug,
           suite.slug,
+          formState.editingTestCaseData.testCase.slug,
         );
-        suite.cases = fetched || [];
-        // Also refresh details for the selected case if we're returning from edit
-        if (formState.editingTestCaseData?.testCase?.slug) {
-          const refreshed = await window.testPlanningService.getTestCase(
-            testPlanningContext.testPlan.id,
-            module.slug,
-            suite.slug,
-            formState.editingTestCaseData.testCase.slug,
-          );
-          // Replace in list if found
-          const idx = suite.cases.findIndex((c) => c.slug === refreshed.slug);
-          if (idx >= 0) suite.cases[idx] = refreshed;
-        }
-      } catch (_) {
-        suite.cases = [];
+        // Replace in list if found
+        const idx = suite.cases.findIndex((c) => c.slug === refreshed.slug);
+        if (idx >= 0) suite.cases[idx] = refreshed;
       }
+      suite.cases = [];
       renderCasesList(container);
     })();
     return;
@@ -2735,17 +2689,15 @@ async function ensurePrivateStorageServiceLoaded() {
   if (window.privateStorageService && window.privateStorageService.uploadFile) {
     return true;
   }
-  try {
-    const existing = document.querySelector('script[data-voidr="storage-service"]');
-    if (!existing) {
-      const script = document.createElement('script');
-      script.src = chrome.runtime.getURL('services/privateStorageService.js');
-      script.async = true;
-      script.defer = true;
-      script.setAttribute('data-voidr', 'storage-service');
-      document.head.appendChild(script);
-    }
-  } catch (_) {}
+  const existing = document.querySelector('script[data-voidr="storage-service"]');
+  if (!existing) {
+    const script = document.createElement('script');
+    script.src = chrome.runtime.getURL('services/privateStorageService.js');
+    script.async = true;
+    script.defer = true;
+    script.setAttribute('data-voidr', 'storage-service');
+    document.head.appendChild(script);
+  }
 
   // Wait up to 2 seconds for it to be available
   const start = Date.now();
@@ -2790,7 +2742,8 @@ function computeUploadContext() {
       source: 'extension',
     };
     return { folder, metadata };
-  } catch (_) {
+  } catch (e) {
+    console.error('[Popup] Failed to compute upload context:', e);
     return {
       folder: 'test-cases',
       metadata: { module: 'test-plans', type: 'test-case', source: 'extension' },
@@ -3262,36 +3215,33 @@ async function handleDownloadUploadedFile(index) {
       // Blob URL from local upload preview, open directly
       window.open(file.url, '_blank');
     }
-  } catch (_) {
+  } catch (e) {
+    console.error('[Popup] Failed to download uploaded file:', e);
     // Fallback to direct open
     window.open(file.url, '_blank');
   }
 }
 
 async function handleStartSessionRecording() {
-  try {
-    const { recordingMode, tcName, slug } = buildPopupRecordingContext();
-    showNotification('Starting recording...', 'info', 1200);
-    chrome.runtime.sendMessage(
-      {
-        action: 'forwardToLastContent',
-        payload: {
-          action: 'voidr:startSessionRecording',
-          testCaseName: tcName,
-          mode: recordingMode,
-          slug: slug,
-        },
+  const { recordingMode, tcName, slug } = buildPopupRecordingContext();
+  showNotification('Starting recording...', 'info', 1200);
+  chrome.runtime.sendMessage(
+    {
+      action: 'forwardToLastContent',
+      payload: {
+        action: 'voidr:startSessionRecording',
+        testCaseName: tcName,
+        mode: recordingMode,
+        slug: slug,
       },
-      (response) => {
-        try {
-          if (!response || response.success !== true) {
-            const msg = (response && response.error) || 'Open a tab with a website and try again';
-            showNotification(`Could not start recording: ${msg}`, 'error', 3000);
-          }
-        } catch (_) {}
-      },
-    );
-  } catch (_) {}
+    },
+    (response) => {
+      if (!response || response.success !== true) {
+        const msg = (response && response.error) || 'Open a tab with a website and try again';
+        showNotification(`Could not start recording: ${msg}`, 'error', 3000);
+      }
+    },
+  );
 }
 
 // Helper function to refresh and show test planning
@@ -3402,11 +3352,9 @@ function editTestCase(caseId) {
 
 // Global functions for test planning
 window.refreshTestPlanningContext = async function () {
-  try {
-    if (window.testPlanningService) {
-      window.testPlanningService.clearCache();
-    }
-  } catch (_) {}
+  if (window.testPlanningService) {
+    window.testPlanningService.clearCache();
+  }
   await initializeTestPlanningContext();
   if (currentView === 'test-planning') {
     showTestPlanningView();
@@ -3419,16 +3367,12 @@ window.refreshTestPlanningContext = async function () {
 window.handleSyncAll = async function () {
   try {
     showNotification('Sincronizando...', 'info', 1200);
-    try {
-      if (window.testPlanningService) {
-        window.testPlanningService.clearCache();
-      }
-    } catch (_) {}
-    try {
-      if (window.defectsService && window.defectsService.cache) {
-        window.defectsService.cache.clear();
-      }
-    } catch (_) {}
+    if (window.testPlanningService) {
+      window.testPlanningService.clearCache();
+    }
+    if (window.defectsService && window.defectsService.cache) {
+      window.defectsService.cache.clear();
+    }
     await initializeTestPlanningContext();
     if (currentView === 'defects') {
       await updateDefectsListInPopup();
@@ -3441,7 +3385,8 @@ window.handleSyncAll = async function () {
       showWelcomeScreen();
     }
     showNotification('Sincronizado', 'success', 1200);
-  } catch (_) {
+  } catch (e) {
+    console.error('[Popup] Failed to sync:', e);
     showNotification('Failed to sync', 'error', 2000);
   }
 };
@@ -3542,9 +3487,10 @@ function escapeHtml(str) {
   try {
     return String(str).replace(
       /[&<>"]/g,
-      (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]),
+      (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c],
     );
-  } catch (_) {
+  } catch (e) {
+    console.error('[Popup] Failed to escape HTML:', e);
     return str;
   }
 }
@@ -3583,23 +3529,21 @@ window.addEventListener('focus', async () => {
 });
 
 function updateDefectSessionUI() {
-  try {
-    const card = document.getElementById('pdf-session-card');
-    const assoc = document.getElementById('pdf-associated-session');
-    const sid =
-      typeof formState !== 'undefined' && formState.lastSessionId ? formState.lastSessionId : '';
-    if (card) {
-      const container = card;
-      if (sid) {
-        container.style.display = 'flex';
-        const lines = container.querySelectorAll('span');
-        if (lines && lines[1]) lines[1].textContent = sid;
-      } else {
-        container.style.display = 'none';
-      }
+  const card = document.getElementById('pdf-session-card');
+  const assoc = document.getElementById('pdf-associated-session');
+  const sid =
+    typeof formState !== 'undefined' && formState.lastSessionId ? formState.lastSessionId : '';
+  if (card) {
+    const container = card;
+    if (sid) {
+      container.style.display = 'flex';
+      const lines = container.querySelectorAll('span');
+      if (lines && lines[1]) lines[1].textContent = sid;
+    } else {
+      container.style.display = 'none';
     }
-    if (assoc && popupDraft?.sessionId) {
-      assoc.textContent = popupDraft.sessionId;
-    }
-  } catch (_) {}
+  }
+  if (assoc && popupDraft?.sessionId) {
+    assoc.textContent = popupDraft.sessionId;
+  }
 }
