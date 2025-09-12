@@ -1,0 +1,74 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&display=swap');
+
+:root {
+  --background: #050607;
+  --background-elevated: #0a0b0c;
+  --text-primary: rgba(255, 255, 255, 0.9);
+  --text-secondary: rgba(255, 255, 255, 0.5);
+  --text-tertiary: rgba(255, 255, 255, 0.3);
+  --border-color: rgba(255, 255, 255, 0.1);
+  --hover-color: rgba(255, 255, 255, 0.05);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  font-weight: 300;
+  background-color: var(--background);
+  color: var(--text-primary);
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.auth-container { width: 100%; max-width: 420px; position: relative; }
+
+.auth-card {
+  background-color: var(--background-elevated);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 32px;
+}
+
+.auth-header { text-align: center; margin-bottom: 32px; }
+.logo-container { display: flex; align-items: center; justify-content: center; gap: 16px; }
+.logo-icon { width: 80px; height: auto; }
+
+.connection-status { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 12px 20px; background: var(--hover-color); border: 1px solid var(--border-color); border-radius: 8px; margin-bottom: 24px; font-size: 14px; }
+.status-indicator { width: 8px; height: 8px; border-radius: 50%; }
+.status-indicator.checking { background: #f59e0b; animation: pulse 2s infinite; }
+.status-indicator.connected { background: #10b981; box-shadow: 0 0 8px rgba(16, 185, 129, 0.4); }
+.status-indicator.error, .status-indicator.disconnected { background: #ef4444; }
+
+.auth-content { position: relative; min-height: 200px; }
+.auth-state { text-align: center; transition: all 0.3s ease; }
+.auth-state.hidden { display: none; }
+.auth-state h2 { font-size: 24px; font-weight: 500; margin-bottom: 12px; color: var(--text-primary); }
+.auth-state p { font-size: 16px; color: var(--text-secondary); line-height: 1.5; margin-bottom: 24px; }
+.loading-spinner { width: 48px; height: 48px; margin: 0 auto 24px; border: 3px solid var(--border-color); border-top: 3px solid var(--text-primary); border-radius: 50%; animation: spin 1s linear infinite; }
+
+.success-icon, .error-icon { margin: 0 auto 24px; width: 48px; height: 48px; display: flex; align-items: center; justify-content: center; }
+.error-icon svg { color: #ef4444; }
+
+.user-info { display: flex; align-items: center; gap: 16px; padding: 16px 20px; background: var(--hover-color); border: 1px solid var(--border-color); border-radius: 8px; margin-bottom: 24px; text-align: left; }
+.user-avatar { width: 48px; height: 48px; background: var(--border-color); border-radius: 50%; display: flex; align-items: center; justify-content: center; color: var(--text-secondary); }
+.user-name { font-weight: 500; color: var(--text-primary); font-size: 16px; }
+.user-email { font-size: 14px; color: var(--text-secondary); }
+
+.auth-actions { display: flex; flex-direction: column; gap: 12px; margin-bottom: 24px; }
+.btn-primary, .btn-secondary { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 12px 20px; border: none; border-radius: 8px; font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.2s ease; }
+.btn-primary { background: var(--text-primary); color: var(--background); }
+.btn-primary:hover { background: rgba(255,255,255,0.8); }
+.btn-secondary { background: var(--hover-color); color: var(--text-primary); border: 1px solid var(--border-color); }
+.btn-secondary:hover { background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.2); }
+
+.auth-footer { display: flex; justify-content: space-between; align-items: center; padding-top: 24px; border-top: 1px solid var(--border-color); margin-top: 24px; }
+.footer-link { display: flex; align-items: center; gap: 6px; color: var(--text-secondary); text-decoration: none; font-size: 12px; }
+.footer-link:hover { color: var(--text-primary); }
+
+@keyframes spin { 0% { transform: rotate(0deg);} 100% { transform: rotate(360deg);} }
+@keyframes pulse { 0%,100% { opacity: 1;} 50% { opacity: .5;} }
+

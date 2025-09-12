@@ -1,0 +1,78 @@
+:root {
+  --bg: #050607;
+  --bg-elev: #0a0b0c;
+  --text: rgba(255,255,255,.9);
+  --text-2: rgba(255,255,255,.6);
+  --border: rgba(255,255,255,.1);
+  --hover: rgba(255,255,255,.06);
+}
+
+body { color: var(--text); }
+
+.extension-container {
+  min-width: 360px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+}
+
+.extension-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.logo-container { display: flex; align-items: center; gap: 8px; }
+.logo-icon { height: 20px; width: auto; }
+
+.header-right { display: flex; align-items: center; gap: 8px; }
+
+.voidr-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--hover);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.voidr-action-btn:hover { background: rgba(255,255,255,.08); }
+
+.extension-content { padding: 8px; }
+
+.extension-footer {
+  display: flex; align-items: center; justify-content: flex-end;
+  padding: 6px 10px; border-top: 1px solid var(--border);
+}
+.version { font-size: 12px; color: var(--text-2); }
+
+.tabs { display: flex; gap: 8px; padding: 0 8px 8px; }
+.tab-btn {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  border-radius: 8px; cursor: pointer;
+}
+.tab-btn.active { border-color: #67D55E; background: #131613; }
+
+/* Welcome (auth-required) */
+.voidr-welcome { display: flex; flex-direction: column; gap: 16px; }
+.voidr-welcome-header { display: flex; flex-direction: column; gap: 10px; text-align: left; }
+.voidr-welcome-icon { width: 48px; height: 48px; display: flex; align-items: center; justify-content: center; background: var(--hover); border: 1px solid var(--border); border-radius: 10px; }
+.voidr-welcome-header h2 { margin: 0; font-weight: 600; font-size: 18px; }
+.voidr-welcome-header p { margin: 0; color: var(--text-2); }
+
+.voidr-welcome-actions { margin-top: 8px; }
+.voidr-action-cards { display: grid; gap: 10px; }
+.voidr-action-card { display: grid; grid-template-columns: 40px 1fr 16px; align-items: center; gap: 10px; padding: 12px; background: var(--hover); border: 1px solid var(--border); border-radius: 10px; cursor: pointer; color: var(--text); text-align: left; }
+.voidr-action-card:hover { background: rgba(255,255,255,.08); }
+.voidr-action-icon { display: flex; align-items: center; justify-content: center; }
+.voidr-action-content h4 { margin: 0; font-size: 14px; font-weight: 600; }
+.voidr-action-content p { margin: 2px 0 0; font-size: 12px; color: var(--text-2); }
+.voidr-action-arrow { display: flex; align-items: center; justify-content: center; }
+
