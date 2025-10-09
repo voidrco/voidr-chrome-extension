@@ -3,6 +3,18 @@ import { getRecordConsolePlugin } from '@rrweb/rrweb-plugin-console-record';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// Função para serialização segura (evita referências circulares)
+function safeStringify(obj) {
+  const seen = new WeakSet();
+  return JSON.stringify(obj, (key, value) => {
+    if (typeof value === 'object' && value !== null) {
+      if (seen.has(value)) return '[Circular]';
+      seen.add(value);
+    }
+    return value;
+  });
+}
+
 const VoidrCollector = (function () {
   // ======= Configurações Internas =======
   let config = {
@@ -193,7 +205,7 @@ const VoidrCollector = (function () {
               } catch (_) {
                 initPayload.initialUrl = null;
               }
-              return JSON.stringify(initPayload);
+              return safeStringify(initPayload);
             })(),
           });
 
@@ -785,7 +797,7 @@ const VoidrCollector = (function () {
             'Content-Type': 'application/json',
             ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
           },
-          body: JSON.stringify(payload),
+          body: safeStringify(payload),
         });
 
         if (!res.ok) {
@@ -796,7 +808,7 @@ const VoidrCollector = (function () {
           const response = await fetch(`${config.collectorUrl}/refresh-token`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
+            body: safeStringify({
               apiKey: config.apiKey,
             }),
           });
@@ -859,14 +871,46 @@ const VoidrCollector = (function () {
         if (authToken) {
           xhr.setRequestHeader('Authorization', `Bearer ${authToken}`);
         }
-        xhr.send(JSON.stringify(payload));
+        xhr.send(safeStringify(payload));
       }
     },
   };
 })();
 
-export default VoidrCollector;
+// Wrapper global para capturar qualquer erro
+const SafeVoidrCollector = new Proxy(VoidrCollector, {
+  get(target, prop) {
+    const value = target[prop];
+
+    // Se não for uma função, retorna direto
+    if (typeof value !== 'function') {
+      return value;
+    }
+
+    // Envolve funções em try-catch
+    return function (...args) {
+      try {
+        const result = value.apply(target, args);
+
+        // Se for Promise, captura erros async também
+        if (result && typeof result.then === 'function') {
+          return result.catch((error) => {
+            console.error(`VoidrCollector: Error in ${String(prop)}:`, error);
+            return undefined;
+          });
+        }
+
+        return result;
+      } catch (error) {
+        console.error(`VoidrCollector: Error in ${String(prop)}:`, error);
+        return undefined;
+      }
+    };
+  },
+});
+
+export default SafeVoidrCollector;
 
 if (typeof window !== 'undefined') {
-  window.VoidrCollector = VoidrCollector;
+  window.VoidrCollector = SafeVoidrCollector;
 }
