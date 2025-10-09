@@ -31,6 +31,6 @@ export default {
     emptyOutDir: true,
     minify: 'esbuild',
     target: 'es2018',
-    sourcemap: 'inline',
+    sourcemap: false,
   },
 };
