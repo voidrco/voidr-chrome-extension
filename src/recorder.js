@@ -51,6 +51,7 @@ const VoidrCollector = (function () {
   let eventsInterval = null;
   let originalFetch = null;
   let originalXHR = null;
+  let isInitialized = false;
 
   // ======= Funções Auxiliares =======
   function generateSelector(el, maxDepth = 6) {
@@ -149,6 +150,16 @@ const VoidrCollector = (function () {
      * @param {boolean} [options.system=false] - Flag opcional para indicar execução em contexto de sistema
      */
     async init(options) {
+      // Prevenir inicialização duplicada
+      if (isInitialized) {
+        console.warn(
+          `VoidrCollector v${VOIDR_VERSION} - Already initialized. Skipping duplicate init() call.`,
+        );
+        return;
+      }
+
+      isInitialized = true;
+
       console.log(`VoidrCollector v${VOIDR_VERSION} - Initializing...`);
 
       // Validação básica
@@ -348,6 +359,7 @@ const VoidrCollector = (function () {
       authToken = null;
       lastHref = null;
       foceStop = true;
+      isInitialized = true;
 
       console.log('VoidrCollector: Session ended');
     },
