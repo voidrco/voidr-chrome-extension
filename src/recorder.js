@@ -1,6 +1,8 @@
 import { record } from 'rrweb';
 import { getRecordConsolePlugin } from '@rrweb/rrweb-plugin-console-record';
 
+const VOIDR_VERSION = '1.6.1';
+
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Função para serialização segura (evita referências circulares)
@@ -132,6 +134,8 @@ const VoidrCollector = (function () {
 
   // ======= Interface Pública =======
   return {
+    version: VOIDR_VERSION,
+
     /**
      * Inicializa o coletor de eventos
      * @param {Object} options - Configurações de inicialização
@@ -145,6 +149,8 @@ const VoidrCollector = (function () {
      * @param {boolean} [options.system=false] - Flag opcional para indicar execução em contexto de sistema
      */
     async init(options) {
+      console.log(`VoidrCollector v${VOIDR_VERSION} - Initializing...`);
+
       // Validação básica
       if (!options || !options.apiKey) {
         throw new Error('VoidrCollector: API Key é obrigatória');
@@ -244,6 +250,8 @@ const VoidrCollector = (function () {
       }, 7000);
 
       window.addEventListener('beforeunload', () => this._handleUnload());
+
+      console.log(`VoidrCollector v${VOIDR_VERSION} - Initialized successfully`);
     },
 
     /**
@@ -913,4 +921,5 @@ export default SafeVoidrCollector;
 
 if (typeof window !== 'undefined') {
   window.VoidrCollector = SafeVoidrCollector;
+  console.log(`VoidrCollector v${VOIDR_VERSION} - Module loaded`);
 }
