@@ -1,7 +1,7 @@
 import { record } from 'rrweb';
 import { getRecordConsolePlugin } from '@rrweb/rrweb-plugin-console-record';
 
-const VOIDR_VERSION = '1.6.1';
+const VOIDR_VERSION = '1.7.2';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
