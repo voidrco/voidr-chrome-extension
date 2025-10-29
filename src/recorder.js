@@ -5,6 +5,35 @@ const VOIDR_VERSION = '1.7.2';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// Função para detectar ambientes de automação
+function isAutomationEnvironment() {
+  try {
+    // Detecção de webdriver (Playwright, Selenium, Puppeteer)
+    if (navigator.webdriver === true) {
+      return true;
+    }
+
+    // Detecção específica do Playwright
+    if (window.playwright !== undefined) {
+      return true;
+    }
+
+    // Detecção de PhantomJS
+    if (window.callPhantom || window._phantom) {
+      return true;
+    }
+
+    // Detecção adicional via propriedades do Chrome DevTools Protocol
+    if (window.__playwright || window.__puppeteer) {
+      return true;
+    }
+
+    return false;
+  } catch (e) {
+    return false;
+  }
+}
+
 // Função para serialização segura (evita referências circulares)
 function safeStringify(obj) {
   const seen = new WeakSet();
@@ -26,6 +55,8 @@ const VoidrCollector = (function () {
     collectorUrl: 'https://collector.voidr.co',
     sessionTimeout: 30, // minutos
     system: false,
+    skipRecording: false,
+    samplingRate: 0.1, // 0 a 1 (0% a 100%), padrão 10%
     dataMasking: {
       text: false,
       inputs: false,
@@ -148,6 +179,8 @@ const VoidrCollector = (function () {
      * @param {boolean} [options.dataMasking] - Configurações de ofuscação
      * @param {number} [options.sessionTimeout] - Tempo de sessão em minutos
      * @param {boolean} [options.system=false] - Flag opcional para indicar execução em contexto de sistema
+     * @param {boolean} [options.skipRecording=false] - Força pular gravação (útil para automações)
+     * @param {number} [options.samplingRate=0.1] - Taxa de amostragem de 0 a 1 (0% a 100% das sessões, padrão 10%)
      */
     async init(options) {
       // Prevenir inicialização duplicada
@@ -169,6 +202,33 @@ const VoidrCollector = (function () {
 
       // Mesclar configurações
       config = { ...config, ...options };
+
+      // ========== Verificações para pular gravação ==========
+
+      // 1. Verificar skipRecording manual
+      if (config.skipRecording === true) {
+        console.log('VoidrCollector: Recording skipped (manual override via skipRecording)');
+        isInitialized = false;
+        return;
+      }
+
+      // 2. Detectar ambiente de automação
+      if (isAutomationEnvironment()) {
+        console.log('VoidrCollector: Recording skipped (automation environment detected)');
+        isInitialized = false;
+        return;
+      }
+
+      // 3. Verificar samplingRate
+      if (config.samplingRate < 1) {
+        const random = Math.random();
+        if (random > config.samplingRate) {
+          isInitialized = false;
+          return;
+        }
+      }
+
+      // =======================================================
 
       // Exigir user.id vindo do config
       if (!config.user || !config.user.id) {
