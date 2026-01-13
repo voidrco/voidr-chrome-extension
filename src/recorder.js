@@ -52,7 +52,7 @@ const VoidrCollector = (function () {
     apiKey: null,
     applicationId: null,
     environment: null,
-    collectorUrl: 'https://collector.voidr.co',
+    collectorUrl: __VOIDR_COLLECTOR_URL__,
     sessionTimeout: 30, // minutos
     system: false,
     skipRecording: false,

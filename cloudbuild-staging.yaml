@@ -11,6 +11,8 @@ steps:
   # Etapa 2: Executar o build para gerar o script em dist/
   - name: 'gcr.io/cloud-builders/npm'
     args: ['run', 'build']
+    env:
+      - 'VOIDR_COLLECTOR_URL=https://collector-staging.voidr.co'
     id: 'npm-build'
     waitFor:
       - 'npm-install'

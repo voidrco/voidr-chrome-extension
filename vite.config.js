@@ -1,7 +1,13 @@
+import { defineConfig } from 'vite';
 import serveStatic from 'serve-static';
 import { resolve } from 'node:path';
 
-export default {
+export default defineConfig({
+  define: {
+    __VOIDR_COLLECTOR_URL__: JSON.stringify(
+      process.env.VOIDR_COLLECTOR_URL || 'https://collector.voidr.co'
+    ),
+  },
   server: {
     cors: true,
   },
@@ -33,4 +39,4 @@ export default {
     target: 'es2018',
     sourcemap: false,
   },
-};
+});
