@@ -1,7 +1,7 @@
 import { record } from 'rrweb';
 import { getRecordConsolePlugin } from '@rrweb/rrweb-plugin-console-record';
 
-const VOIDR_VERSION = '1.8.1';
+const VOIDR_VERSION = '1.8.2';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -78,7 +78,7 @@ const VoidrCollector = (function () {
   let observer = null;
   let authToken = null;
   let lastHref = null;
-  let foceStop = false;
+  let forceStop = false;
   let eventsInterval = null;
   let originalFetch = null;
   let originalXHR = null;
@@ -486,6 +486,7 @@ const VoidrCollector = (function () {
       // Exigir user.id vindo do config
       if (!config.user || !config.user.id) {
         console.error('VoidrCollector: user.id é obrigatório');
+        isInitialized = false;
         return;
       }
 
@@ -541,6 +542,7 @@ const VoidrCollector = (function () {
 
           if (!response.ok) {
             console.error('VoidrCollector: API Key inválida');
+            isInitialized = false;
             return;
           }
 
@@ -548,16 +550,18 @@ const VoidrCollector = (function () {
           authToken = data.token || null;
           if (!authToken) {
             console.error('VoidrCollector: Falha ao obter token de autenticação');
+            isInitialized = false;
             return;
           }
           // Persistir JWT para reutilização em reinits
           try {
             sessionStorage.setItem('voidr_jwt', authToken);
             sessionStorage.setItem('voidr_user_id', userId);
-          } catch (_) {}
+          } catch (_) { }
         }
       } catch (err) {
         console.error('VoidrCollector: Falha ao validar API Key', err);
+        isInitialized = false;
         return;
       }
 
@@ -671,8 +675,8 @@ const VoidrCollector = (function () {
       isSending = false;
       authToken = null;
       lastHref = null;
-      foceStop = true;
-      isInitialized = true;
+      forceStop = true;
+      isInitialized = false;
 
       console.log('VoidrCollector: Session ended');
     },
@@ -1088,7 +1092,6 @@ const VoidrCollector = (function () {
       });
 
       // 🔥 Scroll com throttling
-      let lastScroll = 0;
       const scrollHandler = throttle(() => {
         events.push({
           type: 5,
@@ -1127,7 +1130,7 @@ const VoidrCollector = (function () {
                 },
               },
             });
-          } catch (_) {}
+          } catch (_) { }
         };
 
         // Captura a página inicial após um pequeno delay para garantir que o título está carregado
@@ -1162,14 +1165,14 @@ const VoidrCollector = (function () {
             if (typeof record?.addCustomEvent === 'function') {
               record.addCustomEvent('route', { from, to: current, trigger });
             }
-          } catch (_) {}
+          } catch (_) { }
 
           // Força um full snapshot para garantir que o player reflita a nova UI
           try {
             if (typeof record?.takeFullSnapshot === 'function') {
               record.takeFullSnapshot();
             }
-          } catch (_) {}
+          } catch (_) { }
         };
 
         const origPushState = history.pushState;
@@ -1267,7 +1270,7 @@ const VoidrCollector = (function () {
 
     async _sendEvents() {
       const MIN_BATCH_SIZE = 10;
-      if (isSending || events.length < MIN_BATCH_SIZE || foceStop) return;
+      if (isSending || events.length < MIN_BATCH_SIZE || forceStop) return;
       isSending = true;
 
       const batch = events.splice(0, 100);
@@ -1287,7 +1290,7 @@ const VoidrCollector = (function () {
       };
 
       try {
-        const res = await fetch(`${config.collectorUrl}/sessions/chunk`, {
+        let res = await fetch(`${config.collectorUrl}/sessions/chunk`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -1296,32 +1299,42 @@ const VoidrCollector = (function () {
           body: safeStringify(payload),
         });
 
-        if (!res.ok) {
-          throw new Error('VoidrCollector: Failed to send events');
-        }
-
+        // Handle 401 - refresh token and retry
         if (res.status === 401) {
-          const response = await fetch(`${config.collectorUrl}/refresh-token`, {
+          const refreshResponse = await fetch(`${config.collectorUrl}/refresh-token`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: safeStringify({
               apiKey: config.apiKey,
             }),
           });
-          if (!response.ok) {
+          if (!refreshResponse.ok) {
             throw new Error('VoidrCollector: Failed to refresh token');
           }
-          const data = await response.json().catch(() => ({}));
+          const data = await refreshResponse.json().catch(() => ({}));
           authToken = data.token || null;
           if (!authToken) {
             throw new Error('VoidrCollector: Failed to refresh token');
           }
           sessionStorage.setItem('voidr_jwt', authToken);
+          // Retry the original request with new token
+          res = await fetch(`${config.collectorUrl}/sessions/chunk`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${authToken}`,
+            },
+            body: safeStringify(payload),
+          });
+        }
+
+        if (!res.ok) {
+          throw new Error('VoidrCollector: Failed to send events');
         }
       } catch (error) {
         console.error('VoidrCollector: Failed to send events', error);
         stopRecording();
-        foceStop = true;
+        forceStop = true;
         sessionStorage.removeItem('voidr_session_id');
         sessionStorage.removeItem('voidr_user_id');
         sessionStorage.removeItem('voidr_jwt');
@@ -1352,7 +1365,7 @@ const VoidrCollector = (function () {
       // Respeitar mínimo de eventos antes de enviar
       this._sendEvents();
 
-      // Envio síncrono como fallback
+      // Envio síncrono como fallback (usa XMLHttpRequest original para não logar como evento de rede)
       if (events.length > 0) {
         const payload = {
           apiKey: config.apiKey,
@@ -1361,7 +1374,8 @@ const VoidrCollector = (function () {
           events,
         };
 
-        const xhr = new XMLHttpRequest();
+        const XHRConstructor = originalXHR || XMLHttpRequest;
+        const xhr = new XHRConstructor();
         xhr.open('POST', `${config.collectorUrl}/sessions/chunk`, false);
         xhr.setRequestHeader('Content-Type', 'application/json');
         if (authToken) {
