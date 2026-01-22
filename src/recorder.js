@@ -1,7 +1,7 @@
 import { record } from 'rrweb';
 import { getRecordConsolePlugin } from '@rrweb/rrweb-plugin-console-record';
 
-const VOIDR_VERSION = '1.7.3';
+const VOIDR_VERSION = '1.8.2';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -52,7 +52,7 @@ const VoidrCollector = (function () {
     apiKey: null,
     applicationId: null,
     environment: null,
-    collectorUrl: 'https://collector.voidr.co',
+    collectorUrl: __VOIDR_COLLECTOR_URL__,
     sessionTimeout: 30, // minutos
     system: false,
     skipRecording: false,
@@ -161,6 +161,259 @@ const VoidrCollector = (function () {
       return !targetHost.endsWith(currentHost);
     } catch (e) {
       return false;
+    }
+  }
+
+  // ======= Network Capture Helpers =======
+  const MAX_BODY_SIZE = 2 * 1024 * 1024; // 2MB
+  const SENSITIVE_HEADERS = [
+    'authorization',
+    'cookie',
+    'set-cookie',
+    'x-api-key',
+    'x-auth-token',
+    'x-access-token',
+    'api-key',
+    'apikey',
+    'password',
+    'secret',
+    'token',
+    'credentials',
+  ];
+
+  // Content types que devemos capturar (comunicação de dados, não arquivos)
+  const CAPTURABLE_CONTENT_TYPES = [
+    'application/json',
+    'application/xml',
+    'text/xml',
+    'application/x-www-form-urlencoded',
+    'multipart/form-data',
+    'text/plain',
+    'application/graphql',
+    'application/graphql+json',
+  ];
+
+  // Content types que devemos ignorar (arquivos, HTML, binários)
+  const IGNORED_CONTENT_TYPES = [
+    'text/html',
+    'text/css',
+    'text/javascript',
+    'application/javascript',
+    'image/',
+    'audio/',
+    'video/',
+    'font/',
+    'application/octet-stream',
+    'application/pdf',
+    'application/zip',
+    'application/gzip',
+  ];
+
+  /**
+   * Verifica se o content-type é capturável (dados de API, não arquivos)
+   */
+  function isCapturableContentType(contentType) {
+    if (!contentType) return false;
+    const lowerType = contentType.toLowerCase();
+    const isIgnored = IGNORED_CONTENT_TYPES.some((ignored) => lowerType.includes(ignored));
+    if (isIgnored) return false;
+    return CAPTURABLE_CONTENT_TYPES.some((allowed) => lowerType.includes(allowed));
+  }
+
+  /**
+   * Redacta headers sensíveis para privacidade
+   */
+  function sanitizeHeaders(headers) {
+    if (!headers || typeof headers !== 'object') return {};
+    const sanitized = {};
+    Object.entries(headers).forEach(([key, value]) => {
+      const lowerKey = key.toLowerCase();
+      const isSensitive = SENSITIVE_HEADERS.some(
+        (sensitive) => lowerKey.includes(sensitive) || lowerKey === sensitive,
+      );
+      sanitized[key] = isSensitive ? '[REDACTED]' : value;
+    });
+    return sanitized;
+  }
+
+  /**
+   * Extrai headers de um objeto Headers (Fetch API)
+   */
+  function extractFetchHeaders(headers) {
+    if (!headers) return {};
+    const result = {};
+    try {
+      if (typeof headers.entries === 'function') {
+        for (const [key, value] of headers.entries()) {
+          result[key] = value;
+        }
+      } else if (typeof headers.forEach === 'function') {
+        headers.forEach((value, key) => {
+          result[key] = value;
+        });
+      } else if (typeof headers === 'object') {
+        Object.assign(result, headers);
+      }
+    } catch (e) {
+      // Headers podem não ser acessíveis (CORS)
+    }
+    return result;
+  }
+
+  /**
+   * Extrai headers de RequestInit ou Request object
+   */
+  function extractRequestHeaders(input, init) {
+    const headers = {};
+    try {
+      // Se input é um Request object
+      if (input instanceof Request) {
+        const reqHeaders = extractFetchHeaders(input.headers);
+        Object.assign(headers, reqHeaders);
+      }
+      // Headers do init sobrescrevem
+      if (init?.headers) {
+        if (init.headers instanceof Headers) {
+          Object.assign(headers, extractFetchHeaders(init.headers));
+        } else if (Array.isArray(init.headers)) {
+          init.headers.forEach(([key, value]) => {
+            headers[key] = value;
+          });
+        } else if (typeof init.headers === 'object') {
+          Object.assign(headers, init.headers);
+        }
+      }
+    } catch (e) {
+      // Ignora erros de extração
+    }
+    return sanitizeHeaders(headers);
+  }
+
+  /**
+   * Extrai o body do request (para POST, PUT, PATCH)
+   */
+  async function extractRequestBody(input, init) {
+    try {
+      let body = init?.body;
+      // Se input é Request e não tem body no init
+      if (!body && input instanceof Request) {
+        try {
+          body = await input.clone().text();
+        } catch (e) {
+          return null;
+        }
+      }
+      if (!body) return null;
+      // String
+      if (typeof body === 'string') {
+        return body.length > MAX_BODY_SIZE
+          ? body.substring(0, MAX_BODY_SIZE) + '...[TRUNCATED]'
+          : body;
+      }
+      // FormData
+      if (body instanceof FormData) {
+        const formDataObj = {};
+        body.forEach((value, key) => {
+          if (value instanceof File) {
+            formDataObj[key] = `[File: ${value.name}, ${value.size} bytes, ${value.type}]`;
+          } else {
+            formDataObj[key] =
+              typeof value === 'string' && value.length > 1000
+                ? value.substring(0, 1000) + '...'
+                : value;
+          }
+        });
+        return JSON.stringify(formDataObj);
+      }
+      // URLSearchParams
+      if (body instanceof URLSearchParams) {
+        return body.toString();
+      }
+      // Blob
+      if (body instanceof Blob) {
+        if (body.size > MAX_BODY_SIZE) {
+          return `[Blob: ${body.size} bytes, ${body.type}]`;
+        }
+        try {
+          const text = await body.text();
+          return text;
+        } catch (e) {
+          return `[Blob: ${body.size} bytes]`;
+        }
+      }
+      // ArrayBuffer
+      if (body instanceof ArrayBuffer) {
+        return `[ArrayBuffer: ${body.byteLength} bytes]`;
+      }
+      // Outros (tentar stringify)
+      try {
+        const str = JSON.stringify(body);
+        return str.length > MAX_BODY_SIZE
+          ? str.substring(0, MAX_BODY_SIZE) + '...[TRUNCATED]'
+          : str;
+      } catch (e) {
+        return '[Unserializable Body]';
+      }
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /**
+   * Extrai timing data da Performance API
+   */
+  function extractPerformanceTiming(url) {
+    try {
+      if (!window.performance || !window.performance.getEntriesByName) return null;
+      // Aguarda um pouco para o entry estar disponível
+      const entries = window.performance.getEntriesByName(url, 'resource');
+      if (!entries || entries.length === 0) return null;
+      const entry = entries[entries.length - 1]; // Pega o mais recente
+      if (!entry) return null;
+      // Calcula breakdown (valores em ms)
+      const dns = Math.round(entry.domainLookupEnd - entry.domainLookupStart);
+      const connect = Math.round(entry.connectEnd - entry.connectStart);
+      const ssl =
+        entry.secureConnectionStart > 0
+          ? Math.round(entry.connectEnd - entry.secureConnectionStart)
+          : 0;
+      const wait = Math.round(entry.responseStart - entry.requestStart); // TTFB
+      const download = Math.round(entry.responseEnd - entry.responseStart);
+      return {
+        dns: Math.max(0, dns),
+        connect: Math.max(0, connect),
+        ssl: Math.max(0, ssl),
+        wait: Math.max(0, wait),
+        download: Math.max(0, download),
+        total: Math.round(entry.duration),
+      };
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /**
+   * Processa response body baseado no content-type
+   */
+  async function processResponseBody(response, clonedResponse) {
+    try {
+      const contentType = response.headers.get('content-type') || '';
+      // Verifica se devemos capturar este tipo de conteúdo
+      if (!isCapturableContentType(contentType)) {
+        return `[${contentType || 'unknown'} - not captured]`;
+      }
+      // Verifica tamanho via Content-Length se disponível
+      const contentLength = response.headers.get('content-length');
+      if (contentLength && parseInt(contentLength) > MAX_BODY_SIZE) {
+        return `[Response too large: ${contentLength} bytes]`;
+      }
+      const text = await clonedResponse.text();
+      if (text.length > MAX_BODY_SIZE) {
+        return text.substring(0, MAX_BODY_SIZE) + '...[TRUNCATED]';
+      }
+      return text;
+    } catch (e) {
+      return '[Failed to read response]';
     }
   }
 
@@ -492,7 +745,7 @@ const VoidrCollector = (function () {
       this._initEventListeners();
       this._initNetworkCapture();
       this._initErrorTracking();
-      // this._initRoutingCapture();
+      this._initRoutingCapture();
       // if (config.uiHeuristics?.enabled) {
       this._initUISnapshotHeuristics();
       // }
@@ -504,10 +757,10 @@ const VoidrCollector = (function () {
       // 🔥 Fetch interceptado
       originalFetch = window.fetch;
       window.fetch = async function (...args) {
-        const [url, requestConfig] = args;
-        let requestUrl = typeof url === 'string' ? url : url.url;
+        const [input, init] = args;
+        let requestUrl = typeof input === 'string' ? input : input.url;
         if (!requestUrl) {
-          return;
+          return originalFetch(...args);
         }
 
         if (!requestUrl.startsWith('http')) {
@@ -537,38 +790,66 @@ const VoidrCollector = (function () {
           }
         })();
 
+        // Se é request do próprio collector, não intercepta
+        if (isCollectorRequest) {
+          return originalFetch(...args);
+        }
+
         const start = Date.now();
+        const method = init?.method || (input instanceof Request ? input.method : 'GET');
+
+        // Captura request headers e body ANTES de fazer a requisição
+        const requestHeaders = extractRequestHeaders(input, init);
+        let requestBody = null;
+        if (['POST', 'PUT', 'PATCH'].includes(method.toUpperCase())) {
+          requestBody = await extractRequestBody(input, init);
+        }
 
         try {
           const response = await originalFetch(...args);
           const cloned = response.clone();
 
-          cloned.text().then((body) => {
-            if (!isCollectorRequest) {
+          // Processa response de forma assíncrona
+          processResponseBody(response, cloned).then((responseBody) => {
+            // Extrai response headers
+            const responseHeaders = sanitizeHeaders(extractFetchHeaders(response.headers));
+
+            // Tenta obter timing data (delay pequeno para entry estar disponível)
+            setTimeout(() => {
+              const timing = extractPerformanceTiming(requestUrl);
+
               VoidrCollector._logNetworkEvent({
                 type: 'fetch',
                 url: requestUrl,
-                method: requestConfig && requestConfig.method ? requestConfig.method : 'GET',
+                method: method.toUpperCase(),
                 status: response.status,
+                statusText: response.statusText,
                 duration: Date.now() - start,
-                response: truncate(body, 2000),
                 thirdParty: isThirdParty(requestUrl),
                 origin: window.location.origin,
+                // Novos campos
+                requestHeaders,
+                responseHeaders,
+                requestBody,
+                responseBody,
+                timing,
+                responseSize: responseBody ? responseBody.length : 0,
               });
-            }
+            }, 50);
           });
 
           return response;
         } catch (error) {
-          if (!isCollectorRequest) {
-            VoidrCollector._logNetworkEvent({
-              type: 'fetchError',
-              url: requestUrl,
-              error: error.message,
-              thirdParty: isThirdParty(requestUrl),
-              origin: window.location.origin,
-            });
-          }
+          VoidrCollector._logNetworkEvent({
+            type: 'fetchError',
+            url: requestUrl,
+            method: method.toUpperCase(),
+            error: error.message,
+            thirdParty: isThirdParty(requestUrl),
+            origin: window.location.origin,
+            requestHeaders,
+            requestBody,
+          });
           throw error;
         }
       };
@@ -578,41 +859,135 @@ const VoidrCollector = (function () {
 
       function InterceptedXHR() {
         const xhr = new originalXHR();
-        const open = xhr.open;
-        const send = xhr.send;
+        const originalOpen = xhr.open;
+        const originalSend = xhr.send;
+        const originalSetRequestHeader = xhr.setRequestHeader;
+
         let method = '';
         let url = '';
+        let requestHeaders = {};
+        let requestBody = null;
 
         xhr.open = function (_method, _url) {
           method = _method;
           url = _url;
-          return open.apply(this, arguments);
+          // Normaliza URL
+          if (url && !url.startsWith('http')) {
+            try {
+              url = new URL(url, window.location.origin).toString();
+            } catch (_) {
+              url = `${window.location.origin}${url}`;
+            }
+          }
+          return originalOpen.apply(this, arguments);
+        };
+
+        xhr.setRequestHeader = function (header, value) {
+          requestHeaders[header] = value;
+          return originalSetRequestHeader.apply(this, arguments);
         };
 
         xhr.send = function (body) {
           const start = Date.now();
 
+          // Captura request body
+          if (body !== null && body !== undefined) {
+            if (typeof body === 'string') {
+              requestBody =
+                body.length > MAX_BODY_SIZE
+                  ? body.substring(0, MAX_BODY_SIZE) + '...[TRUNCATED]'
+                  : body;
+            } else if (body instanceof FormData) {
+              const formDataObj = {};
+              body.forEach((value, key) => {
+                if (value instanceof File) {
+                  formDataObj[key] = `[File: ${value.name}, ${value.size} bytes, ${value.type}]`;
+                } else {
+                  formDataObj[key] =
+                    typeof value === 'string' && value.length > 1000
+                      ? value.substring(0, 1000) + '...'
+                      : value;
+                }
+              });
+              requestBody = JSON.stringify(formDataObj);
+            } else if (body instanceof URLSearchParams) {
+              requestBody = body.toString();
+            } else if (body instanceof Blob) {
+              requestBody = `[Blob: ${body.size} bytes, ${body.type}]`;
+            } else if (body instanceof ArrayBuffer) {
+              requestBody = `[ArrayBuffer: ${body.byteLength} bytes]`;
+            } else {
+              try {
+                requestBody = JSON.stringify(body);
+              } catch (e) {
+                requestBody = '[Unserializable Body]';
+              }
+            }
+          }
+
+          const baseCollectorUrl =
+            config && typeof config.collectorUrl === 'string'
+              ? config.collectorUrl.replace(/\/+$/, '')
+              : '';
+          const isCollectorRequest = url && baseCollectorUrl && url.startsWith(baseCollectorUrl);
+
+          if (isCollectorRequest) {
+            return originalSend.apply(this, arguments);
+          }
+
           this.addEventListener('loadend', () => {
-            const baseCollectorUrl =
-              config && typeof config.collectorUrl === 'string'
-                ? config.collectorUrl.replace(/\/+$/, '')
-                : '';
-            const isCollectorRequest = url && baseCollectorUrl && url.startsWith(baseCollectorUrl);
-            if (!isCollectorRequest) {
+            // Extrai response headers
+            const responseHeadersRaw = this.getAllResponseHeaders();
+            const responseHeaders = {};
+            if (responseHeadersRaw) {
+              responseHeadersRaw.split('\r\n').forEach((line) => {
+                const parts = line.split(': ');
+                if (parts.length >= 2) {
+                  const key = parts.shift();
+                  const value = parts.join(': ');
+                  if (key) responseHeaders[key] = value;
+                }
+              });
+            }
+
+            // Processa response body baseado no content-type
+            const contentType = this.getResponseHeader('content-type') || '';
+            let responseBody = null;
+            if (isCapturableContentType(contentType)) {
+              const responseText = this.responseText || '';
+              responseBody =
+                responseText.length > MAX_BODY_SIZE
+                  ? responseText.substring(0, MAX_BODY_SIZE) + '...[TRUNCATED]'
+                  : responseText;
+            } else {
+              responseBody = `[${contentType || 'unknown'} - not captured]`;
+            }
+
+            // Tenta obter timing data
+            setTimeout(() => {
+              const timing = extractPerformanceTiming(url);
+
               VoidrCollector._logNetworkEvent({
                 type: 'xhr',
                 url: url,
-                method: method,
+                method: method.toUpperCase(),
                 status: this.status,
+                statusText: this.statusText,
                 duration: Date.now() - start,
-                response: truncate(this.responseText, 2000),
                 thirdParty: isThirdParty(url),
                 origin: window.location.origin,
+                // Novos campos
+                requestHeaders: sanitizeHeaders(requestHeaders),
+                responseHeaders: sanitizeHeaders(responseHeaders),
+                requestBody,
+                responseBody,
+                timing,
+                responseSize: responseBody ? responseBody.length : 0,
               });
-            }
+            }, 50);
           });
 
-          return send.apply(this, arguments);
+          return originalSend.apply(this, arguments);
         };
 
         return xhr;
@@ -738,11 +1113,52 @@ const VoidrCollector = (function () {
       try {
         lastHref = typeof window !== 'undefined' && window.location ? window.location.href : null;
 
+        // Captura a página inicial assim que a gravação começa
+        const captureInitialPage = () => {
+          try {
+            const title = document.title || '';
+            const url = window.location.href;
+            events.push({
+              type: 5,
+              timestamp: Date.now(),
+              data: {
+                plugin: 'page.view',
+                payload: {
+                  url,
+                  title,
+                  trigger: 'initial',
+                },
+              },
+            });
+          } catch (_) { }
+        };
+
+        // Captura a página inicial após um pequeno delay para garantir que o título está carregado
+        setTimeout(captureInitialPage, 100);
+
         const onRouteChange = (trigger) => {
           const current = window.location.href;
           if (!current || current === lastHref) return;
           const from = lastHref;
           lastHref = current;
+
+          // Captura o título da página atual (com pequeno delay para SPAs atualizarem o título)
+          setTimeout(() => {
+            const title = document.title || '';
+            events.push({
+              type: 5,
+              timestamp: Date.now(),
+              data: {
+                plugin: 'page.view',
+                payload: {
+                  url: current,
+                  title,
+                  from,
+                  trigger,
+                },
+              },
+            });
+          }, 50);
 
           // Evento custom do rrweb para indicar troca de rota
           try {

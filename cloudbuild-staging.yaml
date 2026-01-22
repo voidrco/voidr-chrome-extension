@@ -1,4 +1,7 @@
-# cloudbuild.yaml
+# cloudbuild-staging.yaml
+# Deploy do voidr-collector-script para ambiente de staging
+# Trigger: push para branch staging
+
 steps:
   # Etapa 1: Instalar as dependências do projeto
   - name: 'gcr.io/cloud-builders/npm'
@@ -9,45 +12,45 @@ steps:
   - name: 'gcr.io/cloud-builders/npm'
     args: ['run', 'build']
     env:
-      - 'VOIDR_COLLECTOR_URL=https://collector.voidr.co'
+      - 'VOIDR_COLLECTOR_URL=https://collector-staging.voidr.co'
     id: 'npm-build'
     waitFor:
       - 'npm-install'
 
-  # Etapa 3: Copiar o script para a pasta da versão (tag) no GCS
+  # Etapa 3: Copiar o script para a pasta staging versionada no GCS
   - name: 'gcr.io/cloud-builders/gsutil'
     args:
       - 'cp'
       - 'dist/recorder.min.js'
-      - 'gs://cdn-voidr-global/voidr-collector/default/${TAG_NAME}/recorder.min.js'
+      - 'gs://cdn-voidr-global/voidr-collector/staging/${SHORT_SHA}/recorder.min.js'
     id: 'gcs-upload-versioned'
     waitFor:
       - 'npm-build'
 
-  # Etapa 4: Copiar o script para a pasta "latest" no GCS
+  # Etapa 4: Copiar o script para a pasta "staging/latest" no GCS
   - name: 'gcr.io/cloud-builders/gsutil'
     args:
       - 'cp'
       - 'dist/recorder.min.js'
-      - 'gs://cdn-voidr-global/voidr-collector/default/latest/recorder.min.js'
+      - 'gs://cdn-voidr-global/voidr-collector/staging/latest/recorder.min.js'
     id: 'gcs-upload-latest'
     waitFor:
       - 'npm-build'
 
-  # Etapa 5: Invalidar o cache do Cloud CDN para os arquivos atualizados
+  # Etapa 5: Invalidar o cache do Cloud CDN para os arquivos staging
   - name: 'gcr.io/cloud-builders/gcloud'
     args:
       - 'compute'
       - 'url-maps'
       - 'invalidate-cdn-cache'
       - 'cdn-load-balancer'
-      - '--path=/voidr-collector/*'
+      - '--path=/voidr-collector/staging/*'
       - '--async'
     id: 'cdn-invalidate-cache'
     waitFor:
       - 'gcs-upload-latest'
 
-  # Etapa 6: Limpar o cache do Cloudflare
+  # Etapa 6: Limpar o cache do Cloudflare para staging
   - name: 'gcr.io/cloud-builders/gcloud'
     entrypoint: 'bash'
     args:
@@ -60,7 +63,7 @@ steps:
         curl -X POST "https://api.cloudflare.com/client/v4/zones/40807c6c48cb5d8a1e29bfbca48a519e/purge_cache" \
           -H "Authorization: Bearer $$API_TOKEN" \
           -H "Content-Type: application/json" \
-          --data '{"prefixes":["cdn.voidr.co/voidr-collector"]}'
+          --data '{"prefixes":["cdn.voidr.co/voidr-collector/staging"]}'
     id: 'cloudflare-purge-cache'
     waitFor:
       - 'cdn-invalidate-cache'
