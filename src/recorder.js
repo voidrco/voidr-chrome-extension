@@ -84,6 +84,15 @@ const VoidrCollector = (function () {
   let originalXHR = null;
   let isInitialized = false;
 
+  // HOTFIX: TASY-specific selector masking (remove after proper selector-based solution is deployed)
+  const isTasy = typeof window !== 'undefined' && window.location.hostname.includes('tasy');
+  const TASY_MASK_SELECTORS = [
+    '.grid-canvas-right',
+    '.person-bar-field-info',
+    '.person-info',
+    '#datagrid'
+  ];
+
   // ======= Funções Auxiliares =======
   function generateSelector(el, maxDepth = 6) {
     if (!el || maxDepth === 0) return '';
@@ -720,6 +729,14 @@ const VoidrCollector = (function () {
         );
       }
 
+      // Build maskTextSelector: global mask > TASY hotfix > null
+      const maskTextSelector = config.dataMasking.text
+        ? '*'
+        : isTasy
+          ? TASY_MASK_SELECTORS.join(', ')
+          : null;
+          //To test locally, change null for a string of selectors. Example: 'h2, h3, p, .font-medium';
+
       // Iniciar gravação do rrweb
       stopRecording = record({
         emit: (event) => events.push(event),
@@ -727,8 +744,8 @@ const VoidrCollector = (function () {
         recordCanvas: true,
         recordCrossOriginIframes: true,
         inlineStylesheet: true,
-        maskTextSelector: config.dataMasking.text ? '*' : null,
-        maskAllInputs: config.dataMasking.inputs,
+        maskTextSelector,
+        maskAllInputs: isTasy || config.dataMasking.inputs,
         blockSelector: config.dataMasking.blockSelectors?.join(', '),
         checkoutEveryNms: 60000, // snapshot completo a cada 60s
         checkoutEveryNth: 1000, // snapshot completo a cada 1000 eventos
@@ -1029,6 +1046,13 @@ const VoidrCollector = (function () {
       //   characterData: false,
       // });
 
+      // HOTFIX: helper to check if element matches TASY mask selectors (remove with hotfix)
+      const _isTasyMasked = (el) => {
+        if (!isTasy || !el) return false;
+        const sel = TASY_MASK_SELECTORS.join(', ');
+        try { return el.matches(sel) || !!el.closest(sel); } catch { return false; }
+      };
+
       // 🔥 Eventos de input e change
       document.addEventListener('input', (e) => {
         const target = e.target;
@@ -1042,7 +1066,7 @@ const VoidrCollector = (function () {
             payload: {
               selector: generateSelector(target),
               tag: target.tagName,
-              value: truncate(target.value, 100),
+              value: _isTasyMasked(target) ? '***' : truncate(target.value, 100),
               type: target.type,
             },
           },
@@ -1061,7 +1085,7 @@ const VoidrCollector = (function () {
             payload: {
               selector: generateSelector(target),
               tag: target.tagName,
-              value: truncate(target.value, 100),
+              value: _isTasyMasked(target) ? '***' : truncate(target.value, 100),
               type: target.type,
             },
           },
@@ -1081,7 +1105,7 @@ const VoidrCollector = (function () {
             payload: {
               selector: generateSelector(target),
               tag: target.tagName,
-              text: getTextContent(target),
+              text: _isTasyMasked(target) ? '***' : getTextContent(target),
               position: {
                 x: e.clientX,
                 y: e.clientY,
