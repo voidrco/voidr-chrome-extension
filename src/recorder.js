@@ -748,8 +748,7 @@ const VoidrCollector = (function () {
         maskTextSelector,
         maskAllInputs: isTasy || config.dataMasking.inputs,
         blockSelector: config.dataMasking.blockSelectors?.join(', '),
-        checkoutEveryNms: 60000, // snapshot completo a cada 60s
-        checkoutEveryNth: 1000, // snapshot completo a cada 1000 eventos
+        checkoutEveryNms: 120000,
         sampling: {
           mousemove: 100,
           mouseInteraction: true,
