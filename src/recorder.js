@@ -1,5 +1,6 @@
 import { record } from 'rrweb';
 import { getRecordConsolePlugin } from '@rrweb/rrweb-plugin-console-record';
+import { gzip } from 'pako';
 
 const VOIDR_VERSION = '1.8.2';
 
@@ -1314,13 +1315,16 @@ const VoidrCollector = (function () {
       };
 
       try {
+        const compressed = gzip(safeStringify(payload));
+
         let res = await fetch(`${config.collectorUrl}/sessions/chunk`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
+            'Content-Encoding': 'gzip',
             ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
           },
-          body: safeStringify(payload),
+          body: compressed,
         });
 
         // Handle 401 - refresh token and retry
@@ -1346,9 +1350,10 @@ const VoidrCollector = (function () {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
+              'Content-Encoding': 'gzip',
               Authorization: `Bearer ${authToken}`,
             },
-            body: safeStringify(payload),
+            body: compressed,
           });
         }
 
