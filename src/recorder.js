@@ -1311,6 +1311,9 @@ const VoidrCollector = (function () {
         sessionTimeout: config.sessionTimeout,
         startedAt,
         endedAt,
+        meta: config.meta,
+        applicationId: config.applicationId,
+        environment: config.environment,
       };
 
       try {
@@ -1400,6 +1403,9 @@ const VoidrCollector = (function () {
           userId,
           sessionId,
           events,
+          meta: config.meta,
+          applicationId: config.applicationId,
+          environment: config.environment,
         };
 
         const XHRConstructor = originalXHR || XMLHttpRequest;
