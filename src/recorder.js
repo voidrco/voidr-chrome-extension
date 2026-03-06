@@ -1,7 +1,8 @@
 import { record } from 'rrweb';
 import { getRecordConsolePlugin } from '@rrweb/rrweb-plugin-console-record';
+import { gzip } from 'pako';
 
-const VOIDR_VERSION = '1.8.1';
+const VOIDR_VERSION = '1.8.2';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -78,11 +79,20 @@ const VoidrCollector = (function () {
   let observer = null;
   let authToken = null;
   let lastHref = null;
-  let foceStop = false;
+  let forceStop = false;
   let eventsInterval = null;
   let originalFetch = null;
   let originalXHR = null;
   let isInitialized = false;
+
+  // HOTFIX: TASY-specific selector masking (remove after proper selector-based solution is deployed)
+  const isTasy = typeof window !== 'undefined' && window.location.hostname.includes('tasy');
+  const TASY_MASK_SELECTORS = [
+    '.grid-canvas-right',
+    '.person-bar-field-info',
+    '.person-info',
+    '#datagrid'
+  ];
 
   // ======= Funções Auxiliares =======
   function generateSelector(el, maxDepth = 6) {
@@ -558,6 +568,7 @@ const VoidrCollector = (function () {
       // Exigir user.id vindo do config
       if (!config.user || !config.user.id) {
         console.error('VoidrCollector: user.id é obrigatório');
+        isInitialized = false;
         return;
       }
 
@@ -613,6 +624,7 @@ const VoidrCollector = (function () {
 
           if (!response.ok) {
             console.error('VoidrCollector: API Key inválida');
+            isInitialized = false;
             return;
           }
 
@@ -620,16 +632,18 @@ const VoidrCollector = (function () {
           authToken = data.token || null;
           if (!authToken) {
             console.error('VoidrCollector: Falha ao obter token de autenticação');
+            isInitialized = false;
             return;
           }
           // Persistir JWT para reutilização em reinits
           try {
             sessionStorage.setItem('voidr_jwt', authToken);
             sessionStorage.setItem('voidr_user_id', userId);
-          } catch (_) {}
+          } catch (_) { }
         }
       } catch (err) {
         console.error('VoidrCollector: Falha ao validar API Key', err);
+        isInitialized = false;
         return;
       }
 
@@ -743,8 +757,8 @@ const VoidrCollector = (function () {
       isSending = false;
       authToken = null;
       lastHref = null;
-      foceStop = true;
-      isInitialized = true;
+      forceStop = true;
+      isInitialized = false;
 
       console.log('VoidrCollector: Session ended');
     },
@@ -788,6 +802,14 @@ const VoidrCollector = (function () {
         );
       }
 
+      // Build maskTextSelector: global mask > TASY hotfix > null
+      const maskTextSelector = config.dataMasking.text
+        ? '*'
+        : isTasy
+          ? TASY_MASK_SELECTORS.join(', ')
+          : null;
+          //To test locally, change null for a string of selectors. Example: 'h2, h3, p, .font-medium';
+
       // Iniciar gravação do rrweb
       stopRecording = record({
         emit: (event) => events.push(event),
@@ -795,11 +817,10 @@ const VoidrCollector = (function () {
         recordCanvas: true,
         recordCrossOriginIframes: true,
         inlineStylesheet: true,
-        inlineImages: false,
-        maskTextSelector: config.dataMasking.text ? '*' : null,
-        maskAllInputs: config.dataMasking.inputs,
+        maskTextSelector,
+        maskAllInputs: isTasy || config.dataMasking.inputs,
         blockSelector: config.dataMasking.blockSelectors?.join(', '),
-        checkoutEveryNms: 60000,
+        checkoutEveryNms: 120000,
         checkoutEveryNth: 1000,
         dataURLOptions: {
           type: 'image/webp',
@@ -1103,6 +1124,13 @@ const VoidrCollector = (function () {
       //   characterData: false,
       // });
 
+      // HOTFIX: helper to check if element matches TASY mask selectors (remove with hotfix)
+      const _isTasyMasked = (el) => {
+        if (!isTasy || !el) return false;
+        const sel = TASY_MASK_SELECTORS.join(', ');
+        try { return el.matches(sel) || !!el.closest(sel); } catch { return false; }
+      };
+
       // 🔥 Eventos de input e change
       document.addEventListener('input', (e) => {
         const target = e.target;
@@ -1116,7 +1144,7 @@ const VoidrCollector = (function () {
             payload: {
               selector: generateSelector(target),
               tag: target.tagName,
-              value: truncate(target.value, 100),
+              value: _isTasyMasked(target) ? '***' : truncate(target.value, 100),
               type: target.type,
             },
           },
@@ -1135,7 +1163,7 @@ const VoidrCollector = (function () {
             payload: {
               selector: generateSelector(target),
               tag: target.tagName,
-              value: truncate(target.value, 100),
+              value: _isTasyMasked(target) ? '***' : truncate(target.value, 100),
               type: target.type,
             },
           },
@@ -1155,7 +1183,7 @@ const VoidrCollector = (function () {
             payload: {
               selector: generateSelector(target),
               tag: target.tagName,
-              text: getTextContent(target),
+              text: _isTasyMasked(target) ? '***' : getTextContent(target),
               position: {
                 x: e.clientX,
                 y: e.clientY,
@@ -1166,7 +1194,6 @@ const VoidrCollector = (function () {
       });
 
       // 🔥 Scroll com throttling
-      let lastScroll = 0;
       const scrollHandler = throttle(() => {
         events.push({
           type: 5,
@@ -1205,7 +1232,7 @@ const VoidrCollector = (function () {
                 },
               },
             });
-          } catch (_) {}
+          } catch (_) { }
         };
 
         // Captura a página inicial após um pequeno delay para garantir que o título está carregado
@@ -1240,14 +1267,14 @@ const VoidrCollector = (function () {
             if (typeof record?.addCustomEvent === 'function') {
               record.addCustomEvent('route', { from, to: current, trigger });
             }
-          } catch (_) {}
+          } catch (_) { }
 
           // Força um full snapshot para garantir que o player reflita a nova UI
           try {
             if (typeof record?.takeFullSnapshot === 'function') {
               record.takeFullSnapshot();
             }
-          } catch (_) {}
+          } catch (_) { }
         };
 
         const origPushState = history.pushState;
@@ -1345,7 +1372,7 @@ const VoidrCollector = (function () {
 
     async _sendEvents() {
       const MIN_BATCH_SIZE = 10;
-      if (isSending || events.length < MIN_BATCH_SIZE || foceStop) return;
+      if (isSending || events.length < MIN_BATCH_SIZE || forceStop) return;
       isSending = true;
 
       const batch = events.splice(0, 100);
@@ -1364,44 +1391,61 @@ const VoidrCollector = (function () {
         sessionTimeout: config.sessionTimeout,
         startedAt,
         endedAt,
+        meta: config.meta,
+        applicationId: config.applicationId,
+        environment: config.environment,
       };
 
       try {
-        const res = await fetch(`${config.collectorUrl}/sessions/chunk`, {
+        const compressed = gzip(safeStringify(payload));
+
+        let res = await fetch(`${config.collectorUrl}/sessions/chunk`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
+            'Content-Encoding': 'gzip',
             ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
           },
-          body: safeStringify(payload),
+          body: compressed,
         });
 
-        if (!res.ok) {
-          throw new Error('VoidrCollector: Failed to send events');
-        }
-
+        // Handle 401 - refresh token and retry
         if (res.status === 401) {
-          const response = await fetch(`${config.collectorUrl}/refresh-token`, {
+          const refreshResponse = await fetch(`${config.collectorUrl}/refresh-token`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: safeStringify({
               apiKey: config.apiKey,
             }),
           });
-          if (!response.ok) {
+          if (!refreshResponse.ok) {
             throw new Error('VoidrCollector: Failed to refresh token');
           }
-          const data = await response.json().catch(() => ({}));
+          const data = await refreshResponse.json().catch(() => ({}));
           authToken = data.token || null;
           if (!authToken) {
             throw new Error('VoidrCollector: Failed to refresh token');
           }
           sessionStorage.setItem('voidr_jwt', authToken);
+          // Retry the original request with new token
+          res = await fetch(`${config.collectorUrl}/sessions/chunk`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Content-Encoding': 'gzip',
+              Authorization: `Bearer ${authToken}`,
+            },
+            body: compressed,
+          });
+        }
+
+        if (!res.ok) {
+          throw new Error('VoidrCollector: Failed to send events');
         }
       } catch (error) {
         console.error('VoidrCollector: Failed to send events', error);
         stopRecording();
-        foceStop = true;
+        forceStop = true;
         sessionStorage.removeItem('voidr_session_id');
         sessionStorage.removeItem('voidr_user_id');
         sessionStorage.removeItem('voidr_jwt');
@@ -1432,16 +1476,20 @@ const VoidrCollector = (function () {
       // Respeitar mínimo de eventos antes de enviar
       this._sendEvents();
 
-      // Envio síncrono como fallback
+      // Envio síncrono como fallback (usa XMLHttpRequest original para não logar como evento de rede)
       if (events.length > 0) {
         const payload = {
           apiKey: config.apiKey,
           userId,
           sessionId,
           events,
+          meta: config.meta,
+          applicationId: config.applicationId,
+          environment: config.environment,
         };
 
-        const xhr = new XMLHttpRequest();
+        const XHRConstructor = originalXHR || XMLHttpRequest;
+        const xhr = new XHRConstructor();
         xhr.open('POST', `${config.collectorUrl}/sessions/chunk`, false);
         xhr.setRequestHeader('Content-Type', 'application/json');
         if (authToken) {
