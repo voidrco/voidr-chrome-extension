@@ -565,13 +565,6 @@ const VoidrCollector = (function () {
 
       // =======================================================
 
-      // Exigir user.id vindo do config
-      if (!config.user || !config.user.id) {
-        console.error('VoidrCollector: user.id é obrigatório');
-        isInitialized = false;
-        return;
-      }
-
       // Inicializar IDs
       sessionStartedAt = Date.now();
       this._initUser();
@@ -583,7 +576,7 @@ const VoidrCollector = (function () {
         const storedSession = sessionStorage.getItem('voidr_session_id');
         const storedUser = sessionStorage.getItem('voidr_user_id');
 
-        if (storedJwt && storedSession && storedUser === userId) {
+        if (storedJwt && storedSession && storedSession === sessionId) {
           authToken = storedJwt;
         } else {
           sessionStorage.removeItem('voidr_jwt');
@@ -596,7 +589,7 @@ const VoidrCollector = (function () {
             body: (() => {
               const initPayload = {
                 apiKey: config.apiKey,
-                userId,
+                userId: userId || null,
                 userTraits: config.user,
                 meta: config.meta,
                 system: Boolean(config.system),
@@ -623,7 +616,7 @@ const VoidrCollector = (function () {
           });
 
           if (!response.ok) {
-            console.error('VoidrCollector: API Key inválida');
+            console.error('VoidrCollector: init failed with status', response.status);
             isInitialized = false;
             return;
           }
@@ -638,7 +631,9 @@ const VoidrCollector = (function () {
           // Persistir JWT para reutilização em reinits
           try {
             sessionStorage.setItem('voidr_jwt', authToken);
-            sessionStorage.setItem('voidr_user_id', userId);
+            if (userId) {
+              sessionStorage.setItem('voidr_user_id', userId);
+            }
           } catch (_) { }
         }
       } catch (err) {
@@ -671,27 +666,68 @@ const VoidrCollector = (function () {
      * @param {string} [traits.email] - Email do usuário
      * @param {string} [traits.name] - Nome do usuário
      */
-    identify(id, traits = {}) {
-      if (!id) return;
+    async identify(id, traits = {}) {
+      if (!id || !isInitialized || !sessionId) return;
 
       userId = id;
       sessionStorage.setItem('voidr_user_id', id);
+      config.user = { ...(config.user || {}), id, ...traits };
 
-      // Atualizar dados do usuário
-      config.user = { ...(config.user || {}), ...traits };
-
-      // Registrar evento de identificação
       events.push({
         type: 5,
         timestamp: Date.now(),
         data: {
           plugin: 'user.identify',
-          payload: {
-            userId: id,
-            ...traits,
-          },
+          payload: { userId: id, ...traits },
         },
       });
+
+      const identifyPayload = {
+        sessionId,
+        userId: id,
+        userEmail: traits.email || config.user?.email || null,
+        userName: traits.name || config.user?.name || null,
+        userTraits: traits,
+      };
+
+      const maxAttempts = 3;
+      const baseDelays = [500, 1500, 3500];
+
+      for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        try {
+          const res = await fetch(`${config.collectorUrl}/sessions/identify`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+            },
+            body: safeStringify(identifyPayload),
+          });
+
+          if (res.ok || (res.status >= 400 && res.status < 500 && res.status !== 429)) {
+            break;
+          }
+
+          if (attempt < maxAttempts - 1) {
+            const jitter = 1 + (Math.random() * 0.4 - 0.2);
+            await sleep(baseDelays[attempt] * jitter);
+          }
+        } catch (err) {
+          if (attempt < maxAttempts - 1) {
+            const jitter = 1 + (Math.random() * 0.4 - 0.2);
+            await sleep(baseDelays[attempt] * jitter);
+          } else {
+            events.push({
+              type: 5,
+              timestamp: Date.now(),
+              data: {
+                plugin: 'voidr.identify_failed',
+                payload: { userId: id, error: err.message, attempts: maxAttempts },
+              },
+            });
+          }
+        }
+      }
     },
 
     /**
@@ -773,7 +809,7 @@ const VoidrCollector = (function () {
 
     // ======= Métodos Internos =======
     _initUser() {
-      userId = config.user?.id || sessionStorage.getItem('voidr_user_id');
+      userId = config.user?.id || sessionStorage.getItem('voidr_user_id') || null;
     },
 
     _initSession() {
@@ -1384,7 +1420,7 @@ const VoidrCollector = (function () {
         compressedBatch[compressedBatch.length - 1]?.timestamp ?? Date.now();
 
       const payload = {
-        userId,
+        userId: userId || null,
         sessionId,
         userTraits: config.user,
         events: compressedBatch,
@@ -1481,7 +1517,7 @@ const VoidrCollector = (function () {
       if (events.length > 0) {
         const payload = {
           apiKey: config.apiKey,
-          userId,
+          userId: userId || null,
           sessionId,
           events,
           meta: config.meta,
