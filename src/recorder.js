@@ -817,6 +817,7 @@ const VoidrCollector = (function () {
         recordCanvas: true,
         recordCrossOriginIframes: true,
         inlineStylesheet: true,
+        inlineImages: false,
         maskTextSelector,
         maskAllInputs: isTasy || config.dataMasking.inputs,
         blockSelector: config.dataMasking.blockSelectors?.join(', '),
