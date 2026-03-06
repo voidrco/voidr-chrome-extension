@@ -1,5 +1,6 @@
 import { record } from 'rrweb';
 import { getRecordConsolePlugin } from '@rrweb/rrweb-plugin-console-record';
+import { gzip } from 'pako';
 
 const VOIDR_VERSION = '1.8.2';
 
@@ -747,8 +748,7 @@ const VoidrCollector = (function () {
         maskTextSelector,
         maskAllInputs: isTasy || config.dataMasking.inputs,
         blockSelector: config.dataMasking.blockSelectors?.join(', '),
-        checkoutEveryNms: 60000, // snapshot completo a cada 60s
-        checkoutEveryNth: 1000, // snapshot completo a cada 1000 eventos
+        checkoutEveryNms: 120000,
         sampling: {
           mousemove: 100,
           mouseInteraction: true,
@@ -1311,16 +1311,22 @@ const VoidrCollector = (function () {
         sessionTimeout: config.sessionTimeout,
         startedAt,
         endedAt,
+        meta: config.meta,
+        applicationId: config.applicationId,
+        environment: config.environment,
       };
 
       try {
+        const compressed = gzip(safeStringify(payload));
+
         let res = await fetch(`${config.collectorUrl}/sessions/chunk`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
+            'Content-Encoding': 'gzip',
             ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
           },
-          body: safeStringify(payload),
+          body: compressed,
         });
 
         // Handle 401 - refresh token and retry
@@ -1346,9 +1352,10 @@ const VoidrCollector = (function () {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
+              'Content-Encoding': 'gzip',
               Authorization: `Bearer ${authToken}`,
             },
-            body: safeStringify(payload),
+            body: compressed,
           });
         }
 
@@ -1396,6 +1403,9 @@ const VoidrCollector = (function () {
           userId,
           sessionId,
           events,
+          meta: config.meta,
+          applicationId: config.applicationId,
+          environment: config.environment,
         };
 
         const XHRConstructor = originalXHR || XMLHttpRequest;
