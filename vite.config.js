@@ -28,7 +28,7 @@ export default defineConfig({
   ],
   build: {
     lib: {
-      entry: 'src/recorder.js',
+      entry: 'src/index.js',
       name: 'rrwebClient',
       formats: ['iife'],
       fileName: () => 'recorder.min.js',

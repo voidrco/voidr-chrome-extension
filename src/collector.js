@@ -1,0 +1,251 @@
+import { VOIDR_VERSION, isAutomationEnvironment } from './constants.js';
+import { state, resetState } from './state.js';
+import { sleep, safeStringify } from './utils/helpers.js';
+import { initUser, initSession, authenticateSession } from './session.js';
+import { sendEvents, sendNetworkEvents, handleUnload } from './transport.js';
+import { startRecording } from './recording.js';
+
+/**
+ * Create the VoidrCollector public API object.
+ */
+export function createCollector() {
+  return {
+    version: VOIDR_VERSION,
+
+    /**
+     * Initialize the event collector.
+     * @param {Object} options - Initialization configuration
+     * @param {string} options.apiKey - Required API key
+     * @param {string} [options.applicationId] - Application ID (optional)
+     * @param {string} [options.environment] - Environment, e.g. "production", "staging" (optional)
+     * @param {Object} [options.user] - User data
+     * @param {string} [options.collectorUrl] - Alternative collector URL
+     * @param {Object} [options.dataMasking] - Masking configuration
+     * @param {number} [options.sessionTimeout] - Session timeout in minutes
+     * @param {boolean} [options.system=false] - Flag for system/automation context
+     * @param {boolean} [options.skipRecording=false] - Force skip recording
+     * @param {number} [options.samplingRate=0.1] - Sampling rate 0 to 1 (0% to 100%, default 10%)
+     */
+    async init(options) {
+      // Prevent duplicate initialization
+      if (state.isInitialized) {
+        console.warn(
+          `VoidrCollector v${VOIDR_VERSION} - Already initialized. Skipping duplicate init() call.`,
+        );
+        return;
+      }
+
+      state.isInitialized = true;
+
+      console.log(`VoidrCollector v${VOIDR_VERSION} - Initializing...`);
+
+      // Basic validation
+      if (!options || !options.apiKey) {
+        throw new Error('VoidrCollector: API Key is required');
+      }
+
+      // Merge configuration
+      state.config = { ...state.config, ...options };
+
+      // ========== Skip recording checks ==========
+
+      // 1. Check manual skipRecording override
+      if (state.config.skipRecording === true) {
+        console.log('VoidrCollector: Recording skipped (manual override via skipRecording)');
+        state.isInitialized = false;
+        return;
+      }
+
+      // 2. Detect automation environment
+      if (isAutomationEnvironment()) {
+        console.log('VoidrCollector: Recording skipped (automation environment detected)');
+        state.isInitialized = false;
+        return;
+      }
+
+      // 3. Check sampling rate
+      if (state.config.samplingRate < 1) {
+        const random = Math.random();
+        if (random > state.config.samplingRate) {
+          state.isInitialized = false;
+          return;
+        }
+      }
+
+      // ===========================================
+
+      // Initialize IDs
+      state.sessionStartedAt = Date.now();
+      initUser();
+      initSession();
+
+      // Validate API key and obtain JWT before starting recording
+      try {
+        const authenticated = await authenticateSession();
+        if (!authenticated) {
+          state.isInitialized = false;
+          return;
+        }
+      } catch (err) {
+        console.error('VoidrCollector: Failed to validate API Key', err);
+        state.isInitialized = false;
+        return;
+      }
+
+      // Start recording
+      startRecording();
+
+      await sleep(2000);
+      await sendEvents();
+
+      // Set up periodic sending
+      state.eventsInterval = setInterval(() => {
+        sendEvents();
+        sendNetworkEvents();
+      }, 7000);
+
+      window.addEventListener('beforeunload', () => handleUnload());
+
+      console.log(`VoidrCollector v${VOIDR_VERSION} - Initialized successfully`);
+    },
+
+    /**
+     * Identify the current user.
+     * @param {string} id - Unique user ID
+     * @param {Object} traits - User attributes
+     * @param {string} [traits.email] - User email
+     * @param {string} [traits.name] - User name
+     */
+    async identify(id, traits = {}) {
+      if (!id || !state.isInitialized || !state.sessionId) return;
+
+      state.userId = id;
+      sessionStorage.setItem('voidr_user_id', id);
+      state.config.user = { ...(state.config.user || {}), id, ...traits };
+
+      state.events.push({
+        type: 5,
+        timestamp: Date.now(),
+        data: {
+          plugin: 'user.identify',
+          payload: { userId: id, ...traits },
+        },
+      });
+
+      const identifyPayload = {
+        sessionId: state.sessionId,
+        userId: id,
+        userEmail: traits.email || state.config.user?.email || null,
+        userName: traits.name || state.config.user?.name || null,
+        userTraits: traits,
+      };
+
+      const maxAttempts = 3;
+      const baseDelays = [500, 1500, 3500];
+
+      for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        try {
+          const res = await fetch(`${state.config.collectorUrl}/sessions/identify`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(state.authToken ? { Authorization: `Bearer ${state.authToken}` } : {}),
+            },
+            body: safeStringify(identifyPayload),
+          });
+
+          if (res.ok || (res.status >= 400 && res.status < 500 && res.status !== 429)) {
+            break;
+          }
+
+          if (attempt < maxAttempts - 1) {
+            const jitter = 1 + (Math.random() * 0.4 - 0.2);
+            await sleep(baseDelays[attempt] * jitter);
+          }
+        } catch (err) {
+          if (attempt < maxAttempts - 1) {
+            const jitter = 1 + (Math.random() * 0.4 - 0.2);
+            await sleep(baseDelays[attempt] * jitter);
+          } else {
+            state.events.push({
+              type: 5,
+              timestamp: Date.now(),
+              data: {
+                plugin: 'voidr.identify_failed',
+                payload: { userId: id, error: err.message, attempts: maxAttempts },
+              },
+            });
+          }
+        }
+      }
+    },
+
+    /**
+     * Update configuration at runtime.
+     * @param {Object} updates - New configuration values
+     */
+    updateConfig(updates) {
+      state.config = { ...state.config, ...updates };
+    },
+
+    /**
+     * End the current session.
+     * Stops recording, clears intervals, removes sessionStorage data,
+     * and restores intercepted originals.
+     */
+    endSession() {
+      // Stop rrweb recording
+      if (state.stopRecording && typeof state.stopRecording === 'function') {
+        state.stopRecording();
+        state.stopRecording = null;
+      }
+
+      // Clear main interval
+      if (state.eventsInterval) {
+        clearInterval(state.eventsInterval);
+        state.eventsInterval = null;
+      }
+
+      // Stop MutationObserver if active
+      if (state.observer && typeof state.observer.disconnect === 'function') {
+        state.observer.disconnect();
+        state.observer = null;
+      }
+
+      // Restore original fetch
+      if (state.originalFetch && typeof window !== 'undefined') {
+        window.fetch = state.originalFetch;
+        state.originalFetch = null;
+      }
+
+      // Restore original XMLHttpRequest
+      if (state.originalXHR && typeof window !== 'undefined') {
+        window.XMLHttpRequest = state.originalXHR;
+        state.originalXHR = null;
+      }
+
+      // Clear sessionStorage
+      try {
+        sessionStorage.removeItem('voidr_jwt');
+        sessionStorage.removeItem('voidr_session_id');
+        sessionStorage.removeItem('voidr_user_id');
+        sessionStorage.removeItem('voidr_last_activity');
+      } catch (e) {
+        // Ignore sessionStorage errors
+      }
+
+      // Reset all state variables
+      resetState();
+
+      console.log('VoidrCollector: Session ended');
+    },
+
+    /**
+     * Get the current session ID.
+     * @returns {string|null} The current session ID or null if not initialized
+     */
+    getSessionId() {
+      return state.sessionId;
+    },
+  };
+}
