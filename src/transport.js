@@ -120,26 +120,90 @@ export async function sendEvents() {
 }
 
 /**
- * Handle the beforeunload event: flush network events and attempt to send remaining events.
- * Uses synchronous XMLHttpRequest as fallback to ensure delivery.
+ * Force-flush all buffered events immediately, bypassing MIN_BATCH_SIZE.
+ * Returns a Promise that resolves when all events have been sent.
+ * Does NOT stop recording — use this before stopping a session.
  */
-export function handleUnload() {
+export async function flushEvents() {
+  // Flush network buffer into main events array first
   sendNetworkEvents();
-  // Respect minimum event count before sending
-  sendEvents();
 
-  // Synchronous send as fallback (uses original XMLHttpRequest to avoid logging as network event)
-  if (state.events.length > 0) {
+  if (state.events.length === 0 || state.forceStop) return;
+
+  // Wait for any in-flight send to complete before flushing
+  while (state.isSending) {
+    await new Promise((r) => setTimeout(r, 100));
+  }
+
+  // Send all remaining events (may need multiple batches of 100)
+  while (state.events.length > 0 && !state.forceStop) {
+    state.isSending = true;
+    const batch = state.events.splice(0, 100);
+    const compressedBatch = await compressEventsBase64(batch);
+
+    const startedAt = compressedBatch[0]?.timestamp ?? Date.now();
+    const endedAt = compressedBatch[compressedBatch.length - 1]?.timestamp ?? Date.now();
+
     const payload = {
-      apiKey: state.config.apiKey,
       userId: state.userId || null,
       sessionId: state.sessionId,
-      events: state.events,
+      userTraits: state.config.user,
+      events: compressedBatch,
+      maskedElements: state.config.dataMasking.blockSelectors,
+      sessionTimeout: state.config.sessionTimeout,
+      startedAt,
+      endedAt,
       meta: state.config.meta,
       applicationId: state.config.applicationId,
       environment: state.config.environment,
     };
 
+    try {
+      const compressed = gzip(safeStringify(payload));
+      const res = await fetch(`${state.config.collectorUrl}/sessions/chunk`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Encoding': 'gzip',
+          ...(state.authToken ? { Authorization: `Bearer ${state.authToken}` } : {}),
+        },
+        body: compressed,
+      });
+
+      if (!res.ok) {
+        state.events.unshift(...batch);
+        break;
+      }
+    } catch {
+      state.events.unshift(...batch);
+      break;
+    } finally {
+      state.isSending = false;
+    }
+  }
+}
+
+/**
+ * Handle the beforeunload event: flush ALL remaining events.
+ * No minimum batch size — sends everything that's buffered.
+ * Uses synchronous XMLHttpRequest for reliable delivery during unload.
+ */
+export function handleUnload() {
+  sendNetworkEvents();
+
+  if (state.events.length === 0) return;
+
+  const payload = {
+    apiKey: state.config.apiKey,
+    userId: state.userId || null,
+    sessionId: state.sessionId,
+    events: state.events.splice(0),
+    meta: state.config.meta,
+    applicationId: state.config.applicationId,
+    environment: state.config.environment,
+  };
+
+  try {
     const XHRConstructor = state.originalXHR || XMLHttpRequest;
     const xhr = new XHRConstructor();
     xhr.open('POST', `${state.config.collectorUrl}/sessions/chunk`, false);
@@ -148,5 +212,7 @@ export function handleUnload() {
       xhr.setRequestHeader('Authorization', `Bearer ${state.authToken}`);
     }
     xhr.send(safeStringify(payload));
+  } catch {
+    // Best-effort — nothing more we can do during unload
   }
 }
