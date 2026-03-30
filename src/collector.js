@@ -2,7 +2,7 @@ import { VOIDR_VERSION, isAutomationEnvironment } from './constants.js';
 import { state, resetState } from './state.js';
 import { sleep, safeStringify } from './utils/helpers.js';
 import { initUser, initSession, authenticateSession } from './session.js';
-import { sendEvents, sendNetworkEvents, handleUnload } from './transport.js';
+import { sendEvents, sendNetworkEvents, handleUnload, flushEvents } from './transport.js';
 import { startRecording } from './recording.js';
 
 /**
@@ -246,6 +246,18 @@ export function createCollector() {
      */
     getSessionId() {
       return state.sessionId;
+    },
+
+    /**
+     * Force-flush all buffered events immediately.
+     * Returns a Promise that resolves when all events have been sent to the server.
+     * Does NOT stop recording — the session continues normally after flush.
+     * Use this before stopping a virtual browser session to ensure no events are lost.
+     * @returns {Promise<void>}
+     */
+    async flush() {
+      if (!state.isInitialized || !state.sessionId) return;
+      await flushEvents();
     },
   };
 }
