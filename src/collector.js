@@ -56,8 +56,8 @@ export function createCollector() {
         return;
       }
 
-      // 2. Detect automation environment
-      if (isAutomationEnvironment()) {
+      // 2. Detect automation environment (skip check when system: true — virtual browser)
+      if (!state.config.system && isAutomationEnvironment()) {
         console.log('VoidrCollector: Recording skipped (automation environment detected)');
         state.isInitialized = false;
         return;
