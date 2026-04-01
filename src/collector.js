@@ -103,6 +103,19 @@ export function createCollector() {
       startRecording();
 
       await sleep(2000);
+
+      // If paused during the sleep (SSE arrived), don't start sending
+      if (state.isPaused) {
+        // Stop rrweb that startRecording() just started
+        if (state.stopRecording) {
+          state.stopRecording();
+          state.stopRecording = null;
+        }
+        console.log(`VoidrCollector v${VOIDR_VERSION} - Initialized (paused)`);
+        window.addEventListener('beforeunload', () => handleUnload());
+        return;
+      }
+
       await sendEvents();
 
       // Set up periodic sending
@@ -266,18 +279,15 @@ export function createCollector() {
 
     /**
      * Pause recording and event collection.
-     * Flushes all buffered events, stops rrweb, and clears the send interval.
+     * Stops rrweb and clears the send interval immediately.
+     * Buffered events are kept and will be sent on resume.
      * The session remains open — call resume() to continue.
-     * @returns {Promise<void>}
      */
-    async pause() {
+    pause() {
       if (!state.isInitialized || state.isPaused) return;
       state.isPaused = true;
 
-      // Flush buffered events before pausing
-      await flushEvents();
-
-      // Stop rrweb recording
+      // Stop rrweb recording immediately
       if (state.stopRecording && typeof state.stopRecording === 'function') {
         state.stopRecording();
         state.stopRecording = null;
