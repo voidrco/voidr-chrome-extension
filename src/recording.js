@@ -9,10 +9,10 @@ import { initRoutingCapture } from './listeners/routing.js';
 import { initTracking } from './listeners/tracking.js';
 
 /**
- * Start the rrweb recording and all event listeners/interceptors.
+ * Start only the rrweb recording (no listeners or interceptors).
+ * Use this when resuming a paused session to avoid re-registering listeners.
  */
-export function startRecording() {
-  // Build plugins array
+export function startRrwebOnly() {
   const plugins = [];
   if (state.config.captureConsole) {
     plugins.push(
@@ -29,7 +29,6 @@ export function startRecording() {
       ? TASY_MASK_SELECTORS.join(', ')
       : null;
 
-  // Start rrweb recording
   state.stopRecording = record({
     emit: (event) => state.events.push(event),
     plugins,
@@ -55,8 +54,13 @@ export function startRecording() {
     },
     slimDOMOptions: 'all',
   });
+}
 
-  // Initialize all listeners and interceptors
+/**
+ * Start the rrweb recording and all event listeners/interceptors.
+ */
+export function startRecording() {
+  startRrwebOnly();
   initEventListeners();
   initFetchInterceptor();
   initXhrInterceptor();

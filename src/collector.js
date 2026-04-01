@@ -3,12 +3,19 @@ import { state, resetState } from './state.js';
 import { sleep, safeStringify } from './utils/helpers.js';
 import { initUser, initSession, authenticateSession } from './session.js';
 import { sendEvents, sendNetworkEvents, handleUnload, flushEvents } from './transport.js';
-import { startRecording } from './recording.js';
+import { startRecording, startRrwebOnly } from './recording.js';
 
 /**
  * Create the VoidrCollector public API object.
  */
 export function createCollector() {
+  function startSendInterval() {
+    state.eventsInterval = setInterval(() => {
+      sendEvents();
+      sendNetworkEvents();
+    }, 7000);
+  }
+
   return {
     version: VOIDR_VERSION,
 
@@ -99,10 +106,7 @@ export function createCollector() {
       await sendEvents();
 
       // Set up periodic sending
-      state.eventsInterval = setInterval(() => {
-        sendEvents();
-        sendNetworkEvents();
-      }, 7000);
+      startSendInterval();
 
       window.addEventListener('beforeunload', () => handleUnload());
 
@@ -258,6 +262,52 @@ export function createCollector() {
     async flush() {
       if (!state.isInitialized || !state.sessionId) return;
       await flushEvents();
+    },
+
+    /**
+     * Pause recording and event collection.
+     * Flushes all buffered events, stops rrweb, and clears the send interval.
+     * The session remains open — call resume() to continue.
+     * @returns {Promise<void>}
+     */
+    async pause() {
+      if (!state.isInitialized || state.isPaused) return;
+      state.isPaused = true;
+
+      // Flush buffered events before pausing
+      await flushEvents();
+
+      // Stop rrweb recording
+      if (state.stopRecording && typeof state.stopRecording === 'function') {
+        state.stopRecording();
+        state.stopRecording = null;
+      }
+
+      // Clear send interval
+      if (state.eventsInterval) {
+        clearInterval(state.eventsInterval);
+        state.eventsInterval = null;
+      }
+
+      console.log('VoidrCollector: Recording paused');
+    },
+
+    /**
+     * Resume recording after a pause.
+     * Restarts rrweb (emits a new FullSnapshot) and the periodic send interval.
+     * @returns {void}
+     */
+    resume() {
+      if (!state.isInitialized || !state.isPaused) return;
+      state.isPaused = false;
+
+      // Restart rrweb recording only (generates new FullSnapshot, no duplicate listeners)
+      startRrwebOnly();
+
+      // Restart periodic sending
+      startSendInterval();
+
+      console.log('VoidrCollector: Recording resumed');
     },
   };
 }

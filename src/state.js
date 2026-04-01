@@ -13,6 +13,7 @@ export const state = {
   authToken: null,
   lastHref: null,
   forceStop: false,
+  isPaused: false,
   eventsInterval: null,
   originalFetch: null,
   originalXHR: null,
@@ -36,6 +37,7 @@ export function resetState() {
   state.authToken = null;
   state.lastHref = null;
   state.forceStop = true;
+  state.isPaused = false;
   state.eventsInterval = null;
   state.originalFetch = null;
   state.originalXHR = null;
