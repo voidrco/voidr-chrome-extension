@@ -35,7 +35,7 @@ export function sendNetworkEvents() {
  */
 export async function sendEvents() {
   const MIN_BATCH_SIZE = 10;
-  if (state.isSending || state.events.length < MIN_BATCH_SIZE || state.forceStop) return;
+  if (state.isSending || state.events.length < MIN_BATCH_SIZE || state.forceStop || state.isPaused) return;
   state.isSending = true;
 
   const batch = state.events.splice(0, 100);
