@@ -1105,6 +1105,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     case 'voidr:sessionCaptured':
       if (request.sessionId) {
         lastCapturedSessionId = request.sessionId;
+        broadcastSessionToOnboarding(request.sessionId);
+        showOnboardingDoneBanner();
       }
       break;
   }
@@ -1789,9 +1791,112 @@ window.submitQuickTestCase = async function (event) {
   }
 };
 
+// ── Onboarding auto-record via query params ──────────────────────────────────
+
+function checkOnboardingAutoRecord() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('voidr_record') !== '1') return;
+
+    const sessionName = params.get('voidr_session_name') || 'Onboarding Session';
+    const mode = params.get('voidr_mode') || 'onboarding';
+    const appId = params.get('voidr_app_id') || undefined;
+    let flows = [];
+    try { flows = JSON.parse(params.get('voidr_flows') || '[]'); } catch (_) {}
+
+    const cleanUrl = new URL(window.location.href);
+    ['voidr_record', 'voidr_session_name', 'voidr_mode', 'voidr_app_id', 'voidr_flows'].forEach(
+      (k) => cleanUrl.searchParams.delete(k),
+    );
+    window.history.replaceState({}, '', cleanUrl.toString());
+
+    const waitForAuth = async () => {
+      const auth = await getAuthStatus();
+      if (!auth.isAuthenticated || !auth.token) {
+        console.warn('[Voidr] Auto-record: user not authenticated, skipping');
+        return;
+      }
+      await new Promise((r) => setTimeout(r, 800));
+      showOnboardingPreRecordPanel({ sessionName, mode, appId, flows });
+    };
+
+    waitForAuth();
+  } catch (e) {
+    console.error('[Voidr] Auto-record check failed:', e);
+  }
+}
+
+function showOnboardingPreRecordPanel({ sessionName, mode, appId, flows }) {
+  document.querySelectorAll('.voidr-onb-panel').forEach((n) => n.remove());
+
+  const flowsHtml = flows.length
+    ? flows.map((f) => `<span class="voidr-onb-flow">${escapeHtml(f.name || f.id)}</span>`).join('')
+    : '';
+
+  const panel = document.createElement('div');
+  panel.className = 'voidr-onb-panel';
+  panel.innerHTML = `
+    <div class="voidr-onb-left">
+      <svg viewBox="0 0 4521 4521" xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="white" aria-hidden="true">
+        <path fill-rule="evenodd" clip-rule="evenodd" d="M2260.5 4521C3508.94 4521 4521 3508.94 4521 2260.49C4521 1012.06 3508.94 0 2260.5 0C1012.06 0 0 1012.06 0 2260.49C0 3508.94 1012.06 4521 2260.5 4521ZM3334.24 2024.28C3334.24 2154.74 3228.47 2260.49 3098.02 2260.49H2504.44C2373.99 2260.49 2268.22 2366.26 2268.22 2496.72V3098.01C2268.22 3228.48 2162.46 3334.24 2032.01 3334.24H1422.98C1292.52 3334.24 1186.76 3228.48 1186.76 3098.01V2496.72C1186.76 2366.26 1292.52 2260.49 1422.98 2260.49H2016.56C2147.01 2260.49 2252.78 2154.74 2252.78 2024.28V1422.99C2252.78 1292.52 2358.53 1186.76 2488.99 1186.76H3098.02C3228.47 1186.76 3334.24 1292.52 3334.24 1422.99V2024.28Z"/>
+      </svg>
+      <div class="voidr-onb-info">
+        <div class="voidr-onb-title">Voidr — ${escapeHtml(sessionName)}</div>
+        ${flowsHtml ? `<div class="voidr-onb-flows">${flowsHtml}</div>` : ''}
+      </div>
+    </div>
+    <div class="voidr-onb-actions">
+      <button type="button" class="voidr-rec-btn" id="voidr-onb-cancel">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        Cancelar
+      </button>
+      <button type="button" class="voidr-rec-btn voidr-onb-play" id="voidr-onb-play">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" stroke="none"><polygon points="5,3 19,12 5,21"/></svg>
+        Iniciar gravação
+      </button>
+    </div>
+  `;
+  document.documentElement.appendChild(panel);
+
+  document.getElementById('voidr-onb-cancel')?.addEventListener('click', () => {
+    panel.remove();
+  });
+  document.getElementById('voidr-onb-play')?.addEventListener('click', () => {
+    panel.remove();
+    startVoidrSessionRecording(sessionName, { mode, slug: appId });
+  });
+}
+
+// ── BroadcastChannel for sessionId relay to onboarding widget ─────────────────
+
+function showOnboardingDoneBanner() {
+  document.querySelectorAll('.voidr-onb-done').forEach((n) => n.remove());
+  const banner = document.createElement('div');
+  banner.className = 'voidr-onb-done';
+  banner.innerHTML = `
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#86efac" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9 12l2 2 4-4"/></svg>
+    Sessão capturada com sucesso — pode fechar esta aba e voltar ao onboarding.
+  `;
+  document.documentElement.appendChild(banner);
+  setTimeout(() => { if (banner.parentNode) banner.remove(); }, 15000);
+}
+
+function broadcastSessionToOnboarding(sessionId) {
+  try {
+    const bc = new BroadcastChannel('voidr-onboarding');
+    bc.postMessage({ type: 'voidr:sessionCaptured', sessionId });
+    bc.close();
+    console.log('[Voidr] Broadcast sessionId to onboarding channel:', sessionId);
+  } catch (_) {}
+}
+
 // Inicializa quando o DOM estiver pronto
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', initVoidrExtension);
+  document.addEventListener('DOMContentLoaded', () => {
+    initVoidrExtension();
+    checkOnboardingAutoRecord();
+  });
 } else {
   initVoidrExtension();
+  checkOnboardingAutoRecord();
 }

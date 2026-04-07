@@ -83,6 +83,75 @@
 .voidr-rec-btn svg line,
 .voidr-rec-btn svg rect,
 .voidr-rec-btn svg circle { stroke: currentColor !important; fill: none !important; }
+
+/* Onboarding pre-record panel */
+.voidr-onb-panel {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 20px;
+  background: linear-gradient(180deg, #0b0f14 0%, #070a0f 100%);
+  border-bottom: 1px solid rgba(255,255,255,0.10);
+  color: #e5e7eb;
+  z-index: 2147483647;
+  backdrop-filter: blur(12px) saturate(135%);
+  box-shadow: 0 4px 24px rgba(0,0,0,0.4);
+  animation: voidr-onb-slide-down 0.3s ease;
+}
+@keyframes voidr-onb-slide-down {
+  from { transform: translateY(-100%); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+.voidr-onb-left { display: flex; align-items: center; gap: 12px; }
+.voidr-onb-info { display: flex; flex-direction: column; gap: 4px; }
+.voidr-onb-title { font-size: 13px; font-weight: 600; color: #f1f5f9; letter-spacing: .2px; }
+.voidr-onb-flows { display: flex; flex-wrap: wrap; gap: 6px; }
+.voidr-onb-flow {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  background: rgba(59,130,246,0.10);
+  color: #93c5fd;
+  border: 1px solid rgba(59,130,246,0.20);
+}
+.voidr-onb-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.voidr-onb-play {
+  background: linear-gradient(180deg, rgba(59,130,246,0.15), rgba(59,130,246,0.10)) !important;
+  border-color: rgba(59,130,246,0.45) !important;
+  color: #93c5fd !important;
+}
+.voidr-onb-play:hover { background: rgba(59,130,246,0.22) !important; }
+.voidr-onb-play svg { fill: currentColor !important; stroke: none !important; }
+
+/* Onboarding post-stop done banner */
+.voidr-onb-done {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 14px 20px;
+  background: linear-gradient(180deg, #052e16 0%, #022c22 100%);
+  border-bottom: 1px solid rgba(34,197,94,0.25);
+  color: #86efac;
+  font-size: 13px;
+  font-weight: 500;
+  z-index: 2147483647;
+  animation: voidr-onb-slide-down 0.3s ease;
+}
+.voidr-onb-done svg { flex-shrink: 0; }
+
 /* Floating refocus button */
 .voidr-refocus-btn {
   position: fixed;
