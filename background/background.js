@@ -14,6 +14,7 @@ const __ENV__ = (typeof globalThis !== 'undefined' && globalThis.__VOIDR_ENV__) 
 const DEFAULTS = {
   baseUrl: 'https://voidr-service-785568282479.us-central1.run.app/v1',
   platformUrl: 'https://canary.voidr.co',
+  collectorUrl: 'https://collector.voidr.co',
   auth0Domain: 'bounties4.us.auth0.com',
   auth0ClientId: 'c4eLr6uaq98KB2dCKNkmP9bz6sS3gJfS',
   auth0Audience: 'https://service.bounties4.com/',
@@ -22,6 +23,7 @@ const DEFAULTS = {
 const RESOLVED = {
   baseUrl: __ENV__.VOIDR_API_BASE_URL || DEFAULTS.baseUrl,
   platformUrl: __ENV__.VOIDR_PLATFORM_URL || DEFAULTS.platformUrl,
+  collectorUrl: __ENV__.VOIDR_COLLECTOR_URL || DEFAULTS.collectorUrl,
   auth0Domain: __ENV__.VOIDR_AUTH0_DOMAIN || DEFAULTS.auth0Domain,
   auth0ClientId: __ENV__.VOIDR_AUTH0_CLIENT_ID || DEFAULTS.auth0ClientId,
   auth0Audience: __ENV__.VOIDR_AUTH0_AUDIENCE || DEFAULTS.auth0Audience,
@@ -30,6 +32,7 @@ const RESOLVED = {
 const API_CONFIG = {
   baseUrl: RESOLVED.baseUrl,
   platformUrl: RESOLVED.platformUrl,
+  collectorUrl: RESOLVED.collectorUrl,
   auth0: {
     domain: RESOLVED.auth0Domain,
     clientId: RESOLVED.auth0ClientId,
@@ -49,6 +52,9 @@ let globalAuthState = {
 let lastPopupWindowId = null;
 // Track last active content tab id to forward messages (not the popup window)
 let lastActiveContentTabId = null;
+
+// Active recording state — survives page navigations within the recorded tab
+let activeRecording = null;
 
 // Helpers to persist assistant window id across service worker restarts
 async function getStoredAssistantWindowId() {
@@ -147,36 +153,6 @@ function isHttpUrl(u) {
   }
 }
 
-async function resolveReturnUrl() {
-  // 1) Prefer lastActiveContentTabId
-  if (lastActiveContentTabId) {
-    try {
-      const tab = await chrome.tabs.get(lastActiveContentTabId);
-      if (tab && isHttpUrl(tab.url)) return tab.url;
-    } catch (_) {}
-  }
-  // 2) Active tab in focused window
-  try {
-    const tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-    const t = tabs && tabs[0];
-    if (t && isHttpUrl(t.url)) return t.url;
-  } catch (_) {}
-  // 3) Any http(s) tab across windows
-  try {
-    const wins = await chrome.windows.getAll({ populate: true, windowTypes: ['normal'] });
-    for (const w of wins) {
-      const httpTab = (w.tabs || []).find((tab) => isHttpUrl(tab.url));
-      if (httpTab) return httpTab.url;
-    }
-  } catch (_) {}
-  // 4) Stored fallback
-  try {
-    const stored = await chrome.storage.local.get(['lastActiveContentUrl']);
-    if (isHttpUrl(stored.lastActiveContentUrl)) return stored.lastActiveContentUrl;
-  } catch (_) {}
-  return '';
-}
-
 // Hydrate auth state whenever the service worker starts up
 // MV3 service workers are ephemeral; don't rely on in-memory state
 checkAuthenticationStatus();
@@ -202,8 +178,6 @@ chrome.runtime.onInstalled.addListener((details) => {
   // Verifica autenticação na instalação
   checkAuthenticationStatus();
 
-  // Abre a janela flutuante por padrão após instalação/atualização (DX)
-  chrome.runtime.sendMessage({ action: 'openFloatingPopup' }).catch(() => {});
 });
 
 // Keep global auth state in sync with storage updates
@@ -273,18 +247,8 @@ async function checkAuthenticationStatus() {
   }
 }
 
-// Abre página de autenticação
-function openAuthPage() {
-  chrome.tabs.create({
-    url: chrome.runtime.getURL('auth/auth.html'),
-    active: true,
-  });
-}
-
 // Listener para mensagens dos content scripts
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  console.log('Mensagem recebida no background:', request);
-
   switch (request.action) {
     case 'voidr:injectCollectorAndInit':
       (async () => {
@@ -346,7 +310,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 console.error('[Voidr] Collector init error', e);
               }
             },
-            args: [request.initOptions || {}],
+            args: [{ ...(request.initOptions || {}), collectorUrl: API_CONFIG.collectorUrl }],
           });
 
           // Retrieve sessionId after init and broadcast to extension UIs
@@ -386,6 +350,22 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             } catch (_) {}
           } catch (_) {}
 
+          let targetOrigin = null;
+          try {
+            const tabInfo = await chrome.tabs.get(targetTabId);
+            if (tabInfo?.url) targetOrigin = new URL(tabInfo.url).origin;
+          } catch (_) {}
+
+          activeRecording = {
+            tabId: targetTabId,
+            targetOrigin,
+            initOptions: { ...(request.initOptions || {}), collectorUrl: API_CONFIG.collectorUrl },
+            testCaseName: request.initOptions?.meta?.testCase || 'Test Case',
+            mode: request.initOptions?.meta?.mode || 'test-case',
+            onboardingRunId: request.initOptions?.meta?.onboardingRunId,
+            flows: request.initOptions?.meta?.flows || [],
+          };
+
           sendResponse({ success: true });
         } catch (e) {
           console.error('Collector injection error:', e);
@@ -424,34 +404,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       })();
       return true;
 
-    case 'requireAuth':
-      // Abre página de autenticação se não estiver autenticado
-      if (!globalAuthState.isAuthenticated) {
-        openAuthPage();
-        sendResponse({ authRequired: true });
-      } else {
-        sendResponse({ authRequired: false, token: globalAuthState.token });
-      }
-      return true;
-
-    case 'openPlatformForAuth':
-      // Abre plataforma com URL de retorno da aba atual
-      console.log('Background: Received openPlatformForAuth request');
-      (async () => {
-        const currentUrl = await resolveReturnUrl();
-        const returnUrl = encodeURIComponent(currentUrl || '');
-        console.log('Opening platform for auth with return URL:', currentUrl);
-        const connectUrl = `${API_CONFIG.platformUrl}/auth/extension-connect?returnTo=${returnUrl}`;
-        console.log('Connect URL:', connectUrl);
-        try {
-          const tab = await chrome.tabs.create({ url: connectUrl, active: true });
-          sendResponse({ success: true, tabId: tab?.id });
-        } catch (e) {
-          sendResponse({ success: false, error: e?.message || 'Failed to open auth tab' });
-        }
-      })();
-      return true; // Indica resposta assíncrona
-
     case 'authCompleted':
       // Atualiza estado global quando auth é concluída
       globalAuthState = {
@@ -462,6 +414,136 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       console.log('Authentication completed for:', globalAuthState.user?.email);
       sendResponse({ success: true });
       break;
+
+    case 'syncAuthFromPlatformTabs':
+      (async () => {
+        try {
+          const tabs = await chrome.tabs.query({ url: `${API_CONFIG.platformUrl}/*` });
+          for (const tab of tabs) {
+            try {
+              await syncAuthWithPlatform(tab.id);
+              if (globalAuthState.isAuthenticated) break;
+            } catch (_) {}
+          }
+          sendResponse({
+            isAuthenticated: globalAuthState.isAuthenticated,
+            user: globalAuthState.user,
+            token: globalAuthState.token,
+          });
+        } catch (e) {
+          sendResponse({ isAuthenticated: false });
+        }
+      })();
+      return true;
+
+    case 'validateAndStoreToken':
+      (async () => {
+        try {
+          globalAuthState = {
+            isAuthenticated: true,
+            user: null,
+            token: request.token,
+          };
+          await chrome.storage.local.set({
+            voidrAuth: {
+              token: request.token,
+              user: null,
+              expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+              isAuthenticated: true,
+            },
+          });
+
+          try {
+            const isValid = await validateTokenInBackground(request.token);
+            if (isValid?.user) {
+              globalAuthState.user = isValid.user;
+              await chrome.storage.local.set({
+                voidrAuth: {
+                  token: request.token,
+                  user: isValid.user,
+                  expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+                  isAuthenticated: true,
+                },
+              });
+            }
+          } catch (_) {}
+
+          sendResponse({
+            isAuthenticated: true,
+            user: globalAuthState.user,
+            token: request.token,
+          });
+        } catch (e) {
+          sendResponse({ isAuthenticated: false });
+        }
+      })();
+      return true;
+
+    case 'getAuthConnectUrl':
+      sendResponse({ url: `${API_CONFIG.platformUrl}/auth/extension-connect` });
+      break;
+
+    case 'voidr:getOnboardingByCode':
+      (async () => {
+        const code = (request.code || '').trim().toUpperCase();
+        if (!code) {
+          sendResponse({ context: null, error: 'No code provided' });
+          return;
+        }
+
+        if (!globalAuthState.token) await checkAuthenticationStatus();
+        if (!globalAuthState.token) {
+          sendResponse({ context: null, error: 'Not authenticated' });
+          return;
+        }
+
+        try {
+          const res = await fetch(
+            `${API_CONFIG.baseUrl}/onboarding/recording-sessions/code/${encodeURIComponent(code)}`,
+            {
+              headers: {
+                Authorization: `Bearer ${globalAuthState.token}`,
+                'Content-Type': 'application/json',
+              },
+            },
+          );
+          if (!res.ok) {
+            sendResponse({ context: null, error: res.status === 404 ? 'Código não encontrado' : `Error ${res.status}` });
+            return;
+          }
+          const json = await res.json();
+          sendResponse({ context: json.data || null });
+        } catch (e) {
+          sendResponse({ context: null, error: e?.message || 'Network error' });
+        }
+      })();
+      return true;
+
+    case 'voidr:autoConnectOnboarding': {
+      const autoCode = (request.code || '').trim().toUpperCase();
+      if (!autoCode || !globalAuthState?.token) break;
+
+      fetch(
+        `${API_CONFIG.baseUrl}/onboarding/recording-sessions/code/${encodeURIComponent(autoCode)}`,
+        {
+          headers: {
+            Authorization: `Bearer ${globalAuthState.token}`,
+            'Content-Type': 'application/json',
+          },
+        },
+      )
+        .then((r) => (r.ok ? r.json() : null))
+        .then((json) => {
+          if (json?.data) {
+            chrome.storage.session.set({ pendingOnboardingContext: json.data });
+            chrome.action.setBadgeText({ text: 'REC' });
+            chrome.action.setBadgeBackgroundColor({ color: '#ef4444' });
+            try { chrome.action.openPopup(); } catch (_) {}
+          }
+        })
+        .catch(() => {});
+      break;
+    }
 
     case 'authLogout':
       // Limpa estado global no logout
@@ -505,17 +587,24 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       });
       return true;
 
-    case 'injectWidget':
-      // Injeta o widget na aba ativa
-      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        if (tabs[0]) {
-          chrome.scripting.executeScript({
-            target: { tabId: tabs[0].id },
-            files: ['widget/widget.js'],
-          });
+    case 'voidr:validateSession':
+      (async () => {
+        if (!globalAuthState.token) await checkAuthenticationStatus();
+        if (!globalAuthState.token || !request.sessionId) {
+          sendResponse({ found: false });
+          return;
         }
-      });
-      break;
+        try {
+          const res = await fetch(
+            `${API_CONFIG.baseUrl}/collectors/sessions/${encodeURIComponent(request.sessionId)}`,
+            { headers: { Authorization: `Bearer ${globalAuthState.token}` } },
+          );
+          sendResponse({ found: res.ok });
+        } catch (_) {
+          sendResponse({ found: false });
+        }
+      })();
+      return true;
 
     case 'openFloatingPopup':
       // Persiste URL atual para manter contexto na janela flutuante
@@ -542,17 +631,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       });
       return true;
 
-    case 'browserActionClicked':
-      // Ao clicar no ícone, abrir a janela flutuante por padrão
-      chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
-        const t = tabs && tabs[0] ? tabs[0] : null;
-        if (t && t.id && /^https?:/i.test(t.url || '')) {
-          lastActiveContentTabId = t.id;
-        }
-        chrome.runtime.sendMessage({ action: 'openFloatingPopup' }).catch(() => {});
-      });
-      sendResponse({ success: true });
-      return true;
     case 'forwardToLastContent':
       (async () => {
         const payload = request.payload || {};
@@ -610,7 +688,50 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         }
       })();
       return true;
+
+    case 'voidr:forwardToTargetTab':
+      (async () => {
+        const { targetHost, payload } = request;
+        try {
+          let targetTabId = null;
+
+          if (targetHost) {
+            const tabs = await chrome.tabs.query({ url: targetHost });
+            const filtered = tabs.filter((t) => !t.url.startsWith(API_CONFIG.platformUrl));
+            if (filtered.length > 0) targetTabId = filtered[0].id;
+          }
+
+          if (!targetTabId) {
+            const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
+            if (active?.url && /^https?:/i.test(active.url) && !active.url.startsWith(API_CONFIG.platformUrl)) {
+              targetTabId = active.id;
+            }
+          }
+
+          if (!targetTabId) {
+            sendResponse({ success: false, error: 'Aba do site-alvo não encontrada. Abra o site e tente novamente.' });
+            return;
+          }
+
+          try {
+            await chrome.tabs.sendMessage(targetTabId, payload);
+          } catch (_) {
+            await chrome.scripting.executeScript({
+              target: { tabId: targetTabId },
+              files: ['content/content.js'],
+            });
+            await new Promise((r) => setTimeout(r, 100));
+            await chrome.tabs.sendMessage(targetTabId, payload);
+          }
+          sendResponse({ success: true, tabId: targetTabId });
+        } catch (e) {
+          sendResponse({ success: false, error: e?.message || 'Failed to forward to target tab' });
+        }
+      })();
+      return true;
+
     case 'voidr:sessionStopped':
+      activeRecording = null;
       // On stop, try to retrieve the current sessionId from the page and broadcast it
       (async () => {
         try {
@@ -652,8 +773,38 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             },
           });
           const sessionId = (res && res[0] && res[0].result) || null;
+          const activeRunId = request.onboardingRunId || null;
+
+          const capturedPayload = { action: 'voidr:sessionCaptured', sessionId, onboardingRunId: activeRunId };
           try {
-            chrome.runtime.sendMessage({ action: 'voidr:sessionCaptured', sessionId });
+            chrome.runtime.sendMessage(capturedPayload);
+          } catch (_) {}
+
+          // Relay to all content scripts via chrome.tabs.sendMessage (cross-origin safe)
+          try {
+            const allTabs = await chrome.tabs.query({ url: ['http://*/*', 'https://*/*'] });
+            for (const t of allTabs) {
+              chrome.tabs.sendMessage(t.id, capturedPayload).catch(() => {});
+            }
+          } catch (_) {}
+
+          // Relay via BroadcastChannel in platform tab's MAIN world (origin-correct)
+          try {
+            const platformTabs = await chrome.tabs.query({ url: `${API_CONFIG.platformUrl}/*` });
+            for (const pt of platformTabs) {
+              chrome.scripting.executeScript({
+                target: { tabId: pt.id },
+                world: 'MAIN',
+                func: (payload) => {
+                  try {
+                    const bc = new BroadcastChannel('voidr-onboarding');
+                    bc.postMessage(payload);
+                    bc.close();
+                  } catch (_) {}
+                },
+                args: [{ type: 'voidr:sessionCaptured', sessionId: capturedPayload.sessionId, onboardingRunId: capturedPayload.onboardingRunId }],
+              }).catch(() => {});
+            }
           } catch (_) {}
 
           // After broadcasting, request the collector to end the session
@@ -681,102 +832,53 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       })();
       return true;
     case 'focusOrOpenPopup':
-      // Focus existing popup, or create a new one at provided position
       (async () => {
-        const desired = request.position || {};
-        const specs = {
-          url: chrome.runtime.getURL('popup/popup.html'),
-          type: 'popup',
-          width: 472,
-          height: 625,
-          focused: true,
-        };
-        if (typeof desired.left === 'number') specs.left = Math.max(0, desired.left);
-        if (typeof desired.top === 'number') specs.top = Math.max(0, desired.top);
+        try {
+          const popupUrl = chrome.runtime.getURL('popup/popup.html');
+          const desired = request.position || {};
 
-        const focusExisting = async (winId) => {
-          try {
-            if (!winId && lastPopupWindowId) winId = lastPopupWindowId;
-            if (!winId) return false;
-            await chrome.windows.update(winId, { focused: true, drawAttention: true });
-            return true;
-          } catch (e) {
-            return false;
+          // Try to focus existing popup window
+          if (lastPopupWindowId) {
+            try {
+              await chrome.windows.update(lastPopupWindowId, { focused: true });
+              console.log('[Voidr BG] Focused existing popup:', lastPopupWindowId);
+              sendResponse({ success: true, refocused: true });
+              return;
+            } catch (_) {
+              lastPopupWindowId = null;
+            }
           }
-        };
 
-        let focused = await focusExisting(request.windowId || lastPopupWindowId);
-        if (!focused) {
-          // Try to find any existing assistant popup by URL
-          try {
-            const wins = await chrome.windows.getAll({
-              populate: true,
-              windowTypes: ['popup', 'normal'],
-            });
-            const targetUrl = chrome.runtime.getURL('popup/popup.html');
-            let existing = null;
-            for (const w of wins) {
-              const match = (w.tabs || []).find((t) => t.url && t.url.startsWith(targetUrl));
-              if (match) {
-                existing = w;
-                break;
-              }
-            }
-            if (existing && existing.id) {
-              lastPopupWindowId = existing.id;
-              try {
-                const tab = (existing.tabs || []).find((t) => t.url && t.url.startsWith(targetUrl));
-                if (tab && tab.id) await chrome.tabs.update(tab.id, { active: true });
-              } catch (_) {}
-              focused = await focusExisting(existing.id);
-            }
-          } catch (_) {}
-        }
-        if (focused) {
-          sendResponse({ success: true, refocused: true, windowId: lastPopupWindowId });
-          return;
-        }
+          // Create new popup window
+          const specs = { url: popupUrl, type: 'popup', width: 420, height: 550, focused: true };
+          if (typeof desired.left === 'number') specs.left = Math.max(0, desired.left);
+          if (typeof desired.top === 'number') specs.top = Math.max(0, desired.top);
 
-        chrome.windows.create(specs, (createdWin) => {
-          lastPopupWindowId = createdWin?.id || null;
-          sendResponse({ success: true, created: true, windowId: createdWin?.id });
-        });
+          const win = await chrome.windows.create(specs);
+          lastPopupWindowId = win?.id || null;
+          console.log('[Voidr BG] Created popup window:', lastPopupWindowId);
+          sendResponse({ success: true, created: true, windowId: win?.id });
+        } catch (e) {
+          console.error('[Voidr BG] focusOrOpenPopup failed:', e);
+          sendResponse({ success: false, error: e?.message });
+        }
       })();
       return true;
-
-    case 'prepareExtensionReopen':
-      // Prepara para reabrir a extensão após redirect
-      chrome.storage.local.set({
-        shouldReopenExtension: true,
-        reopenTimestamp: Date.now(),
-      });
-      console.log('Extension reopen prepared');
-      break;
 
     default:
       console.log('Ação não reconhecida:', request.action);
   }
 });
 
-// Listener para mudanças de aba
+// Track last active content tab
 chrome.tabs.onActivated.addListener((activeInfo) => {
-  console.log('Aba ativada:', activeInfo.tabId);
-  // Atualiza última aba http(s) ativa
   try {
     chrome.tabs.get(activeInfo.tabId, (tab) => {
-      if (tab && tab.id && tab.url && /^https?:/i.test(tab.url)) {
+      if (tab && tab.id && tab.url && /^https?:/i.test(tab.url) && !tab.url.startsWith(API_CONFIG.platformUrl)) {
         lastActiveContentTabId = tab.id;
       }
     });
   } catch (_) {}
-});
-
-// Listener para atualizações de URL
-chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (changeInfo.status === 'complete' && tab.url) {
-    console.log('Página carregada:', tab.url);
-    // Aqui podemos implementar lógica para auto-injeção do widget
-  }
 });
 
 // Faz requisições autenticadas para a API
@@ -837,45 +939,6 @@ async function makeAuthenticatedRequest(endpoint, method = 'GET', data = null) {
   }
 }
 
-// Check if extension should be reopened after auth
-async function checkAndReopenExtension() {
-  try {
-    const result = await chrome.storage.local.get(['shouldReopenExtension', 'reopenTimestamp']);
-
-    if (result.shouldReopenExtension && result.reopenTimestamp) {
-      // Only reopen if less than 10 minutes have passed
-      const timeDiff = Date.now() - result.reopenTimestamp;
-      if (timeDiff < 10 * 60 * 1000) {
-        console.log('Reopening extension popup after authentication...');
-
-        // Clear the flag
-        await chrome.storage.local.remove(['shouldReopenExtension', 'reopenTimestamp']);
-
-        // Open extension popup
-        chrome.action.openPopup().catch((error) => {
-          console.log('Could not reopen popup automatically:', error);
-          // Fallback: show notification
-          chrome.notifications
-            .create({
-              type: 'basic',
-              iconUrl: 'icons/icon48.png',
-              title: 'Voidr Extension',
-              message: 'Authentication successful! Click the extension icon to continue.',
-            })
-            .catch(() => {
-              // Ignore notification errors
-            });
-        });
-      } else {
-        // Clean up old flag
-        await chrome.storage.local.remove(['shouldReopenExtension', 'reopenTimestamp']);
-      }
-    }
-  } catch (error) {
-    console.error('Error checking extension reopen:', error);
-  }
-}
-
 // Verifica autenticação periodicamente (a cada 30 minutos)
 setInterval(() => {
   checkAuthenticationStatus();
@@ -898,6 +961,43 @@ chrome.action.onClicked.addListener(() => {
 
 // Listener para detectar quando a plataforma Voidr é acessada
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+  // Re-inject collector + recording UI when the recorded tab navigates within the target domain
+  if (
+    changeInfo.status === 'complete' &&
+    activeRecording &&
+    tabId === activeRecording.tabId &&
+    tab.url && /^https?:/i.test(tab.url) &&
+    (!activeRecording.targetOrigin || tab.url.startsWith(activeRecording.targetOrigin))
+  ) {
+    try {
+      const cdnUrl =
+        'https://cdn.voidr.co/voidr-collector/default/latest/recorder.min.js?v=' + Date.now();
+      const res = await fetch(cdnUrl);
+      if (res.ok) {
+        const code = await res.text();
+        await chrome.scripting.executeScript({
+          target: { tabId },
+          world: 'MAIN',
+          func: (collectorCode) => { try { (0, eval)(collectorCode); } catch (_) {} },
+          args: [code],
+        });
+        await chrome.scripting.executeScript({
+          target: { tabId },
+          world: 'MAIN',
+          func: (opts) => { try { window.VoidrCollector?.init?.(opts); } catch (_) {} },
+          args: [activeRecording.initOptions],
+        });
+        chrome.tabs.sendMessage(tabId, {
+          action: 'voidr:resumeRecordingUI',
+          testCaseName: activeRecording.testCaseName,
+          mode: activeRecording.mode,
+          onboardingRunId: activeRecording.onboardingRunId,
+          flows: activeRecording.flows,
+        }).catch(() => {});
+      }
+    } catch (_) {}
+  }
+
   if (changeInfo.status === 'complete' && tab.url && tab.url.startsWith(API_CONFIG.platformUrl)) {
     console.log('Voidr platform detected, syncing authentication...');
 
@@ -921,6 +1021,12 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
         await syncAuthWithPlatform(tabId);
       }, 2000);
     }
+  }
+});
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  if (activeRecording && activeRecording.tabId === tabId) {
+    activeRecording = null;
   }
 });
 
@@ -985,12 +1091,19 @@ async function syncAuthWithPlatform(tabId) {
               token: platformAuth.token,
             },
           })
-          .catch(() => {
-            // Ignora erros se não há listeners
-          });
+          .catch(() => {});
 
-        // Check if extension should be reopened
-        await checkAndReopenExtension();
+        // Notify content scripts directly in all http(s) tabs
+        try {
+          const allTabs = await chrome.tabs.query({ url: ['http://*/*', 'https://*/*'] });
+          for (const t of allTabs) {
+            chrome.tabs.sendMessage(t.id, {
+              action: 'authStateUpdated',
+              authData: { isAuthenticated: true, user: isValid.user, token: platformAuth.token },
+            }).catch(() => {});
+          }
+        } catch (_) {}
+
       }
     }
   } catch (error) {

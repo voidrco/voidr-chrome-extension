@@ -2,8 +2,8 @@
   "manifest_version": 3,
   "name": "Voidr Testing Assistant",
   "version": "1.0.0",
-  "description": "Widget for test planning and bug reporting directly on web pages",
-  "permissions": ["activeTab", "storage", "scripting", "notifications"],
+  "description": "Capture user sessions for onboarding test generation",
+  "permissions": ["activeTab", "storage", "scripting"],
   "host_permissions": ["http://*/*", "https://*/*"],
   "action": {
     "default_title": "Voidr Testing Assistant",
@@ -27,7 +27,7 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["widget/*", "icons/*", "auth/*", "assets/*", "services/*"],
+      "resources": ["icons/*", "assets/*"],
       "matches": ["<all_urls>"]
     }
   ],

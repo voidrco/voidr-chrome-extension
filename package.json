@@ -2,7 +2,7 @@
   "name": "voidr-chrome-extension",
   "version": "1.0.0",
   "private": true,
-  "description": "Widget for test planning and bug reporting directly on web pages",
+  "description": "Capture user sessions for onboarding test generation",
   "license": "UNLICENSED",
   "scripts": {
     "extension:dev": "echo 'Open chrome://extensions and Load unpacked → this folder'",

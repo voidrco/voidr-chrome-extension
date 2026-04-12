@@ -7,10 +7,10 @@
 
 (function initializeVoidrEnv() {
   var env = {
-    // ENVIRONMENT: 'development',
-    // Local development overrides
-    // VOIDR_API_BASE_URL: 'http://localhost:8000/v1',
-    // VOIDR_PLATFORM_URL: 'http://localhost:3030',
+    ENVIRONMENT: 'development',
+    VOIDR_API_BASE_URL: 'http://localhost:3000/v1',
+    VOIDR_PLATFORM_URL: 'http://localhost:3030',
+    VOIDR_COLLECTOR_URL: 'http://localhost:3100',
   };
 
   if (typeof globalThis !== 'undefined') {
