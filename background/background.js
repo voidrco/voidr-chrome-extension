@@ -698,7 +698,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           if (targetHost) {
             const tabs = await chrome.tabs.query({ url: targetHost });
             const filtered = tabs.filter((t) => !t.url.startsWith(API_CONFIG.platformUrl));
-            if (filtered.length > 0) targetTabId = filtered[0].id;
+            if (filtered.length > 0) {
+              targetTabId = filtered[0].id;
+            } else {
+              const alt = targetHost.startsWith('http://')
+                ? targetHost.replace('http://', 'https://')
+                : targetHost.replace('https://', 'http://');
+              const altTabs = await chrome.tabs.query({ url: alt });
+              const altFiltered = altTabs.filter((t) => !t.url.startsWith(API_CONFIG.platformUrl));
+              if (altFiltered.length > 0) targetTabId = altFiltered[0].id;
+            }
           }
 
           if (!targetTabId) {
