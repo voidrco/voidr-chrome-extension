@@ -708,6 +708,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             }
           }
 
+          if (!targetTabId && request.targetUrl) {
+            const newTab = await chrome.tabs.create({ url: request.targetUrl, active: true });
+            targetTabId = newTab.id;
+            await new Promise((r) => setTimeout(r, 2000));
+          }
+
           if (!targetTabId) {
             sendResponse({ success: false, error: 'Aba do site-alvo não encontrada. Abra o site e tente novamente.' });
             return;

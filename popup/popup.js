@@ -1,5 +1,30 @@
 let currentView = 'main';
 let onboardingRecordingContext = null;
+let testCaseRecordingContext = null;
+
+function getApiBaseUrl() {
+  const env = (typeof globalThis !== 'undefined' && globalThis.__VOIDR_ENV__) || {};
+  return env.VOIDR_API_BASE_URL || 'https://voidr-service-785568282479.us-central1.run.app/v1';
+}
+
+async function apiGet(endpoint) {
+  const auth = await getAuthStatus();
+  if (!auth.isAuthenticated || !auth.token) {
+    throw new Error('Not authenticated');
+  }
+  const url = `${getApiBaseUrl()}${endpoint}`;
+  const res = await fetch(url, {
+    method: 'GET',
+    headers: {
+      'Authorization': `Bearer ${auth.token}`,
+      'Content-Type': 'application/json',
+    },
+  });
+  if (!res.ok) {
+    throw new Error(`API error: ${res.status} ${res.statusText}`);
+  }
+  return res.json();
+}
 
 document.addEventListener('DOMContentLoaded', async () => {
   chrome.runtime.onMessage.addListener((request) => {
@@ -12,6 +37,13 @@ document.addEventListener('DOMContentLoaded', async () => {
           onboardingRecordingContext = null;
           showMainView();
         }
+      } else if (currentView === 'test-case-recording' && testCaseRecordingContext) {
+        showSessionSummaryView(
+          request.sessionId,
+          testCaseRecordingContext.scenarioName,
+          testCaseRecordingContext.appName,
+        );
+        testCaseRecordingContext = null;
       }
     } else if (request?.action === 'authStateUpdated' && request.authData?.isAuthenticated) {
       initializeExtension();
@@ -129,7 +161,18 @@ function showMainView() {
           ${getIcon('Camera', 28)}
         </div>
         <h2 class="main-title">Session Capture</h2>
-        <p class="main-desc">Capture user sessions for onboarding test generation.</p>
+        <p class="main-desc">Grave sessões para gerar casos de teste ou onboarding.</p>
+      </div>
+
+      <button id="record-session-btn" class="btn-primary btn-block">
+        ${getIcon('Video', 16)}
+        Gravar Sessão
+      </button>
+
+      <div class="separator">
+        <span class="separator-line"></span>
+        <span class="separator-text">ou</span>
+        <span class="separator-line"></span>
       </div>
 
       <div class="code-card">
@@ -143,6 +186,10 @@ function showMainView() {
       </div>
     </div>
   `;
+
+  document.getElementById('record-session-btn')?.addEventListener('click', () => {
+    showSelectProductView();
+  });
 
   const codeInput = document.getElementById('onboarding-code-input');
   const codeBtn = document.getElementById('onboarding-code-btn');
@@ -170,7 +217,265 @@ function showMainView() {
 
   codeBtn?.addEventListener('click', submitCode);
   codeInput?.addEventListener('keydown', (e) => { if (e.key === 'Enter') submitCode(); });
-  codeInput?.focus();
+}
+
+// ── Select Product View ──────────────────────────────────────────────────────
+
+function showSelectProductView() {
+  const contentDiv = document.getElementById('main-extension-content');
+  if (!contentDiv) return;
+  currentView = 'select-product';
+
+  contentDiv.innerHTML = `
+    <div class="select-product-view">
+      <div class="view-header">
+        <button id="back-to-main-btn" class="btn-back">
+          ${getIcon('ChevronLeft', 18)}
+        </button>
+        <div>
+          <h2 class="view-title">Selecionar Produto</h2>
+          <p class="view-desc">Escolha o produto para gravar a sessão.</p>
+        </div>
+      </div>
+      <div id="product-list-container" class="product-list-container">
+        <div class="loading-state">
+          ${getIcon('Loader', 20)}
+          <span>Carregando produtos...</span>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('back-to-main-btn')?.addEventListener('click', () => showMainView());
+
+  loadProducts();
+}
+
+async function loadProducts() {
+  const container = document.getElementById('product-list-container');
+  if (!container) return;
+
+  container.innerHTML = `
+    <div class="loading-state">
+      ${getIcon('Loader', 20)}
+      <span>Carregando produtos...</span>
+    </div>
+  `;
+
+  try {
+    const data = await apiGet('/applications?limit=50');
+    const apps = Array.isArray(data.data) ? data.data : [];
+
+    if (apps.length === 0) {
+      container.innerHTML = `
+        <div class="empty-state">
+          ${getIcon('Layers', 20)}
+          <span>Nenhum produto encontrado.</span>
+        </div>
+      `;
+      return;
+    }
+
+    container.innerHTML = `
+      <div class="product-list">
+        ${apps.map((app) => `
+          <button class="product-item" data-app-id="${escapeHtml(app._id)}" data-app-name="${escapeHtml(app.name)}" data-app-type="${escapeHtml(app.type || '')}">
+            <div class="product-item-info">
+              <span class="product-item-name">${escapeHtml(app.name)}</span>
+              ${app.type ? `<span class="product-item-type">${escapeHtml(app.type)}</span>` : ''}
+            </div>
+            ${getIcon('ChevronRight', 16)}
+          </button>
+        `).join('')}
+      </div>
+    `;
+
+    container.querySelectorAll('.product-item').forEach((item) => {
+      item.addEventListener('click', () => {
+        const app = {
+          _id: item.dataset.appId,
+          name: item.dataset.appName,
+          type: item.dataset.appType,
+        };
+        showRecordingSetupView(app);
+      });
+    });
+  } catch (err) {
+    console.error('[Voidr Popup] loadProducts error:', err);
+    container.innerHTML = `
+      <div class="empty-state">
+        ${getIcon('AlertCircle', 20)}
+        <span>${escapeHtml(err.message || 'Erro ao carregar produtos.')}</span>
+        <button id="retry-products-btn" class="btn-ghost btn-sm" style="margin-top:8px;">Tentar novamente</button>
+      </div>
+    `;
+    document.getElementById('retry-products-btn')?.addEventListener('click', loadProducts);
+  }
+}
+
+// ── Recording Setup View ─────────────────────────────────────────────────────
+
+function showRecordingSetupView(app) {
+  const contentDiv = document.getElementById('main-extension-content');
+  if (!contentDiv) return;
+  currentView = 'recording-setup';
+
+  contentDiv.innerHTML = `
+    <div class="setup-view">
+      <div class="view-header">
+        <button id="back-to-products-btn" class="btn-back">
+          ${getIcon('ChevronLeft', 18)}
+        </button>
+        <div>
+          <h2 class="view-title">Gravar Sessão</h2>
+          <p class="view-desc">${escapeHtml(app.name)}</p>
+        </div>
+      </div>
+
+      <div class="rec-card">
+        <div class="rec-field">
+          <span class="rec-field-label">Produto</span>
+          <span class="rec-field-value">${escapeHtml(app.name)}</span>
+        </div>
+
+        <div class="rec-field">
+          <span class="rec-field-label">Nome do cenário</span>
+          <input type="text" id="scenario-name-input" class="setup-input" placeholder="Ex: Fluxo de checkout" />
+        </div>
+
+        <div id="setup-error" class="code-error"></div>
+
+        <div class="rec-actions">
+          <button id="start-recording-btn" class="btn-primary btn-flex">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="8,5 19,12 8,19"/></svg>
+            Iniciar gravação
+          </button>
+          <button id="back-setup-btn" class="btn-ghost">Voltar</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('back-to-products-btn')?.addEventListener('click', () => showSelectProductView());
+  document.getElementById('back-setup-btn')?.addEventListener('click', () => showSelectProductView());
+  document.getElementById('scenario-name-input')?.focus();
+
+  document.getElementById('start-recording-btn')?.addEventListener('click', () => {
+    handleStartTestCaseRecording(app);
+  });
+
+  document.getElementById('scenario-name-input')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') handleStartTestCaseRecording(app);
+  });
+}
+
+async function handleStartTestCaseRecording(app) {
+  const nameInput = document.getElementById('scenario-name-input');
+  const scenarioName = (nameInput?.value || '').trim();
+  const errorDiv = document.getElementById('setup-error');
+  const btn = document.getElementById('start-recording-btn');
+
+  if (!scenarioName) {
+    if (errorDiv) {
+      errorDiv.textContent = 'Informe o nome do cenário.';
+      errorDiv.style.display = 'block';
+    }
+    nameInput?.focus();
+    return;
+  }
+
+  if (errorDiv) { errorDiv.style.display = 'none'; }
+  if (btn) { btn.textContent = 'Iniciando...'; btn.disabled = true; }
+
+  let apiKey = null;
+  try {
+    const configData = await apiGet('/customer-configs');
+    apiKey = configData?.data?.apiKey || configData?.apiKey || null;
+  } catch (_) {}
+
+  if (!apiKey) {
+    if (errorDiv) {
+      errorDiv.textContent = 'API Key não encontrada. Verifique as configurações do produto.';
+      errorDiv.style.display = 'block';
+    }
+    if (btn) { btn.textContent = 'Iniciar gravação'; btn.disabled = false; }
+    return;
+  }
+
+  testCaseRecordingContext = {
+    appId: app._id,
+    appName: app.name,
+    scenarioName,
+    apiKey,
+  };
+
+  currentView = 'test-case-recording';
+
+  chrome.runtime.sendMessage(
+    {
+      action: 'voidr:forwardToTargetTab',
+      payload: {
+        action: 'voidr:startSessionRecording',
+        testCaseName: scenarioName,
+        mode: 'test-case',
+        slug: app._id,
+        applicationId: app._id,
+        apiKey,
+      },
+    },
+    (response) => {
+      if (!response?.success) {
+        const msg = response?.error || 'Abra a aba do site-alvo e tente novamente.';
+        showNotification('Could not start: ' + msg, 'error', 4000);
+        if (btn) { btn.textContent = 'Iniciar gravação'; btn.disabled = false; }
+        currentView = 'recording-setup';
+        testCaseRecordingContext = null;
+        return;
+      }
+      window.close();
+    },
+  );
+}
+
+// ── Session Summary View ─────────────────────────────────────────────────────
+
+function showSessionSummaryView(sessionId, scenarioName, appName) {
+  const contentDiv = document.getElementById('main-extension-content');
+  if (!contentDiv) return;
+  currentView = 'session-summary';
+
+  const shortId = sessionId ? sessionId.slice(-12) : '—';
+
+  contentDiv.innerHTML = `
+    <div class="summary-view">
+      <div class="summary-icon-wrap">
+        ${getIcon('CheckCircle2', 36)}
+      </div>
+      <h2 class="summary-title">Sessão capturada</h2>
+      <p class="summary-desc">A gravação foi concluída com sucesso.</p>
+
+      <div class="summary-card">
+        <div class="summary-field">
+          <span class="rec-field-label">Cenário</span>
+          <span class="rec-field-value">${escapeHtml(scenarioName || 'Sem nome')}</span>
+        </div>
+        <div class="summary-field">
+          <span class="rec-field-label">Produto</span>
+          <span class="summary-field-text">${escapeHtml(appName || '—')}</span>
+        </div>
+        <div class="summary-field">
+          <span class="rec-field-label">Session ID</span>
+          <span class="summary-field-mono">${escapeHtml(shortId)}</span>
+        </div>
+      </div>
+
+      <button id="summary-done-btn" class="btn-primary btn-block">
+        Concluir
+      </button>
+    </div>
+  `;
+
+  document.getElementById('summary-done-btn')?.addEventListener('click', () => showMainView());
 }
 
 // ── Onboarding Recording View ────────────────────────────────────────────────
@@ -266,6 +571,7 @@ async function handleStartOnboardingRecording() {
     {
       action: 'voidr:forwardToTargetTab',
       targetHost,
+      targetUrl: onboardingRecordingContext.targetUrl,
       payload: {
         action: 'voidr:startSessionRecording',
         testCaseName: onboardingRecordingContext.sessionName || 'Onboarding Session',
