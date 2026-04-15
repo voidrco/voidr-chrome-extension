@@ -1,5 +1,6 @@
 import { record } from 'rrweb';
 import { state } from '../state.js';
+import { syncScreenMap } from '../transport.js';
 
 /**
  * Capture SPA route changes via pushState, replaceState, popstate, and hashchange.
@@ -25,6 +26,7 @@ export function initRoutingCapture() {
             },
           },
         });
+        if (state.elementMapper) state.elementMapper.onPageView(url, title);
       } catch (_) { }
     };
 
@@ -53,6 +55,12 @@ export function initRoutingCapture() {
           },
         });
       }, 50);
+
+      // Notify element mapper of navigation
+      if (state.elementMapper) state.elementMapper.onPageView(current, document.title || '');
+
+      // Sync screen map after scan discovers new page elements
+      setTimeout(() => syncScreenMap(), 2000);
 
       // Custom rrweb event to indicate route change
       try {

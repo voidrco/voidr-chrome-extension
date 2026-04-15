@@ -15,6 +15,7 @@ export const state = {
   forceStop: false,
   isPaused: false,
   eventsInterval: null,
+  screenMapInterval: null,
   originalFetch: null,
   originalXHR: null,
   isInitialized: false,
@@ -39,6 +40,7 @@ export function resetState() {
   state.forceStop = true;
   state.isPaused = false;
   state.eventsInterval = null;
+  state.screenMapInterval = null;
   state.originalFetch = null;
   state.originalXHR = null;
   state.isInitialized = false;
