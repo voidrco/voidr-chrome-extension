@@ -144,6 +144,7 @@ function sendCollectorInit(init) {
         mode: init.mode,
         slug: init.slug,
         onboardingRunId: init.onboardingRunId || undefined,
+        flows: init.flows || undefined,
       },
     };
     if (init.applicationId) initOptions.applicationId = init.applicationId;
@@ -183,8 +184,8 @@ async function startVoidrSessionRecording(testCaseName, options = {}) {
     // Recording panel
     const recFlows = options.flows || [];
     const recFlowsHtml = recFlows.length
-      ? `<div style="display:flex;gap:4px;align-items:center;margin-left:8px;padding-left:8px;border-left:1px solid rgba(255,255,255,.1);">${recFlows.map((f, i) =>
-          `<span style="display:inline-flex;align-items:center;gap:3px;padding:2px 6px;border-radius:4px;background:rgba(255,255,255,.06);font-size:10px;color:rgba(255,255,255,.5);white-space:nowrap;"><span style="color:rgba(255,255,255,.3);">${i + 1}.</span> ${escapeHtml(f.name || f.id)}</span>`
+      ? `<div class="voidr-rec-flows">${recFlows.map((f, i) =>
+          `<span class="voidr-rec-flow-chip"><span class="voidr-rec-flow-num">${i + 1}.</span> ${escapeHtml(f.name || f.id)}</span>`
         ).join('')}</div>`
       : '';
 
@@ -195,7 +196,6 @@ async function startVoidrSessionRecording(testCaseName, options = {}) {
         <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" fill="#ef4444"><circle cx="12" cy="12" r="6" /></svg>
       </div>
       <div class="voidr-rec-title">Recording session for &quot;${escapeHtml(effectiveName)}&quot;</div>
-      ${recFlowsHtml}
       <div class="voidr-rec-actions">
         <button class="voidr-rec-btn" id="voidr-rec-rollback">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -210,6 +210,7 @@ async function startVoidrSessionRecording(testCaseName, options = {}) {
           Stop
         </button>
       </div>
+      ${recFlowsHtml}
     `;
     document.documentElement.appendChild(panel);
 
@@ -218,7 +219,7 @@ async function startVoidrSessionRecording(testCaseName, options = {}) {
       const inlineApiKey = options.apiKey;
       const applicationId = options.applicationId || slug;
       const onboardingRunId = options.onboardingRunId;
-      sendCollectorInit({ mode, slug, userId, effectiveName, apiKey: inlineApiKey, applicationId, onboardingRunId });
+      sendCollectorInit({ mode, slug, userId, effectiveName, apiKey: inlineApiKey, applicationId, onboardingRunId, flows: options.flows });
     }
 
     // Handlers
@@ -237,6 +238,7 @@ async function startVoidrSessionRecording(testCaseName, options = {}) {
 
       const activeRunId = options.onboardingRunId || undefined;
       let sessionId = null;
+      let allSessionIds = [];
 
       try {
         const result = await Promise.race([
@@ -248,32 +250,36 @@ async function startVoidrSessionRecording(testCaseName, options = {}) {
           new Promise((resolve) => setTimeout(() => resolve({ success: false, timeout: true }), 5000)),
         ]);
         sessionId = result.sessionId || null;
+        allSessionIds = result.sessionIds || (sessionId ? [sessionId] : []);
       } catch (_) {}
 
-      if (sessionId && stopBtn) {
+      if (allSessionIds.length > 0 && stopBtn) {
         stopBtn.innerHTML = `${spinnerSvg} Validando sessão...`;
 
-        let validated = false;
+        // Validate the latest session (most recent, needs time to reach the collector)
+        const latestSid = sessionId || allSessionIds[allSessionIds.length - 1];
         for (let attempt = 0; attempt < 5; attempt++) {
           try {
             const res = await new Promise((resolve) => {
-              chrome.runtime.sendMessage({ action: 'voidr:validateSession', sessionId }, (r) => {
+              chrome.runtime.sendMessage({ action: 'voidr:validateSession', sessionId: latestSid }, (r) => {
                 resolve(r || { found: false });
               });
             });
-            if (res.found) { validated = true; break; }
+            if (res.found) break;
           } catch (_) {}
           await new Promise((r) => setTimeout(r, 2000));
         }
 
-        broadcastSessionToOnboarding(sessionId, activeRunId);
-        lastCapturedSessionId = sessionId;
+        for (const sid of allSessionIds) {
+          broadcastSessionToOnboarding(sid, activeRunId);
+        }
+        lastCapturedSessionId = latestSid;
       }
 
       border.remove();
       panel.remove();
       document.querySelectorAll('.voidr-rec-countdown').forEach((n) => n.remove());
-      showOnboardingDoneBanner();
+      showOnboardingDoneBanner(mode);
     });
   } catch (e) {
     console.error('Voidr session recording error:', e);
@@ -282,13 +288,16 @@ async function startVoidrSessionRecording(testCaseName, options = {}) {
 
 // ── Onboarding banners ───────────────────────────────────────────────────────
 
-function showOnboardingDoneBanner() {
+function showOnboardingDoneBanner(mode) {
   document.querySelectorAll('.voidr-onb-done').forEach((n) => n.remove());
   const banner = document.createElement('div');
   banner.className = 'voidr-onb-done';
+  const message = mode === 'onboarding'
+    ? 'Sessão capturada com sucesso — pode fechar esta aba e voltar ao onboarding.'
+    : 'Sessão capturada com sucesso — pode fechar esta aba e voltar à extensão.';
   banner.innerHTML = `
     <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#86efac" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9 12l2 2 4-4"/></svg>
-    Sessão capturada com sucesso — pode fechar esta aba e voltar ao onboarding.
+    ${message}
   `;
   document.documentElement.appendChild(banner);
   setTimeout(() => { if (banner.parentNode) banner.remove(); }, 15000);

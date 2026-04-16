@@ -55,6 +55,8 @@ let lastActiveContentTabId = null;
 
 // Active recording state — survives page navigations within the recorded tab
 let activeRecording = null;
+// Guard against race condition: if onUpdated fires before sessionStopped is dequeued
+let lastStoppedAt = 0;
 
 // Helpers to persist assistant window id across service worker restarts
 async function getStoredAssistantWindowId() {
@@ -364,6 +366,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             mode: request.initOptions?.meta?.mode || 'test-case',
             onboardingRunId: request.initOptions?.meta?.onboardingRunId,
             flows: request.initOptions?.meta?.flows || [],
+            sessionIds: sessionId ? [sessionId] : [],
           };
 
           sendResponse({ success: true });
@@ -746,8 +749,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       return true;
 
     case 'voidr:sessionStopped':
+      lastStoppedAt = Date.now();
+      const priorSessionIds = activeRecording?.sessionIds || [];
       activeRecording = null;
-      // On stop, try to retrieve the current sessionId from the page and broadcast it
+      // On stop, try to retrieve the current sessionId from the page and broadcast all accumulated sessions
       (async () => {
         try {
           let targetTabId = sender?.tab?.id || lastActiveContentTabId;
@@ -790,37 +795,41 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           const sessionId = (res && res[0] && res[0].result) || null;
           const activeRunId = request.onboardingRunId || null;
 
-          const capturedPayload = { action: 'voidr:sessionCaptured', sessionId, onboardingRunId: activeRunId };
-          try {
-            chrome.runtime.sendMessage(capturedPayload);
-          } catch (_) {}
+          // Merge current sessionId with all previously accumulated ones
+          const allSessionIds = [...new Set([...priorSessionIds, sessionId].filter(Boolean))];
 
-          // Relay to all content scripts via chrome.tabs.sendMessage (cross-origin safe)
-          try {
-            const allTabs = await chrome.tabs.query({ url: ['http://*/*', 'https://*/*'] });
-            for (const t of allTabs) {
-              chrome.tabs.sendMessage(t.id, capturedPayload).catch(() => {});
-            }
-          } catch (_) {}
+          // Broadcast voidr:sessionCaptured for EACH accumulated sessionId
+          for (const sid of allSessionIds) {
+            const capturedPayload = { action: 'voidr:sessionCaptured', sessionId: sid, onboardingRunId: activeRunId };
+            try {
+              chrome.runtime.sendMessage(capturedPayload);
+            } catch (_) {}
 
-          // Relay via BroadcastChannel in platform tab's MAIN world (origin-correct)
-          try {
-            const platformTabs = await chrome.tabs.query({ url: `${API_CONFIG.platformUrl}/*` });
-            for (const pt of platformTabs) {
-              chrome.scripting.executeScript({
-                target: { tabId: pt.id },
-                world: 'MAIN',
-                func: (payload) => {
-                  try {
-                    const bc = new BroadcastChannel('voidr-onboarding');
-                    bc.postMessage(payload);
-                    bc.close();
-                  } catch (_) {}
-                },
-                args: [{ type: 'voidr:sessionCaptured', sessionId: capturedPayload.sessionId, onboardingRunId: capturedPayload.onboardingRunId }],
-              }).catch(() => {});
-            }
-          } catch (_) {}
+            try {
+              const allTabs = await chrome.tabs.query({ url: ['http://*/*', 'https://*/*'] });
+              for (const t of allTabs) {
+                chrome.tabs.sendMessage(t.id, capturedPayload).catch(() => {});
+              }
+            } catch (_) {}
+
+            try {
+              const platformTabs = await chrome.tabs.query({ url: `${API_CONFIG.platformUrl}/*` });
+              for (const pt of platformTabs) {
+                chrome.scripting.executeScript({
+                  target: { tabId: pt.id },
+                  world: 'MAIN',
+                  func: (payload) => {
+                    try {
+                      const bc = new BroadcastChannel('voidr-onboarding');
+                      bc.postMessage(payload);
+                      bc.close();
+                    } catch (_) {}
+                  },
+                  args: [{ type: 'voidr:sessionCaptured', sessionId: sid, onboardingRunId: activeRunId }],
+                }).catch(() => {});
+              }
+            } catch (_) {}
+          }
 
           // After broadcasting, request the collector to end the session
           try {
@@ -837,7 +846,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             });
           } catch (_) {}
 
-          sendResponse({ success: true, sessionId });
+          sendResponse({ success: true, sessionId, sessionIds: allSessionIds });
         } catch (e) {
           sendResponse({
             success: false,
@@ -982,7 +991,8 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
     activeRecording &&
     tabId === activeRecording.tabId &&
     tab.url && /^https?:/i.test(tab.url) &&
-    (!activeRecording.targetOrigin || tab.url.startsWith(activeRecording.targetOrigin))
+    (!activeRecording.targetOrigin || tab.url.startsWith(activeRecording.targetOrigin)) &&
+    Date.now() - lastStoppedAt > 2000
   ) {
     try {
       const cdnUrl =
@@ -1008,7 +1018,24 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
           mode: activeRecording.mode,
           onboardingRunId: activeRecording.onboardingRunId,
           flows: activeRecording.flows,
+          applicationId: activeRecording.initOptions?.applicationId || null,
         }).catch(() => {});
+
+        // Capture the new sessionId after init() completes (~3s for async auth + sleep(2000))
+        const captureTabId = tabId;
+        setTimeout(async () => {
+          try {
+            const sidRes = await chrome.scripting.executeScript({
+              target: { tabId: captureTabId },
+              world: 'MAIN',
+              func: () => { try { return window.VoidrCollector?.getSessionId?.() || null; } catch (_) { return null; } },
+            });
+            const newSid = sidRes?.[0]?.result || null;
+            if (newSid && activeRecording && !activeRecording.sessionIds.includes(newSid)) {
+              activeRecording.sessionIds.push(newSid);
+            }
+          } catch (_) {}
+        }, 3500);
       }
     } catch (_) {}
   }
