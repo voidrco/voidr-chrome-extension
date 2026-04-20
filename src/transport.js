@@ -184,6 +184,106 @@ export async function flushEvents() {
 }
 
 /**
+ * Sync the screen map to the dedicated /screen-map/sync endpoint.
+ * Only sends if the ElementMapper has new data since last sync (dirty flag).
+ * Failures are non-fatal — recording continues normally.
+ */
+export async function syncScreenMap() {
+  if (!state.elementMapper || state.forceStop) return;
+  if (!state.elementMapper.isDirty()) return;
+
+  const snapshot = state.elementMapper.getSnapshot();
+  if (!snapshot.screens.length) return;
+
+  try {
+    const payload = safeStringify({
+      sessionId: state.sessionId,
+      applicationId: state.config.applicationId,
+      environment: state.config.environment,
+      screens: snapshot.screens,
+    });
+
+    const compressed = gzip(payload);
+
+    let res = await fetch(`${state.config.collectorUrl}/screen-map/sync`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Encoding': 'gzip',
+        ...(state.authToken ? { Authorization: `Bearer ${state.authToken}` } : {}),
+      },
+      body: compressed,
+    });
+
+    // Handle 401 - refresh token and retry
+    if (res.status === 401) {
+      const refreshResponse = await fetch(`${state.config.collectorUrl}/refresh-token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: safeStringify({ apiKey: state.config.apiKey }),
+      });
+      if (refreshResponse.ok) {
+        const data = await refreshResponse.json().catch(() => ({}));
+        state.authToken = data.token || null;
+        if (state.authToken) {
+          sessionStorage.setItem('voidr_jwt', state.authToken);
+          res = await fetch(`${state.config.collectorUrl}/screen-map/sync`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Content-Encoding': 'gzip',
+              Authorization: `Bearer ${state.authToken}`,
+            },
+            body: compressed,
+          });
+        }
+      }
+    }
+
+    if (res.ok || res.status === 204) {
+      state.elementMapper.clearDirty();
+    }
+  } catch {
+    // Non-fatal — next sync will carry all data
+  }
+}
+
+/**
+ * Sync screen map during beforeunload using sendBeacon (reliable) or sync XHR (fallback).
+ * sendBeacon doesn't support custom headers, so we send uncompressed JSON.
+ */
+export function syncScreenMapBeacon() {
+  if (!state.elementMapper || state.forceStop) return;
+
+  const snapshot = state.elementMapper.getSnapshot();
+  if (!snapshot.screens.length) return;
+
+  const payload = safeStringify({
+    sessionId: state.sessionId,
+    applicationId: state.config.applicationId,
+    environment: state.config.environment,
+    screens: snapshot.screens,
+  });
+
+  const url = `${state.config.collectorUrl}/screen-map/sync`;
+
+  // sendBeacon with Blob (supports Content-Type but not Authorization)
+  // Server must accept unauthenticated beacon OR we fall back to sync XHR
+  try {
+    const XHRConstructor = state.originalXHR || XMLHttpRequest;
+    const xhr = new XHRConstructor();
+    xhr.open('POST', url, false);
+    xhr.setRequestHeader('Content-Type', 'application/json');
+    if (state.authToken) {
+      xhr.setRequestHeader('Authorization', `Bearer ${state.authToken}`);
+    }
+    xhr.send(payload);
+  } catch {
+    // Best-effort
+  }
+}
+
+/**
  * Handle the beforeunload event: flush ALL remaining events.
  * No minimum batch size — sends everything that's buffered.
  * Uses synchronous XMLHttpRequest for reliable delivery during unload.

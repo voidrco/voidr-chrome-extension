@@ -2,8 +2,16 @@ import { VOIDR_VERSION, isAutomationEnvironment } from './constants.js';
 import { state, resetState } from './state.js';
 import { sleep, safeStringify } from './utils/helpers.js';
 import { initUser, initSession, authenticateSession } from './session.js';
-import { sendEvents, sendNetworkEvents, handleUnload, flushEvents } from './transport.js';
+import {
+  sendEvents,
+  sendNetworkEvents,
+  handleUnload,
+  flushEvents,
+  syncScreenMap,
+  syncScreenMapBeacon,
+} from './transport.js';
 import { startRecording, startRrwebOnly } from './recording.js';
+import { ElementMapper } from './element-mapper.js';
 
 /**
  * Create the VoidrCollector public API object.
@@ -102,6 +110,10 @@ export function createCollector() {
       // Start recording
       startRecording();
 
+      // Start element mapper (client-side screen map builder)
+      state.elementMapper = new ElementMapper();
+      state.elementMapper.start();
+
       await sleep(2000);
 
       // If paused during the sleep (SSE arrived), don't start sending
@@ -121,7 +133,13 @@ export function createCollector() {
       // Set up periodic sending
       startSendInterval();
 
-      window.addEventListener('beforeunload', () => handleUnload());
+      // Set up periodic screen map sync (dedicated endpoint, aligned with scan interval)
+      state.screenMapInterval = setInterval(() => syncScreenMap(), 3000);
+
+      window.addEventListener('beforeunload', () => {
+        handleUnload();
+        syncScreenMapBeacon();
+      });
 
       console.log(`VoidrCollector v${VOIDR_VERSION} - Initialized successfully`);
     },
@@ -223,6 +241,18 @@ export function createCollector() {
         state.eventsInterval = null;
       }
 
+      // Clear screen map sync interval
+      if (state.screenMapInterval) {
+        clearInterval(state.screenMapInterval);
+        state.screenMapInterval = null;
+      }
+
+      // Stop element mapper
+      if (state.elementMapper) {
+        state.elementMapper.stop();
+        state.elementMapper = null;
+      }
+
       // Stop MutationObserver if active
       if (state.observer && typeof state.observer.disconnect === 'function') {
         state.observer.disconnect();
@@ -287,13 +317,11 @@ export function createCollector() {
       if (!state.isInitialized || state.isPaused) return;
       state.isPaused = true;
 
-      // Stop rrweb recording immediately
       if (state.stopRecording && typeof state.stopRecording === 'function') {
         state.stopRecording();
         state.stopRecording = null;
       }
 
-      // Clear send interval
       if (state.eventsInterval) {
         clearInterval(state.eventsInterval);
         state.eventsInterval = null;
@@ -311,13 +339,18 @@ export function createCollector() {
       if (!state.isInitialized || !state.isPaused) return;
       state.isPaused = false;
 
-      // Restart rrweb recording only (generates new FullSnapshot, no duplicate listeners)
       startRrwebOnly();
-
-      // Restart periodic sending
       startSendInterval();
 
       console.log('VoidrCollector: Recording resumed');
+    },
+
+    /**
+     * Get the current screen map snapshot from the ElementMapper.
+     * @returns {object|null} The screen map or null if not initialized
+     */
+    getScreenMap() {
+      return state.elementMapper?.getSnapshot() || null;
     },
   };
 }

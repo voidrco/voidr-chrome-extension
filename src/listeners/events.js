@@ -48,6 +48,8 @@ export function initEventListeners() {
         },
       },
     });
+
+    if (state.elementMapper) state.elementMapper.onInteraction(target, 'input');
   });
 
   // Change events
@@ -68,6 +70,8 @@ export function initEventListeners() {
         },
       },
     });
+
+    if (state.elementMapper) state.elementMapper.onInteraction(target, 'change');
   });
 
   // Click events
@@ -91,6 +95,8 @@ export function initEventListeners() {
         },
       },
     });
+
+    if (state.elementMapper) state.elementMapper.onInteraction(target, 'click');
   });
 
   // Scroll events (throttled)
