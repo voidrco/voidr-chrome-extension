@@ -279,7 +279,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
           // Fetch official collector from CDN (cache-busted)
           const cdnUrl =
-            'http://localhost:8889/dist/recorder.min.js?v=' + Date.now();
+            'https://cdn.voidr.co/voidr-collector/default/latest/recorder.min.js?v=' + Date.now();
+          // const cdnUrl =
+          //   'http://localhost:8889/dist/recorder.min.js?v=' + Date.now();
           const res = await fetch(cdnUrl);
           if (!res.ok) throw new Error(`Failed to fetch collector: ${res.status}`);
           const code = await res.text();
@@ -1028,8 +1030,9 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
     Date.now() - lastStoppedAt > 2000
   ) {
     try {
+      // const cdnUrl = 'http://localhost:8889/dist/recorder.min.js?v=' + Date.now();
       const cdnUrl =
-        'http://localhost:8889/dist/recorder.min.js?v=' + Date.now();
+        'https://cdn.voidr.co/voidr-collector/default/latest/recorder.min.js?v=' + Date.now();
       const res = await fetch(cdnUrl);
       if (res.ok) {
         const code = await res.text();
