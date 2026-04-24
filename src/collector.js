@@ -18,10 +18,45 @@ import { ElementMapper } from './element-mapper.js';
  */
 export function createCollector() {
   function startSendInterval() {
+    if (state.eventsInterval) {
+      clearInterval(state.eventsInterval);
+    }
     state.eventsInterval = setInterval(() => {
       sendEvents();
       sendNetworkEvents();
     }, 7000);
+  }
+
+  function unregisterLifecycleHandlers() {
+    if (typeof window === 'undefined') return;
+
+    if (state.beforeUnloadHandler) {
+      window.removeEventListener('beforeunload', state.beforeUnloadHandler);
+      state.beforeUnloadHandler = null;
+    }
+
+    if (state.pageHideHandler) {
+      window.removeEventListener('pagehide', state.pageHideHandler);
+      state.pageHideHandler = null;
+    }
+  }
+
+  function registerLifecycleHandlers() {
+    if (typeof window === 'undefined') return;
+
+    unregisterLifecycleHandlers();
+
+    state.beforeUnloadHandler = () => {
+      handleUnload();
+      syncScreenMapBeacon();
+    };
+    state.pageHideHandler = () => {
+      handleUnload();
+      syncScreenMapBeacon();
+    };
+
+    window.addEventListener('beforeunload', state.beforeUnloadHandler);
+    window.addEventListener('pagehide', state.pageHideHandler);
   }
 
   return {
@@ -35,6 +70,7 @@ export function createCollector() {
      * @param {string} [options.environment] - Environment, e.g. "production", "staging" (optional)
      * @param {Object} [options.user] - User data
      * @param {string} [options.collectorUrl] - Alternative collector URL
+     * @param {string} [options.forcedSessionId] - Session ID forced by the extension
      * @param {Object} [options.dataMasking] - Masking configuration
      * @param {number} [options.sessionTimeout] - Session timeout in minutes
      * @param {boolean} [options.system=false] - Flag for system/automation context
@@ -124,7 +160,7 @@ export function createCollector() {
           state.stopRecording = null;
         }
         console.log(`VoidrCollector v${VOIDR_VERSION} - Initialized (paused)`);
-        window.addEventListener('beforeunload', () => handleUnload());
+        registerLifecycleHandlers();
         return;
       }
 
@@ -133,13 +169,10 @@ export function createCollector() {
       // Set up periodic sending
       startSendInterval();
 
-      // Set up periodic screen map sync (dedicated endpoint, aligned with scan interval)
-      state.screenMapInterval = setInterval(() => syncScreenMap(), 3000);
+      // Set up periodic screen map sync (dedicated endpoint, aligned with chunk send interval)
+      state.screenMapInterval = setInterval(() => syncScreenMap(), 7000);
 
-      window.addEventListener('beforeunload', () => {
-        handleUnload();
-        syncScreenMapBeacon();
-      });
+      registerLifecycleHandlers();
 
       console.log(`VoidrCollector v${VOIDR_VERSION} - Initialized successfully`);
     },
@@ -247,6 +280,8 @@ export function createCollector() {
         state.screenMapInterval = null;
       }
 
+      unregisterLifecycleHandlers();
+
       // Stop element mapper
       if (state.elementMapper) {
         state.elementMapper.stop();
@@ -341,6 +376,12 @@ export function createCollector() {
 
       startRrwebOnly();
       startSendInterval();
+      if (!state.screenMapInterval) {
+        state.screenMapInterval = setInterval(() => syncScreenMap(), 7000);
+      }
+      registerLifecycleHandlers();
+      sendEvents();
+      sendNetworkEvents();
 
       console.log('VoidrCollector: Recording resumed');
     },

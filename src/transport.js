@@ -107,12 +107,6 @@ export async function sendEvents() {
     }
   } catch (error) {
     console.error('VoidrCollector: Failed to send events', error);
-    state.stopRecording();
-    state.forceStop = true;
-    sessionStorage.removeItem('voidr_session_id');
-    sessionStorage.removeItem('voidr_user_id');
-    sessionStorage.removeItem('voidr_jwt');
-    clearInterval(state.eventsInterval);
     state.events.unshift(...batch);
   } finally {
     state.isSending = false;

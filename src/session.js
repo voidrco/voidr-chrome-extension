@@ -13,13 +13,20 @@ export function initUser() {
  * Creates a new session if none exists or the previous one has expired.
  */
 export function initSession() {
-  state.sessionId = sessionStorage.getItem('voidr_session_id');
+  const forcedSessionId =
+    typeof state.config.forcedSessionId === 'string' && state.config.forcedSessionId.trim()
+      ? state.config.forcedSessionId.trim()
+      : null;
+  state.sessionId = forcedSessionId || sessionStorage.getItem('voidr_session_id');
   const lastActivity = sessionStorage.getItem('voidr_last_activity');
   const sessionExpired = lastActivity
     ? Date.now() - parseInt(lastActivity) > state.config.sessionTimeout * 60 * 1000
     : true;
 
-  if (!state.sessionId || sessionExpired) {
+  if (forcedSessionId) {
+    state.sessionId = forcedSessionId;
+    sessionStorage.setItem('voidr_session_id', state.sessionId);
+  } else if (!state.sessionId || sessionExpired) {
     state.sessionId = state.sessionStartedAt.toString();
     sessionStorage.setItem('voidr_session_id', state.sessionId);
   }
@@ -43,8 +50,6 @@ export async function authenticateSession() {
   }
 
   sessionStorage.removeItem('voidr_jwt');
-  sessionStorage.removeItem('voidr_session_id');
-  sessionStorage.removeItem('voidr_user_id');
 
   const initPayload = {
     apiKey: state.config.apiKey,
@@ -86,6 +91,9 @@ export async function authenticateSession() {
 
   const data = await response.json().catch(() => ({}));
   state.authToken = data.token || null;
+  if (typeof data.sessionId === 'string' && data.sessionId.trim()) {
+    state.sessionId = data.sessionId.trim();
+  }
   if (!state.authToken) {
     console.error('VoidrCollector: Failed to get authentication token');
     return false;
@@ -94,6 +102,7 @@ export async function authenticateSession() {
   // Persist JWT for reuse on re-init
   try {
     sessionStorage.setItem('voidr_jwt', state.authToken);
+    sessionStorage.setItem('voidr_session_id', state.sessionId);
     if (state.userId) {
       sessionStorage.setItem('voidr_user_id', state.userId);
     }

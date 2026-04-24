@@ -1,4 +1,4 @@
-export const VOIDR_VERSION = '1.8.2';
+export const VOIDR_VERSION = '1.14.1';
 
 // Default configuration for the collector
 export const DEFAULT_CONFIG = {
@@ -6,6 +6,7 @@ export const DEFAULT_CONFIG = {
   applicationId: null,
   environment: null,
   collectorUrl: __VOIDR_COLLECTOR_URL__,
+  forcedSessionId: null,
   sessionTimeout: 30, // minutes
   system: false,
   skipRecording: false,

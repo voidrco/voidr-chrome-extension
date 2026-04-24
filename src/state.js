@@ -19,6 +19,8 @@ export const state = {
   originalFetch: null,
   originalXHR: null,
   isInitialized: false,
+  beforeUnloadHandler: null,
+  pageHideHandler: null,
 };
 
 /**
@@ -44,4 +46,6 @@ export function resetState() {
   state.originalFetch = null;
   state.originalXHR = null;
   state.isInitialized = false;
+  state.beforeUnloadHandler = null;
+  state.pageHideHandler = null;
 }
