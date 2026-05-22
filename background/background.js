@@ -275,33 +275,80 @@ async function fetchCollectorCode() {
 }
 
 async function injectCollectorInTab(tabId, collectorCode) {
-  await chrome.scripting.executeScript({
-    target: { tabId },
-    world: 'MAIN',
-    func: (code) => {
-      try {
-        (0, eval)(code);
-      } catch (e) {
-        console.error('[Voidr] Collector eval error', e);
-      }
-    },
-    args: [collectorCode],
-  });
+  const tag = `[Voidr DEBUG] injectCollectorInTab tab=${tabId}`;
+  console.log(tag, 'starting, code length=', collectorCode?.length || 0);
+  let result;
+  try {
+    result = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      func: (code) => {
+        const evalDiag = { ok: false, error: null, hasCollector: false };
+        try {
+          (0, eval)(code);
+          evalDiag.ok = true;
+          evalDiag.hasCollector = typeof window.VoidrCollector !== 'undefined';
+        } catch (e) {
+          evalDiag.error = (e && (e.message || String(e))) || 'unknown';
+          console.error('[Voidr] Collector eval error', e);
+        }
+        return evalDiag;
+      },
+      args: [collectorCode],
+    });
+  } catch (e) {
+    console.error(tag, 'executeScript threw', e?.message || e);
+    throw e;
+  }
+  const diag = result?.[0]?.result;
+  console.log(tag, 'eval result', diag);
+  if (diag && !diag.ok) {
+    console.warn(tag, 'EVAL FAILED — page CSP likely blocks eval. error:', diag.error);
+  } else if (diag && !diag.hasCollector) {
+    console.warn(tag, 'eval ok but window.VoidrCollector missing after exec');
+  }
+  return diag;
 }
 
 async function initializeCollectorInTab(tabId, initOptions) {
-  await chrome.scripting.executeScript({
-    target: { tabId },
-    world: 'MAIN',
-    func: (opts) => {
-      try {
-        window.VoidrCollector?.init?.(opts);
-      } catch (e) {
-        console.error('[Voidr] Collector init error', e);
-      }
-    },
-    args: [initOptions],
-  });
+  const tag = `[Voidr DEBUG] initializeCollectorInTab tab=${tabId}`;
+  console.log(tag, 'starting');
+  let result;
+  try {
+    result = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      func: (opts) => {
+        const diag = { initCalled: false, error: null, sessionIdAfterInit: null };
+        try {
+          if (typeof window.VoidrCollector === 'undefined') {
+            diag.error = 'VoidrCollector is not defined on window';
+            return diag;
+          }
+          if (typeof window.VoidrCollector.init !== 'function') {
+            diag.error = 'VoidrCollector.init is not a function';
+            return diag;
+          }
+          window.VoidrCollector.init(opts);
+          diag.initCalled = true;
+          try {
+            diag.sessionIdAfterInit = window.VoidrCollector.getSessionId?.() || null;
+          } catch (_) {}
+        } catch (e) {
+          diag.error = (e && (e.message || String(e))) || 'unknown';
+          console.error('[Voidr] Collector init error', e);
+        }
+        return diag;
+      },
+      args: [initOptions],
+    });
+  } catch (e) {
+    console.error(tag, 'executeScript threw', e?.message || e);
+    throw e;
+  }
+  const diag = result?.[0]?.result;
+  console.log(tag, 'init result', diag);
+  return diag;
 }
 
 async function readCollectorSessionId(tabId) {
@@ -348,19 +395,38 @@ async function sendResumeRecordingUi(tabId, recording) {
 }
 
 async function resumeActiveRecordingInTab(tabId) {
+  const tag = `[Voidr DEBUG] resumeActiveRecordingInTab tab=${tabId}`;
   const recording = await hydrateActiveRecording();
-  if (!recording) return false;
+  if (!recording) {
+    console.log(tag, 'no active recording, skipping');
+    return false;
+  }
 
   const tab = await chrome.tabs.get(tabId).catch(() => null);
-  if (!tab?.url || !isHttpUrl(tab.url)) return false;
+  if (!tab?.url || !isHttpUrl(tab.url)) {
+    console.log(tag, 'tab has no http(s) url, skipping. url=', tab?.url);
+    return false;
+  }
 
-  const collectorCode = await fetchCollectorCode();
-  await injectCollectorInTab(tabId, collectorCode);
-  await initializeCollectorInTab(tabId, recording.initOptions);
+  console.log(tag, 'resuming on url=', tab.url, 'canonicalSessionId=', recording.canonicalSessionId);
+
+  let collectorCode;
+  try {
+    collectorCode = await fetchCollectorCode();
+    console.log(tag, 'collector code fetched, length=', collectorCode?.length || 0);
+  } catch (e) {
+    console.error(tag, 'fetchCollectorCode failed', e?.message || e);
+    throw e;
+  }
+
+  const injectDiag = await injectCollectorInTab(tabId, collectorCode);
+  const initDiag = await initializeCollectorInTab(tabId, recording.initOptions);
   await attachTrackedRecordingTab(tabId, { makeCurrent: true });
   await sendResumeRecordingUi(tabId, recording);
 
   const sessionId = (await readCollectorSessionId(tabId)) || recording.canonicalSessionId;
+  console.log(tag, 'post-resume sessionId=', sessionId, 'injectOk=', injectDiag?.ok, 'initCalled=', initDiag?.initCalled);
+
   if (sessionId && activeRecording && !activeRecording.sessionIds.includes(sessionId)) {
     activeRecording.sessionIds.push(sessionId);
     await persistActiveRecording();
@@ -1187,6 +1253,14 @@ chrome.action.onClicked.addListener(() => {
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   const recording = await hydrateActiveRecording();
 
+  // Diagnóstico amplo: rastreia TODA transição de URL em abas com gravação ativa,
+  // não só os 'complete'. Permite enxergar o redirect chain OAuth ponto a ponto.
+  if (recording && isTrackedRecordingTab(recording, tabId)) {
+    console.log(
+      `[Voidr DEBUG] onUpdated tab=${tabId} status=${changeInfo.status ?? '-'} url=${tab?.url ?? '-'} changeInfo.url=${changeInfo.url ?? '-'}`,
+    );
+  }
+
   // Re-inject collector + recording UI when any tracked tab completes a navigation
   if (
     changeInfo.status === 'complete' &&
@@ -1198,7 +1272,13 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   ) {
     try {
       await resumeActiveRecordingInTab(tabId);
-    } catch (_) {}
+    } catch (e) {
+      console.error(
+        `[Voidr DEBUG] resumeActiveRecordingInTab THREW for tab=${tabId} url=${tab.url}`,
+        e?.message || e,
+        e?.stack,
+      );
+    }
   }
 
   if (changeInfo.status === 'complete' && tab.url && tab.url.startsWith(API_CONFIG.platformUrl)) {
