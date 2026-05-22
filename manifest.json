@@ -3,7 +3,7 @@
   "name": "Voidr Testing Assistant",
   "version": "1.0.0",
   "description": "Capture user sessions for onboarding test generation",
-  "permissions": ["activeTab", "storage", "scripting"],
+  "permissions": ["activeTab", "storage", "scripting", "declarativeNetRequest"],
   "host_permissions": ["http://*/*", "https://*/*"],
   "action": {
     "default_title": "Voidr Testing Assistant",
