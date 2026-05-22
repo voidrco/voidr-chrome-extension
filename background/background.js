@@ -177,7 +177,8 @@ async function attachTrackedRecordingTab(tabId, { makeCurrent = false } = {}) {
   const recording = await hydrateActiveRecording();
   if (!recording || !Number.isInteger(tabId)) return null;
 
-  if (!recording.trackedTabIds.includes(tabId)) {
+  const wasTracked = recording.trackedTabIds.includes(tabId);
+  if (!wasTracked) {
     recording.trackedTabIds.push(tabId);
   }
   if (makeCurrent || !recording.currentTabId) {
@@ -187,6 +188,13 @@ async function attachTrackedRecordingTab(tabId, { makeCurrent = false } = {}) {
     recording.tabId = tabId;
   }
   await setActiveRecording(recording);
+
+  // Ensure CSP bypass rule exists for this tab (covers new tabs joining
+  // the recording and re-applies after service worker restarts).
+  if (!wasTracked) {
+    await enableCspBypassForTab(tabId);
+  }
+
   return activeRecording;
 }
 
@@ -272,6 +280,93 @@ async function fetchCollectorCode() {
   const res = await fetch(cdnUrl);
   if (!res.ok) throw new Error(`Failed to fetch collector: ${res.status}`);
   return res.text();
+}
+
+// ── CSP bypass per recording tab ─────────────────────────────────────────────
+// Strict CSP `connect-src` on auth providers (e.g. Microsoft B2C used by Blip)
+// blocks the collector from POSTing events to collector.voidr.co. We use
+// declarativeNetRequest session rules scoped to a specific tabId to remove the
+// Content-Security-Policy response header while a recording is active on that
+// tab. The rule is added on recording start and removed on stop/tab close.
+
+const CSP_BYPASS_RULE_BASE = 100000;
+
+function cspBypassRuleIdForTab(tabId) {
+  return CSP_BYPASS_RULE_BASE + tabId;
+}
+
+async function enableCspBypassForTab(tabId) {
+  if (!Number.isInteger(tabId) || tabId <= 0) return false;
+  if (!chrome.declarativeNetRequest?.updateSessionRules) {
+    console.warn('[Voidr] declarativeNetRequest API unavailable — CSP bypass cannot be enabled');
+    return false;
+  }
+  const ruleId = cspBypassRuleIdForTab(tabId);
+  try {
+    await chrome.declarativeNetRequest.updateSessionRules({
+      removeRuleIds: [ruleId],
+      addRules: [
+        {
+          id: ruleId,
+          priority: 1,
+          action: {
+            type: 'modifyHeaders',
+            responseHeaders: [
+              { header: 'content-security-policy', operation: 'remove' },
+              { header: 'content-security-policy-report-only', operation: 'remove' },
+            ],
+          },
+          condition: {
+            tabIds: [tabId],
+            resourceTypes: ['main_frame', 'sub_frame'],
+          },
+        },
+      ],
+    });
+    console.log('[Voidr DEBUG] CSP bypass ENABLED for tab', tabId, 'ruleId=', ruleId);
+    return true;
+  } catch (e) {
+    console.error('[Voidr DEBUG] enableCspBypassForTab failed', tabId, e?.message || e);
+    return false;
+  }
+}
+
+async function disableCspBypassForTab(tabId) {
+  if (!Number.isInteger(tabId) || tabId <= 0) return false;
+  if (!chrome.declarativeNetRequest?.updateSessionRules) return false;
+  const ruleId = cspBypassRuleIdForTab(tabId);
+  try {
+    await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [ruleId] });
+    console.log('[Voidr DEBUG] CSP bypass DISABLED for tab', tabId, 'ruleId=', ruleId);
+    return true;
+  } catch (e) {
+    console.error('[Voidr DEBUG] disableCspBypassForTab failed', tabId, e?.message || e);
+    return false;
+  }
+}
+
+async function disableAllCspBypassRules() {
+  if (!chrome.declarativeNetRequest?.getSessionRules) return;
+  try {
+    const rules = await chrome.declarativeNetRequest.getSessionRules();
+    const ids = rules
+      .map((r) => r.id)
+      .filter((id) => id >= CSP_BYPASS_RULE_BASE && id < CSP_BYPASS_RULE_BASE + 1_000_000);
+    if (ids.length > 0) {
+      await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: ids });
+      console.log('[Voidr DEBUG] cleared stale CSP bypass rules:', ids);
+    }
+  } catch (e) {
+    console.error('[Voidr DEBUG] disableAllCspBypassRules failed', e?.message || e);
+  }
+}
+
+async function enableCspBypassForRecording(recording) {
+  if (!recording) return;
+  const ids = recording.trackedTabIds || [];
+  for (const tabId of ids) {
+    await enableCspBypassForTab(tabId);
+  }
 }
 
 async function injectCollectorInTab(tabId, collectorCode) {
@@ -438,11 +533,19 @@ async function resumeActiveRecordingInTab(tabId) {
 // Hydrate auth state whenever the service worker starts up
 // MV3 service workers are ephemeral; don't rely on in-memory state
 checkAuthenticationStatus();
-hydrateActiveRecording();
+hydrateActiveRecording().then((recording) => {
+  // Re-apply CSP bypass rules for any active recording so the rule survives
+  // a service worker restart mid-recording. Session rules are tied to the
+  // browser session but the service worker can drop ours — re-add to be safe.
+  if (recording) enableCspBypassForRecording(recording);
+});
 
 // Also re-check on browser startup
 chrome.runtime.onStartup.addListener(() => {
   checkAuthenticationStatus();
+  // On a fresh browser session there can't be active recordings yet, but
+  // clear any stale dNR rules just in case.
+  disableAllCspBypassRules();
   hydrateActiveRecording(true);
 });
 
@@ -564,6 +667,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             sendResponse({ success: false, error: 'No eligible tab for injection' });
             return;
           }
+
+          // Strip CSP for the recording tab so collector can POST to voidr.co
+          // across navigations (auth providers like Microsoft B2C block connect-src
+          // to collector.voidr.co otherwise). Rule is removed on session stop.
+          await enableCspBypassForTab(targetTabId);
 
           const canonicalSessionId =
             request.initOptions?.forcedSessionId || createRecordingSessionId();
@@ -1004,6 +1112,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           const priorRecording = await hydrateActiveRecording();
           lastStoppedAt = Date.now();
           const priorSessionIds = priorRecording?.sessionIds || [];
+
+          // Remove CSP bypass rules for every tab that was part of this recording
+          const trackedForCleanup = priorRecording?.trackedTabIds || [];
+          for (const t of trackedForCleanup) {
+            await disableCspBypassForTab(t);
+          }
+
           await clearActiveRecording();
 
           let targetTabId =
@@ -1318,6 +1433,10 @@ chrome.tabs.onCreated.addListener((tab) => {
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+  // Always remove the CSP bypass rule for a closed tab — cheap and idempotent,
+  // works even if hydrateActiveRecording returns null (e.g. tab closed after stop).
+  disableCspBypassForTab(tabId).catch(() => {});
+
   hydrateActiveRecording().then(async (recording) => {
     if (!recording || !isTrackedRecordingTab(recording, tabId)) return;
 
