@@ -50,13 +50,10 @@ steps:
   # Etapa 6: Limpar o cache do Cloudflare
   - name: 'gcr.io/cloud-builders/gcloud'
     entrypoint: 'bash'
+    secretEnv: ['API_TOKEN']
     args:
       - '-c'
       - |
-        # Acessa o token da API do Secret Manager
-        API_TOKEN=mYJjUYJIt_3_RWnlvqiF_EioOWlUdMQSpGAF_Plg
-
-        # Envia a requisição para a API do Cloudflare
         curl -X POST "https://api.cloudflare.com/client/v4/zones/40807c6c48cb5d8a1e29bfbca48a519e/purge_cache" \
           -H "Authorization: Bearer $$API_TOKEN" \
           -H "Content-Type: application/json" \
@@ -64,3 +61,8 @@ steps:
     id: 'cloudflare-purge-cache'
     waitFor:
       - 'cdn-invalidate-cache'
+
+availableSecrets:
+  secretManager:
+    - versionName: projects/785568282479/secrets/cloudflare-cdn-purge-token/versions/latest
+      env: 'API_TOKEN'
