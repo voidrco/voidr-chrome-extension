@@ -10,6 +10,8 @@ export default defineConfig({
   },
   server: {
     cors: true,
+    host: '0.0.0.0',
+    allowedHosts: true,
   },
   plugins: [
     {
@@ -28,7 +30,7 @@ export default defineConfig({
   ],
   build: {
     lib: {
-      entry: 'src/recorder.js',
+      entry: 'src/index.js',
       name: 'rrwebClient',
       formats: ['iife'],
       fileName: () => 'recorder.min.js',
