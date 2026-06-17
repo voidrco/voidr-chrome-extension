@@ -274,7 +274,8 @@ function isHttpUrl(u) {
 }
 
 async function fetchCollectorCode() {
-  const cdnUrl = 'https://cdn.voidr.co/voidr-collector/default/latest/recorder.min.js';
+  const cdnUrl =
+    'https://cdn.voidr.co/voidr-collector/default/latest/recorder.min.js?v=' + Date.now();
   const res = await fetch(cdnUrl);
   if (!res.ok) throw new Error(`Failed to fetch collector: ${res.status}`);
   return res.text();
@@ -441,21 +442,13 @@ async function resumeActiveRecordingInTab(tabId) {
   const tab = await chrome.tabs.get(tabId).catch(() => null);
   if (!tab?.url || !isHttpUrl(tab.url)) return false;
 
-  // Idempotency guard: SPAs (e.g. Blip portal) fire `status: complete` many
-  // times without wiping the MAIN-world context. Re-eval'ing the collector each
-  // time stacks N recorders (each in its own VM), thrashing the page. Only
-  // re-inject when the previous instance is actually gone (real navigation).
-  const existingSessionId = await readCollectorSessionId(tabId);
-  if (!existingSessionId) {
-    const collectorCode = await fetchCollectorCode();
-    await injectCollectorInTab(tabId, collectorCode);
-    await initializeCollectorInTab(tabId, recording.initOptions);
-  }
+  const collectorCode = await fetchCollectorCode();
+  await injectCollectorInTab(tabId, collectorCode);
+  await initializeCollectorInTab(tabId, recording.initOptions);
   await attachTrackedRecordingTab(tabId, { makeCurrent: true });
   await sendResumeRecordingUi(tabId, recording);
 
-  const sessionId =
-    existingSessionId || (await readCollectorSessionId(tabId)) || recording.canonicalSessionId;
+  const sessionId = (await readCollectorSessionId(tabId)) || recording.canonicalSessionId;
   if (sessionId && activeRecording && !activeRecording.sessionIds.includes(sessionId)) {
     activeRecording.sessionIds.push(sessionId);
     await persistActiveRecording();
