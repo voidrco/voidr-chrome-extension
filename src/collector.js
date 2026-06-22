@@ -107,7 +107,7 @@ export function createCollector() {
         return;
       }
 
-      // 2. Detect automation environment (skip check when system: true — virtual browser)
+      // 2. Detect automation environment (skip check when system: true)
       if (!state.config.system && isAutomationEnvironment()) {
         console.log('VoidrCollector: Recording skipped (automation environment detected)');
         state.isInitialized = false;
@@ -334,7 +334,7 @@ export function createCollector() {
      * Force-flush all buffered events immediately.
      * Returns a Promise that resolves when all events have been sent to the server.
      * Does NOT stop recording — the session continues normally after flush.
-     * Use this before stopping a virtual browser session to ensure no events are lost.
+     * Use this before stopping a recording session to ensure no events are lost.
      * @returns {Promise<void>}
      */
     async flush() {
