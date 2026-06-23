@@ -11,6 +11,7 @@ import {
   syncScreenMapBeacon,
 } from './transport.js';
 import { startRecording, startRrwebOnly } from './recording.js';
+import { initIdleWatch, stopIdleWatch } from './listeners/idle.js';
 import { ElementMapper } from './element-mapper.js';
 
 /**
@@ -59,7 +60,7 @@ export function createCollector() {
     window.addEventListener('pagehide', state.pageHideHandler);
   }
 
-  return {
+  const api = {
     version: VOIDR_VERSION,
 
     /**
@@ -174,6 +175,9 @@ export function createCollector() {
 
       registerLifecycleHandlers();
 
+      // Auto-pause recording on prolonged inactivity (idle/forgotten tabs)
+      initIdleWatch(api);
+
       console.log(`VoidrCollector v${VOIDR_VERSION} - Initialized successfully`);
     },
 
@@ -281,6 +285,9 @@ export function createCollector() {
       }
 
       unregisterLifecycleHandlers();
+
+      // Stop idle detection
+      stopIdleWatch();
 
       // Stop element mapper
       if (state.elementMapper) {
@@ -394,4 +401,6 @@ export function createCollector() {
       return state.elementMapper?.getSnapshot() || null;
     },
   };
+
+  return api;
 }

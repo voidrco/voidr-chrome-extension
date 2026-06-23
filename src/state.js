@@ -21,6 +21,10 @@ export const state = {
   isInitialized: false,
   beforeUnloadHandler: null,
   pageHideHandler: null,
+  lastActivity: null,
+  idleInterval: null,
+  idleListeners: [],
+  pausedByIdle: false,
 };
 
 /**
@@ -48,4 +52,8 @@ export function resetState() {
   state.isInitialized = false;
   state.beforeUnloadHandler = null;
   state.pageHideHandler = null;
+  state.lastActivity = null;
+  state.idleInterval = null;
+  state.idleListeners = [];
+  state.pausedByIdle = false;
 }
