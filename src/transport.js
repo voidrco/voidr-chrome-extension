@@ -3,6 +3,8 @@ import { state } from './state.js';
 import { safeStringify } from './utils/helpers.js';
 import { compressEventsBase64 } from './utils/image-compression.js';
 
+const SCREEN_MAP_SYNC_DEBOUNCE_MS = 2000;
+
 /**
  * Buffer a network event. Flushes automatically when buffer exceeds 10 entries.
  */
@@ -185,11 +187,21 @@ export async function flushEvents() {
 export async function syncScreenMap() {
   if (!state.elementMapper || state.forceStop) return;
   if (!state.elementMapper.isDirty()) return;
+  if (state.screenMapSyncInFlight) {
+    state.screenMapSyncQueued = true;
+    return;
+  }
 
-  const snapshot = state.elementMapper.getSnapshot();
-  if (!snapshot.screens.length) return;
+  state.screenMapSyncInFlight = true;
+  let runQueuedSync = false;
 
   try {
+    const dirtyVersion = typeof state.elementMapper.getDirtyVersion === 'function'
+      ? state.elementMapper.getDirtyVersion()
+      : undefined;
+    const snapshot = state.elementMapper.getSnapshot();
+    if (!snapshot.screens.length) return;
+
     const payload = safeStringify({
       sessionId: state.sessionId,
       applicationId: state.config.applicationId,
@@ -235,11 +247,30 @@ export async function syncScreenMap() {
     }
 
     if (res.ok || res.status === 204) {
-      state.elementMapper.clearDirty();
+      state.elementMapper.clearDirty(dirtyVersion);
     }
   } catch {
     // Non-fatal — next sync will carry all data
+  } finally {
+    runQueuedSync = state.screenMapSyncQueued;
+    state.screenMapSyncQueued = false;
+    state.screenMapSyncInFlight = false;
   }
+
+  if (runQueuedSync) return syncScreenMap();
+}
+
+export function scheduleScreenMapSync(delayMs = SCREEN_MAP_SYNC_DEBOUNCE_MS) {
+  if (!state.elementMapper || state.forceStop) return;
+
+  if (state.screenMapSyncTimer) {
+    clearTimeout(state.screenMapSyncTimer);
+  }
+
+  state.screenMapSyncTimer = setTimeout(() => {
+    state.screenMapSyncTimer = null;
+    syncScreenMap();
+  }, delayMs);
 }
 
 /**
