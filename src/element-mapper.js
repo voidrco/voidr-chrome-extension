@@ -95,14 +95,24 @@ export class ElementMapper {
     this.currentTitle = null
     this._scanTimer = null
     this._dirty = false
+    this._dirtyVersion = 0
   }
 
   isDirty() {
     return this._dirty
   }
 
-  clearDirty() {
-    this._dirty = false
+  getDirtyVersion() {
+    return this._dirtyVersion
+  }
+
+  markDirty() {
+    this._dirty = true
+    this._dirtyVersion += 1
+  }
+
+  clearDirty(version = this._dirtyVersion) {
+    if (this._dirtyVersion <= version) this._dirty = false
   }
 
   // ─── Lifecycle ──────────────────────────────────────────────────
@@ -133,7 +143,7 @@ export class ElementMapper {
         state: null,
         elements: new Map(),
       })
-      this._dirty = true
+      this.markDirty()
     }
 
     // Scan immediately on new page
@@ -190,7 +200,7 @@ export class ElementMapper {
     screen.fingerprint = fingerprint
     screen.name = state.title || screen.name
 
-    if (changed) this._dirty = true
+    if (changed) this.markDirty()
   }
 
   /**
@@ -662,14 +672,14 @@ export class ElementMapper {
       // Merge: prefer interacted over scanned, update uniqueness
       if (descriptor.interacted && !existing.interacted) {
         screen.elements.set(key, { ...existing, ...descriptor })
-        this._dirty = true
+        this.markDirty()
       } else {
         // Update uniqueness if newer
         existing.uniqueness = descriptor.uniqueness
       }
     } else {
       screen.elements.set(key, descriptor)
-      this._dirty = true
+      this.markDirty()
     }
   }
 

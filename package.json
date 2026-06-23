@@ -6,7 +6,8 @@
   "scripts": {
     "format": "prettier --write \"**/*.js\"",
     "dev": "vite build --watch & vite --port 8889",
-    "build": "vite build"
+    "build": "vite build",
+    "test": "node --test \"tests/*.test.js\""
   },
   "keywords": [],
   "author": "",

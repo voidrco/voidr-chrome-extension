@@ -16,6 +16,9 @@ export const state = {
   isPaused: false,
   eventsInterval: null,
   screenMapInterval: null,
+  screenMapSyncInFlight: false,
+  screenMapSyncQueued: false,
+  screenMapSyncTimer: null,
   originalFetch: null,
   originalXHR: null,
   isInitialized: false,
@@ -43,6 +46,12 @@ export function resetState() {
   state.isPaused = false;
   state.eventsInterval = null;
   state.screenMapInterval = null;
+  state.screenMapSyncInFlight = false;
+  state.screenMapSyncQueued = false;
+  if (state.screenMapSyncTimer) {
+    clearTimeout(state.screenMapSyncTimer);
+  }
+  state.screenMapSyncTimer = null;
   state.originalFetch = null;
   state.originalXHR = null;
   state.isInitialized = false;
