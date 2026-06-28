@@ -3,6 +3,8 @@ import {
   CAPTURABLE_CONTENT_TYPES,
   IGNORED_CONTENT_TYPES,
   MAX_BODY_SIZE,
+  TRACE_ID_HEADERS,
+  RESOURCE_EXT_CONTENT_TYPES,
 } from '../constants.js';
 
 /**
@@ -158,15 +160,106 @@ export async function extractRequestBody(input, init) {
     // Other (try to stringify)
     try {
       const str = JSON.stringify(body);
-      return str.length > MAX_BODY_SIZE
-        ? str.substring(0, MAX_BODY_SIZE) + '...[TRUNCATED]'
-        : str;
+      return str.length > MAX_BODY_SIZE ? str.substring(0, MAX_BODY_SIZE) + '...[TRUNCATED]' : str;
     } catch (e) {
       return '[Unserializable Body]';
     }
   } catch (e) {
     return null;
   }
+}
+
+/**
+ * Normalize a content-type header value to a bare MIME (drops charset/params).
+ * Returns '' when no content-type can be determined.
+ */
+export function getContentType(headers) {
+  if (!headers || typeof headers !== 'object') return '';
+  let value = '';
+  for (const [key, val] of Object.entries(headers)) {
+    if (String(key).toLowerCase() === 'content-type') {
+      value = val == null ? '' : String(val);
+      break;
+    }
+  }
+  return (value.split(';')[0] || '').trim().toLowerCase();
+}
+
+/**
+ * Best-effort byte length of a (possibly Unicode) string. Used to populate
+ * `requestSize` from a captured request body. Returns 0 for empty/non-strings.
+ */
+export function byteLength(value) {
+  if (typeof value !== 'string' || value.length === 0) return 0;
+  try {
+    if (typeof TextEncoder !== 'undefined') {
+      return new TextEncoder().encode(value).length;
+    }
+    if (typeof Blob !== 'undefined') {
+      return new Blob([value]).size;
+    }
+  } catch (e) {
+    // Fall through to length-based estimate.
+  }
+  return value.length;
+}
+
+/**
+ * Best-effort traceId/correlation id from request headers. Only returns a value
+ * when one of the known correlation headers is present (never invents an id).
+ */
+export function extractTraceId(headers) {
+  if (!headers || typeof headers !== 'object') return null;
+  for (const [key, val] of Object.entries(headers)) {
+    if (val == null || val === '') continue;
+    if (TRACE_ID_HEADERS.includes(String(key).toLowerCase())) {
+      return String(val);
+    }
+  }
+  return null;
+}
+
+/**
+ * Best-effort content-type for a static resource derived from its URL extension.
+ * PerformanceResourceTiming exposes no headers, so this is the only signal we
+ * have when the entry doesn't carry an explicit content-type.
+ */
+export function guessContentTypeFromUrl(url) {
+  try {
+    const pathname = new URL(url, window.location.origin).pathname;
+    const match = pathname.toLowerCase().match(/\.([a-z0-9]+)$/);
+    if (match && RESOURCE_EXT_CONTENT_TYPES[match[1]]) {
+      return RESOURCE_EXT_CONTENT_TYPES[match[1]];
+    }
+  } catch (e) {
+    // Ignore malformed URLs.
+  }
+  return '';
+}
+
+/**
+ * Map a PerformanceResourceTiming entry to the collector timing breakdown
+ * (values in ms). receive ⇐ download on the decoder side.
+ */
+export function timingFromResourceEntry(entry) {
+  if (!entry) return null;
+  const dns = Math.round(entry.domainLookupEnd - entry.domainLookupStart);
+  const connect = Math.round(entry.connectEnd - entry.connectStart);
+  const ssl =
+    entry.secureConnectionStart > 0
+      ? Math.round(entry.connectEnd - entry.secureConnectionStart)
+      : 0;
+  const wait = Math.round(entry.responseStart - entry.requestStart); // TTFB
+  const download = Math.round(entry.responseEnd - entry.responseStart);
+  const total = Math.round(entry.responseEnd - entry.startTime);
+  return {
+    dns: Math.max(0, dns),
+    connect: Math.max(0, connect),
+    ssl: Math.max(0, ssl),
+    wait: Math.max(0, wait),
+    download: Math.max(0, download),
+    total: Math.max(0, total),
+  };
 }
 
 /**

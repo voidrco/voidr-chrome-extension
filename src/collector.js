@@ -9,9 +9,11 @@ import {
   flushEvents,
   syncScreenMap,
   syncScreenMapBeacon,
+  finalizeSessionBeacon,
 } from './transport.js';
 import { startRecording, startRrwebOnly } from './recording.js';
 import { initIdleWatch, stopIdleWatch } from './listeners/idle.js';
+import { inlineIconFonts } from './assets/inline-fonts.js';
 import { ElementMapper } from './element-mapper.js';
 
 /**
@@ -50,10 +52,12 @@ export function createCollector() {
     state.beforeUnloadHandler = () => {
       handleUnload();
       syncScreenMapBeacon();
+      finalizeSessionBeacon();
     };
     state.pageHideHandler = () => {
       handleUnload();
       syncScreenMapBeacon();
+      finalizeSessionBeacon();
     };
 
     window.addEventListener('beforeunload', state.beforeUnloadHandler);
@@ -142,6 +146,15 @@ export function createCollector() {
         console.error('VoidrCollector: Failed to validate API Key', err);
         state.isInitialized = false;
         return;
+      }
+
+      // Inline same-origin icon fonts as data: URIs BEFORE the first snapshot so
+      // the replay (different origin, strict CSP) can render them instead of
+      // showing tofu (□). Time-boxed and best-effort — never blocks recording.
+      try {
+        await inlineIconFonts();
+      } catch {
+        /* best-effort: recording proceeds regardless */
       }
 
       // Start recording
@@ -312,6 +325,26 @@ export function createCollector() {
         window.XMLHttpRequest = state.originalXHR;
         state.originalXHR = null;
       }
+
+      // Disconnect the static-resource PerformanceObserver
+      if (state.resourceObserver && typeof state.resourceObserver.disconnect === 'function') {
+        try {
+          state.resourceObserver.disconnect();
+        } catch (e) {
+          // Ignore disconnect errors
+        }
+        state.resourceObserver = null;
+      }
+
+      // Flush any trailing buffered events, then signal session completion so the
+      // collector indexes the recording into ClickHouse promptly. Both run while
+      // sessionId/state are still set (resetState() clears them below).
+      try {
+        handleUnload();
+      } catch (e) {
+        // Best-effort flush
+      }
+      finalizeSessionBeacon();
 
       // Clear sessionStorage
       try {

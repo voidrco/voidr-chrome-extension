@@ -4,6 +4,7 @@ import { isTasy, TASY_MASK_SELECTORS } from './constants.js';
 import { state } from './state.js';
 import { initFetchInterceptor } from './network/fetch-interceptor.js';
 import { initXhrInterceptor } from './network/xhr-interceptor.js';
+import { initResourceObserver } from './network/resource-observer.js';
 import { initEventListeners } from './listeners/events.js';
 import { initRoutingCapture } from './listeners/routing.js';
 import { initTracking } from './listeners/tracking.js';
@@ -34,8 +35,20 @@ export function startRrwebOnly() {
     plugins,
     recordCanvas: true,
     recordCrossOriginIframes: true,
+    // Inline stylesheets so same-origin (and CORS-readable cross-origin) CSS is
+    // embedded in the snapshot. The replay iframe runs under a strict CSP
+    // (style-src 'self' 'unsafe-inline'), so external <link> CSS cannot be
+    // fetched at replay time — inlining is what makes the layout render.
     inlineStylesheet: true,
-    inlineImages: false,
+    // Capture @font-face / web fonts. Without this, replay can only load fonts
+    // that survive the replay-origin CSP (font-src 'self' fonts.gstatic.com
+    // data:), so most custom fonts render as fallbacks.
+    collectFonts: true,
+    // Inline images as data URLs (subject to dataURLOptions below) so they show
+    // under the replay CSP (img-src ... data:), instead of failing as cross-origin
+    // requests. Disabled for Tasy (health/PII) to avoid persisting sensitive image
+    // content; those sessions keep image references only.
+    inlineImages: !isTasy,
     maskTextSelector,
     maskAllInputs: isTasy || state.config.dataMasking.inputs,
     blockSelector: state.config.dataMasking.blockSelectors?.join(', '),
@@ -64,6 +77,7 @@ export function startRecording() {
   initEventListeners();
   initFetchInterceptor();
   initXhrInterceptor();
+  initResourceObserver();
   initTracking();
   initRoutingCapture();
 }

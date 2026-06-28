@@ -7,6 +7,9 @@ import {
   sanitizeHeaders,
   extractFetchHeaders,
   isThirdParty,
+  getContentType,
+  byteLength,
+  extractTraceId,
 } from './extractors.js';
 import { logNetworkEvent } from '../transport.js';
 
@@ -42,9 +45,7 @@ export function initFetchInterceptor() {
     const isCollectorRequest = (() => {
       try {
         return (
-          requestUrl &&
-          normalizedCollectorBase &&
-          requestUrl.startsWith(normalizedCollectorBase)
+          requestUrl && normalizedCollectorBase && requestUrl.startsWith(normalizedCollectorBase)
         );
       } catch (_) {
         return Boolean(
@@ -81,7 +82,7 @@ export function initFetchInterceptor() {
         setTimeout(() => {
           const timing = extractPerformanceTiming(requestUrl);
 
-          logNetworkEvent({
+          const event = {
             type: 'fetch',
             url: requestUrl,
             method: method.toUpperCase(),
@@ -95,8 +96,17 @@ export function initFetchInterceptor() {
             requestBody,
             responseBody,
             timing,
+            contentType: getContentType(responseHeaders),
             responseSize: responseBody ? responseBody.length : 0,
-          });
+            requestSize: byteLength(requestBody),
+          };
+
+          if (state.config.captureTraceId) {
+            const traceId = extractTraceId(requestHeaders);
+            if (traceId) event.traceId = traceId;
+          }
+
+          logNetworkEvent(event);
         }, 50);
       });
 

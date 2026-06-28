@@ -21,6 +21,8 @@ export const state = {
   screenMapSyncTimer: null,
   originalFetch: null,
   originalXHR: null,
+  resourceObserver: null,
+  resourceCount: 0,
   isInitialized: false,
   beforeUnloadHandler: null,
   pageHideHandler: null,
@@ -58,6 +60,8 @@ export function resetState() {
   state.screenMapSyncTimer = null;
   state.originalFetch = null;
   state.originalXHR = null;
+  state.resourceObserver = null;
+  state.resourceCount = 0;
   state.isInitialized = false;
   state.beforeUnloadHandler = null;
   state.pageHideHandler = null;
