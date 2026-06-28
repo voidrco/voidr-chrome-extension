@@ -309,6 +309,37 @@ export function syncScreenMapBeacon() {
 }
 
 /**
+ * Signal "session complete" to the collector via navigator.sendBeacon, hitting
+ * POST /sessions/:id/finalize. The server sets endedAt + marks the ingest outbox
+ * `finalizing` (shortened dueAt) so the recorded session is decoded into
+ * ClickHouse promptly instead of waiting on the inactivity watchdog.
+ *
+ * sendBeacon cannot set an Authorization header, so the apiKey travels in the
+ * JSON body (the finalize route is self-authenticating). Best-effort and safe to
+ * call on endSession() and during pagehide/beforeunload.
+ */
+export function finalizeSessionBeacon() {
+  if (state.forceStop) return;
+  const sessionId = state.sessionId;
+  if (!sessionId) return;
+  if (typeof navigator === 'undefined' || typeof navigator.sendBeacon !== 'function') return;
+
+  const url = `${state.config.collectorUrl}/sessions/${encodeURIComponent(sessionId)}/finalize`;
+  const payload = safeStringify({
+    apiKey: state.config.apiKey,
+    sessionId,
+    endedAt: Date.now(),
+  });
+
+  try {
+    const blob = new Blob([payload], { type: 'application/json' });
+    navigator.sendBeacon(url, blob);
+  } catch {
+    // Best-effort — nothing more we can do during unload.
+  }
+}
+
+/**
  * Handle the beforeunload event: flush ALL remaining events.
  * No minimum batch size — sends everything that's buffered.
  * Uses synchronous XMLHttpRequest for reliable delivery during unload.

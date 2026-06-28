@@ -99,7 +99,7 @@ export async function authenticateSession() {
     return false;
   }
 
-  // Persist JWT for reuse on re-init
+  // Persist JWT and session ID for reuse on re-init (e.g. page reload)
   try {
     sessionStorage.setItem('voidr_jwt', state.authToken);
     sessionStorage.setItem('voidr_session_id', state.sessionId);
