@@ -565,6 +565,29 @@ async function checkAuthenticationStatus() {
   }
 }
 
+function reloadTabAndWaitForLoad(tabId, timeoutMs = 15000) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      try {
+        chrome.tabs.onUpdated.removeListener(listener);
+      } catch (_) {}
+      clearTimeout(timer);
+      resolve();
+    };
+    const listener = (updatedTabId, changeInfo) => {
+      if (updatedTabId === tabId && changeInfo.status === 'complete') finish();
+    };
+    const timer = setTimeout(finish, timeoutMs);
+    chrome.tabs.onUpdated.addListener(listener);
+    chrome.tabs.reload(tabId, { bypassCache: false }, () => {
+      void chrome.runtime.lastError;
+    });
+  });
+}
+
 // Listener para mensagens dos content scripts
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   switch (request.action) {
@@ -598,6 +621,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           // across navigations (auth providers like Microsoft B2C block connect-src
           // to collector.voidr.co otherwise). Rule is removed on session stop.
           await enableCspBypassForTab(targetTabId);
+
+          const isOnboarding =
+            request.initOptions?.meta?.mode === 'onboarding' ||
+            Boolean(request.initOptions?.meta?.onboardingRunId);
+          if (isOnboarding) {
+            await reloadTabAndWaitForLoad(targetTabId);
+          }
 
           const canonicalSessionId =
             request.initOptions?.forcedSessionId || createRecordingSessionId();
