@@ -742,6 +742,17 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             }
           } catch (_) {}
 
+          chrome.runtime
+            .sendMessage({
+              action: 'authStateUpdated',
+              authData: {
+                isAuthenticated: true,
+                user: globalAuthState.user,
+                token: request.token,
+              },
+            })
+            .catch(() => {});
+
           sendResponse({
             isAuthenticated: true,
             user: globalAuthState.user,
