@@ -16,7 +16,7 @@ async function apiGet(endpoint) {
   const res = await fetch(url, {
     method: 'GET',
     headers: {
-      'Authorization': `Bearer ${auth.token}`,
+      Authorization: `Bearer ${auth.token}`,
       'Content-Type': 'application/json',
     },
   });
@@ -32,7 +32,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       showNotification('Recording started', 'success', 1800);
     } else if (request?.action === 'voidr:sessionCaptured' && request.sessionId) {
       if (currentView === 'onboarding-recording' && onboardingRecordingContext) {
-        if (!request.onboardingRunId || request.onboardingRunId === onboardingRecordingContext.onboardingRunId) {
+        if (
+          !request.onboardingRunId ||
+          request.onboardingRunId === onboardingRecordingContext.onboardingRunId
+        ) {
           showNotification('Session captured! You can close the customer tab.', 'success', 5000);
           onboardingRecordingContext = null;
           showMainView();
@@ -46,7 +49,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         testCaseRecordingContext = null;
       }
     } else if (request?.action === 'authStateUpdated' && request.authData?.isAuthenticated) {
-      initializeExtension();
+      // Only (re)initialize when we're still on the auth screen waiting for login.
+      // A background auth-sync fires on every platform page load; re-initializing
+      // here would reset whatever view the user already navigated into.
+      if (currentView === 'auth') {
+        initializeExtension();
+      }
     }
   });
 
@@ -71,6 +79,16 @@ async function initializeExtension() {
       await chrome.storage.session.remove('pendingOnboardingContext');
       chrome.action.setBadgeText({ text: '' });
       showOnboardingRecordingView(onboardingRecordingContext);
+      return;
+    }
+
+    // A test-case session was just captured while the popup was closed → show it.
+    const cap = await chrome.storage.session.get(['voidrLastCapture', 'voidrPendingTestCase']);
+    const last = cap?.voidrLastCapture;
+    if (last?.sessionId && Date.now() - (last.capturedAt || 0) < 15 * 60 * 1000) {
+      const pend = cap?.voidrPendingTestCase || {};
+      await chrome.storage.session.remove(['voidrLastCapture', 'voidrPendingTestCase']);
+      showSessionSummaryView(last.sessionId, pend.scenarioName, pend.appName);
       return;
     }
 
@@ -123,21 +141,30 @@ function showAuthRequired() {
 
   document.getElementById('auth-connect-btn')?.addEventListener('click', () => {
     const btn = document.getElementById('auth-connect-btn');
-    if (btn) { btn.classList.add('loading'); }
+    if (btn) {
+      btn.classList.add('loading');
+    }
 
     chrome.runtime.sendMessage({ action: 'getAuthConnectUrl' }, (res) => {
       const url = res?.url;
       if (!url) return;
-      const w = 500, h = 600;
+      const w = 500,
+        h = 600;
       const left = Math.round((screen.width - w) / 2);
       const top = Math.round((screen.height - h) / 2);
-      const authWin = window.open(url, 'voidr-auth', `width=${w},height=${h},left=${left},top=${top},popup=1`);
+      const authWin = window.open(
+        url,
+        'voidr-auth',
+        `width=${w},height=${h},left=${left},top=${top},popup=1`,
+      );
 
       const poll = setInterval(async () => {
         const auth = await getAuthStatus();
         if (auth.isAuthenticated) {
           clearInterval(poll);
-          try { authWin?.close(); } catch (_) {}
+          try {
+            authWin?.close();
+          } catch (_) {}
           initializeExtension();
         }
       }, 2000);
@@ -198,14 +225,23 @@ function showMainView() {
   const submitCode = () => {
     const code = (codeInput?.value || '').trim().toUpperCase();
     if (!code) return;
-    if (codeBtn) { codeBtn.textContent = '...'; codeBtn.disabled = true; }
-    if (codeError) { codeError.style.display = 'none'; }
+    if (codeBtn) {
+      codeBtn.textContent = '...';
+      codeBtn.disabled = true;
+    }
+    if (codeError) {
+      codeError.style.display = 'none';
+    }
 
     chrome.runtime.sendMessage({ action: 'voidr:getOnboardingByCode', code }, (response) => {
       if (chrome.runtime.lastError || !response?.context) {
-        if (codeBtn) { codeBtn.textContent = 'Conectar'; codeBtn.disabled = false; }
+        if (codeBtn) {
+          codeBtn.textContent = 'Conectar';
+          codeBtn.disabled = false;
+        }
         if (codeError) {
-          codeError.textContent = response?.error || 'Código não encontrado. Verifique e tente novamente.';
+          codeError.textContent =
+            response?.error || 'Código não encontrado. Verifique e tente novamente.';
           codeError.style.display = 'block';
         }
         return;
@@ -216,7 +252,9 @@ function showMainView() {
   };
 
   codeBtn?.addEventListener('click', submitCode);
-  codeInput?.addEventListener('keydown', (e) => { if (e.key === 'Enter') submitCode(); });
+  codeInput?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') submitCode();
+  });
 }
 
 // ── Select Product View ──────────────────────────────────────────────────────
@@ -266,6 +304,13 @@ async function loadProducts() {
     const data = await apiGet('/applications?limit=50');
     const apps = Array.isArray(data.data) ? data.data : [];
 
+    // URL-alvo do produto: primeiro environment com applicationUrl.
+    const getAppUrl = (app) => {
+      const envs = Array.isArray(app?.environments) ? app.environments : [];
+      const withUrl = envs.find((e) => e && e.applicationUrl);
+      return withUrl?.applicationUrl || '';
+    };
+
     if (apps.length === 0) {
       container.innerHTML = `
         <div class="empty-state">
@@ -278,15 +323,19 @@ async function loadProducts() {
 
     container.innerHTML = `
       <div class="product-list">
-        ${apps.map((app) => `
-          <button class="product-item" data-app-id="${escapeHtml(app._id)}" data-app-name="${escapeHtml(app.name)}" data-app-type="${escapeHtml(app.type || '')}">
+        ${apps
+          .map(
+            (app) => `
+          <button class="product-item" data-app-id="${escapeHtml(app._id)}" data-app-name="${escapeHtml(app.name)}" data-app-type="${escapeHtml(app.type || '')}" data-app-url="${escapeHtml(getAppUrl(app))}">
             <div class="product-item-info">
               <span class="product-item-name">${escapeHtml(app.name)}</span>
               ${app.type ? `<span class="product-item-type">${escapeHtml(app.type)}</span>` : ''}
             </div>
             ${getIcon('ChevronRight', 16)}
           </button>
-        `).join('')}
+        `,
+          )
+          .join('')}
       </div>
     `;
 
@@ -296,6 +345,7 @@ async function loadProducts() {
           _id: item.dataset.appId,
           name: item.dataset.appName,
           type: item.dataset.appType,
+          url: item.dataset.appUrl || '',
         };
         showRecordingSetupView(app);
       });
@@ -356,8 +406,12 @@ function showRecordingSetupView(app) {
     </div>
   `;
 
-  document.getElementById('back-to-products-btn')?.addEventListener('click', () => showSelectProductView());
-  document.getElementById('back-setup-btn')?.addEventListener('click', () => showSelectProductView());
+  document
+    .getElementById('back-to-products-btn')
+    ?.addEventListener('click', () => showSelectProductView());
+  document
+    .getElementById('back-setup-btn')
+    ?.addEventListener('click', () => showSelectProductView());
   document.getElementById('scenario-name-input')?.focus();
 
   document.getElementById('start-recording-btn')?.addEventListener('click', () => {
@@ -384,8 +438,13 @@ async function handleStartTestCaseRecording(app) {
     return;
   }
 
-  if (errorDiv) { errorDiv.style.display = 'none'; }
-  if (btn) { btn.textContent = 'Iniciando...'; btn.disabled = true; }
+  if (errorDiv) {
+    errorDiv.style.display = 'none';
+  }
+  if (btn) {
+    btn.textContent = 'Iniciando...';
+    btn.disabled = true;
+  }
 
   let apiKey = null;
   try {
@@ -398,7 +457,10 @@ async function handleStartTestCaseRecording(app) {
       errorDiv.textContent = 'API Key não encontrada. Verifique as configurações do produto.';
       errorDiv.style.display = 'block';
     }
-    if (btn) { btn.textContent = 'Iniciar gravação'; btn.disabled = false; }
+    if (btn) {
+      btn.textContent = 'Iniciar gravação';
+      btn.disabled = false;
+    }
     return;
   }
 
@@ -407,13 +469,31 @@ async function handleStartTestCaseRecording(app) {
     appName: app.name,
     scenarioName,
     apiKey,
+    targetUrl: app.url || '',
   };
 
+  // Persist context so the success screen can be shown when the popup is
+  // reopened after capture (the popup closes while recording).
+  try {
+    await chrome.storage.session.set({
+      voidrPendingTestCase: { scenarioName, appName: app.name, appId: app._id },
+    });
+  } catch (_) {}
+
   currentView = 'test-case-recording';
+
+  // Deriva o host do produto para reaproveitar uma aba já aberta nele; se não
+  // houver, o background abre a própria URL do produto (não mostra erro).
+  let targetHost;
+  try {
+    if (app.url) targetHost = new URL(app.url).origin + '/*';
+  } catch (_) {}
 
   chrome.runtime.sendMessage(
     {
       action: 'voidr:forwardToTargetTab',
+      targetHost,
+      targetUrl: app.url || undefined,
       payload: {
         action: 'voidr:startSessionRecording',
         testCaseName: scenarioName,
@@ -425,9 +505,16 @@ async function handleStartTestCaseRecording(app) {
     },
     (response) => {
       if (!response?.success) {
-        const msg = response?.error || 'Abra a aba do site-alvo e tente novamente.';
+        const msg =
+          response?.error ||
+          (app.url
+            ? 'Não foi possível abrir o site do produto. Tente novamente.'
+            : 'Este produto não tem uma URL configurada. Abra o site-alvo e tente novamente.');
         showNotification('Could not start: ' + msg, 'error', 4000);
-        if (btn) { btn.textContent = 'Iniciar gravação'; btn.disabled = false; }
+        if (btn) {
+          btn.textContent = 'Iniciar gravação';
+          btn.disabled = false;
+        }
         currentView = 'recording-setup';
         testCaseRecordingContext = null;
         return;
@@ -469,13 +556,15 @@ function showSessionSummaryView(sessionId, scenarioName, appName) {
         </div>
       </div>
 
-      <button id="summary-done-btn" class="btn-primary btn-block">
-        Concluir
-      </button>
+      <div class="rec-actions">
+        <button id="summary-home-btn" class="btn-primary btn-flex">Voltar ao início</button>
+        <button id="summary-close-btn" class="btn-ghost">Fechar</button>
+      </div>
     </div>
   `;
 
-  document.getElementById('summary-done-btn')?.addEventListener('click', () => showMainView());
+  document.getElementById('summary-home-btn')?.addEventListener('click', () => showMainView());
+  document.getElementById('summary-close-btn')?.addEventListener('click', () => window.close());
 }
 
 // ── Onboarding Recording View ────────────────────────────────────────────────
@@ -485,7 +574,9 @@ function showOnboardingRecordingView(context) {
   if (!contentDiv) return;
   currentView = 'onboarding-recording';
 
-  const flows = Array.isArray(context.criticalFlows || context.flows) ? (context.criticalFlows || context.flows) : [];
+  const flows = Array.isArray(context.criticalFlows || context.flows)
+    ? context.criticalFlows || context.flows
+    : [];
 
   contentDiv.innerHTML = `
     <div class="rec-view">
@@ -503,26 +594,38 @@ function showOnboardingRecordingView(context) {
           <span class="rec-field-value">${escapeHtml(context.sessionName || 'Onboarding Session')}</span>
         </div>
 
-        ${context.targetUrl ? `
+        ${
+          context.targetUrl
+            ? `
           <div class="rec-field">
             <span class="rec-field-label">Target</span>
             <span class="rec-field-url">${escapeHtml(context.targetUrl)}</span>
           </div>
-        ` : ''}
+        `
+            : ''
+        }
 
-        ${flows.length > 0 ? `
+        ${
+          flows.length > 0
+            ? `
           <div class="rec-field">
             <span class="rec-field-label">Critical Flows</span>
             <div class="rec-flows">
-              ${flows.map((f, i) => `
+              ${flows
+                .map(
+                  (f, i) => `
                 <div class="rec-flow-item">
                   <span class="rec-flow-num">${i + 1}</span>
                   <span class="rec-flow-name">${escapeHtml(f.name || f.id || 'Flow ' + (i + 1))}</span>
                 </div>
-              `).join('')}
+              `,
+                )
+                .join('')}
             </div>
           </div>
-        ` : ''}
+        `
+            : ''
+        }
 
         <div class="rec-actions">
           <button id="onboarding-start-btn" class="btn-primary btn-flex">
@@ -547,7 +650,10 @@ function showOnboardingRecordingView(context) {
 async function handleStartOnboardingRecording() {
   if (!onboardingRecordingContext) return;
   const btn = document.getElementById('onboarding-start-btn');
-  if (btn) { btn.textContent = 'Iniciando...'; btn.disabled = true; }
+  if (btn) {
+    btn.textContent = 'Iniciando...';
+    btn.disabled = true;
+  }
 
   if (onboardingRecordingContext.authToken) {
     try {
@@ -587,7 +693,10 @@ async function handleStartOnboardingRecording() {
       if (!response?.success) {
         const msg = response?.error || 'Abra a aba do site-alvo e tente novamente.';
         showNotification('Could not start: ' + msg, 'error', 4000);
-        if (btn) { btn.textContent = 'Iniciar gravação'; btn.disabled = false; }
+        if (btn) {
+          btn.textContent = 'Iniciar gravação';
+          btn.disabled = false;
+        }
         return;
       }
       window.close();
@@ -599,7 +708,10 @@ async function handleStartOnboardingRecording() {
 
 function escapeHtml(str) {
   if (!str) return '';
-  return String(str).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  return String(str).replace(
+    /[&<>"]/g,
+    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c],
+  );
 }
 
 function showNotification(message, type = 'info', duration = 3000) {
