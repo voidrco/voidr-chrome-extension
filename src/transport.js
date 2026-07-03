@@ -2,55 +2,51 @@ import { gzip } from 'pako';
 import { state } from './state.js';
 import { safeStringify } from './utils/helpers.js';
 import { compressEventsBase64 } from './utils/image-compression.js';
+import { TOKEN_REFRESH_MARGIN_MS, decodeJwtExp } from './utils/jwt.js';
 
 const SCREEN_MAP_SYNC_DEBOUNCE_MS = 2000;
 
-// Renew the ingest JWT this long before it expires
-const TOKEN_REFRESH_MARGIN_MS = 5 * 60 * 1000;
 // setTimeout stores its delay in a signed 32-bit int
 const MAX_TIMEOUT_MS = 2 ** 31 - 1;
+// Floor between refresh attempts — keeps a near-expiry or clock-skewed token
+// from turning the proactive refresh into a request loop
+const MIN_TOKEN_REFRESH_DELAY_MS = 30 * 1000;
 
-/**
- * Read the `exp` (seconds since epoch) from a JWT without verifying its signature
- */
-function decodeJwtExp(token) {
-  try {
-    const payload = token.split('.')[1];
-    if (!payload) return null;
-    const base64 = payload.replace(/-/g, '+').replace(/_/g, '/');
-    const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=');
-    const claims = JSON.parse(atob(padded));
-    return typeof claims.exp === 'number' ? claims.exp : null;
-  } catch {
-    return null;
-  }
-}
+let refreshInFlight = null;
+let expiryWatchInstalled = false;
 
 /**
  * POST /refresh-token, persist the new JWT, and re-arm the proactive refresh
- * timer against the new expiry.
+ * timer against the new expiry. Single-flight: concurrent callers (proactive
+ * timer + reactive 401 paths) share one request.
  */
-export async function refreshAuthToken() {
-  const refreshResponse = await fetch(`${state.config.collectorUrl}/refresh-token`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: safeStringify({ apiKey: state.config.apiKey }),
+export function refreshAuthToken() {
+  if (refreshInFlight) return refreshInFlight;
+  refreshInFlight = (async () => {
+    const refreshResponse = await fetch(`${state.config.collectorUrl}/refresh-token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: safeStringify({ apiKey: state.config.apiKey }),
+    });
+    if (!refreshResponse.ok) {
+      throw new Error('VoidrCollector: Failed to refresh token');
+    }
+    const data = await refreshResponse.json().catch(() => ({}));
+    const token = data.token || null;
+    if (!token) {
+      throw new Error('VoidrCollector: Failed to refresh token');
+    }
+    state.authToken = token;
+    try {
+      sessionStorage.setItem('voidr_jwt', token);
+    } catch (_) {
+    }
+    scheduleTokenRefresh();
+    return token;
+  })().finally(() => {
+    refreshInFlight = null;
   });
-  if (!refreshResponse.ok) {
-    throw new Error('VoidrCollector: Failed to refresh token');
-  }
-  const data = await refreshResponse.json().catch(() => ({}));
-  const token = data.token || null;
-  if (!token) {
-    throw new Error('VoidrCollector: Failed to refresh token');
-  }
-  state.authToken = token;
-  try {
-    sessionStorage.setItem('voidr_jwt', token);
-  } catch (_) {
-  }
-  scheduleTokenRefresh();
-  return token;
+  return refreshInFlight;
 }
 
 /**
@@ -66,9 +62,11 @@ export function scheduleTokenRefresh() {
   const exp = decodeJwtExp(state.authToken);
   if (exp == null) return;
 
+  installExpiryWatch();
+
   const delay = Math.min(
     MAX_TIMEOUT_MS,
-    Math.max(0, exp * 1000 - Date.now() - TOKEN_REFRESH_MARGIN_MS),
+    Math.max(MIN_TOKEN_REFRESH_DELAY_MS, exp * 1000 - Date.now() - TOKEN_REFRESH_MARGIN_MS),
   );
 
   state.tokenRefreshTimer = setTimeout(() => {
@@ -76,8 +74,28 @@ export function scheduleTokenRefresh() {
     if (state.forceStop) return;
     console.debug('VoidrCollector: refreshing ingest token proactively');
     refreshAuthToken().catch(() => {
+      // A failed refresh must not kill the proactive path: re-arm against the
+      // stale exp, which clamps to MIN_TOKEN_REFRESH_DELAY_MS (retry in 30s).
+      scheduleTokenRefresh();
     });
   }, delay);
+}
+
+// setTimeout doesn't tick through system sleep and background tabs get
+// throttled — on wake the token can be past the margin (or expired) with the
+// timer still pending. Re-check the expiry whenever the page becomes visible.
+function installExpiryWatch() {
+  if (expiryWatchInstalled || typeof document === 'undefined') return;
+  expiryWatchInstalled = true;
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') return;
+    if (state.forceStop || !state.authToken) return;
+    const exp = decodeJwtExp(state.authToken);
+    if (exp != null && exp * 1000 - Date.now() <= TOKEN_REFRESH_MARGIN_MS) {
+      refreshAuthToken().catch(() => {
+      });
+    }
+  });
 }
 
 /**
