@@ -885,7 +885,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             `${API_CONFIG.baseUrl}/collectors/sessions/${encodeURIComponent(request.sessionId)}`,
             { headers: { Authorization: `Bearer ${globalAuthState.token}` } },
           );
-          sendResponse({ found: res.ok });
+          // O endpoint responde 200 mesmo para sessão inexistente (data: null),
+          // então res.ok não basta — a sessão só persistiu se houver `data`.
+          let found = false;
+          let indexed = false;
+          if (res.ok) {
+            const json = await res.json().catch(() => null);
+            found = !!(json && json.data);
+            indexed = !!(json && json.indexStatus && json.indexStatus.indexed);
+          }
+          sendResponse({ found, indexed });
         } catch (_) {
           sendResponse({ found: false });
         }

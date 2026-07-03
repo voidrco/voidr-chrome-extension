@@ -533,14 +533,7 @@ function showSessionSummaryView(sessionId, scenarioName, appName) {
 
   const shortId = sessionId ? sessionId.slice(-12) : '—';
 
-  contentDiv.innerHTML = `
-    <div class="summary-view">
-      <div class="summary-icon-wrap">
-        ${getIcon('CheckCircle2', 36)}
-      </div>
-      <h2 class="summary-title">Sessão capturada</h2>
-      <p class="summary-desc">A gravação foi concluída com sucesso.</p>
-
+  const card = `
       <div class="summary-card">
         <div class="summary-field">
           <span class="rec-field-label">Cenário</span>
@@ -554,17 +547,83 @@ function showSessionSummaryView(sessionId, scenarioName, appName) {
           <span class="rec-field-label">Session ID</span>
           <span class="summary-field-mono">${escapeHtml(shortId)}</span>
         </div>
-      </div>
+      </div>`;
 
+  const actions = `
       <div class="rec-actions">
         <button id="summary-home-btn" class="btn-primary btn-flex">Voltar ao início</button>
         <button id="summary-close-btn" class="btn-ghost">Fechar</button>
-      </div>
+      </div>`;
+
+  const bindActions = () => {
+    document.getElementById('summary-home-btn')?.addEventListener('click', () => showMainView());
+    document.getElementById('summary-close-btn')?.addEventListener('click', () => window.close());
+  };
+
+  // Estado 1: verificando no servidor (não afirma sucesso ainda).
+  contentDiv.innerHTML = `
+    <div class="summary-view">
+      <div class="summary-icon-wrap summary-icon-wrap--pending loading-state">${getIcon('Loader', 36)}</div>
+      <h2 class="summary-title">Verificando gravação…</h2>
+      <p class="summary-desc">Confirmando que a sessão foi salva no servidor.</p>
+      ${card}
     </div>
   `;
 
-  document.getElementById('summary-home-btn')?.addEventListener('click', () => showMainView());
-  document.getElementById('summary-close-btn')?.addEventListener('click', () => window.close());
+  const renderSuccess = () => {
+    contentDiv.innerHTML = `
+      <div class="summary-view">
+        <div class="summary-icon-wrap">${getIcon('CheckCircle2', 36)}</div>
+        <h2 class="summary-title">Sessão capturada</h2>
+        <p class="summary-desc">A gravação foi salva no servidor com sucesso.</p>
+        ${card}
+        ${actions}
+      </div>
+    `;
+    bindActions();
+  };
+
+  const renderFailure = () => {
+    contentDiv.innerHTML = `
+      <div class="summary-view">
+        <div class="summary-icon-wrap summary-icon-wrap--error">${getIcon('AlertCircle', 36)}</div>
+        <h2 class="summary-title">Gravação não confirmada</h2>
+        <p class="summary-desc">A sessão foi finalizada, mas não foi encontrada no servidor. Os dados podem não ter sido salvos — tente gravar novamente.</p>
+        ${card}
+        ${actions}
+      </div>
+    `;
+    bindActions();
+  };
+
+  if (!sessionId) {
+    renderFailure();
+    return;
+  }
+
+  const validateOnce = () =>
+    new Promise((resolve) => {
+      try {
+        chrome.runtime.sendMessage({ action: 'voidr:validateSession', sessionId }, (res) => {
+          void chrome.runtime.lastError;
+          resolve(!!res?.found);
+        });
+      } catch (_) {
+        resolve(false);
+      }
+    });
+
+  // A indexação no servidor pode atrasar 1-2s após o stop; tenta algumas vezes.
+  (async () => {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (await validateOnce()) {
+        renderSuccess();
+        return;
+      }
+      await new Promise((r) => setTimeout(r, 1200));
+    }
+    renderFailure();
+  })();
 }
 
 // ── Onboarding Recording View ────────────────────────────────────────────────

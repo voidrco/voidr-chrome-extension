@@ -458,7 +458,10 @@ function sendCollectorInit(init) {
       },
     };
     if (init.applicationId) initOptions.applicationId = init.applicationId;
-    if (init.mode === 'onboarding') initOptions.samplingRate = 1;
+    // Capturas pela extensão são deliberadas (o usuário clicou "Gravar"), então
+    // sempre gravam 100% — ignoram a taxa de amostragem de produção do app (ex. 10%).
+    // Sem isto, o VoidrCollector v1.15.0 não amostra a sessão e o init() vira no-op.
+    initOptions.samplingRate = 1;
 
     chrome.runtime.sendMessage({ action: 'voidr:injectCollectorAndInit', initOptions }, () => {});
   } catch (_) {}
@@ -476,6 +479,24 @@ async function startVoidrSessionRecording(testCaseName, options = {}) {
     border.className =
       'voidr-rec-border' + (options.mode === 'defect' ? ' voidr-rec-border--defect' : '');
     document.documentElement.appendChild(border);
+
+    // Inicia o collector ANTES do countdown para que a gravação já esteja ativa
+    // quando o "1" some e o usuário começa a agir. Antes, a init só era disparada
+    // DEPOIS do countdown (+ latência de fetch do CDN/inject/POST /init), então os
+    // primeiros segundos da sessão se perdiam. O countdown 3-2-1 vira o aquecimento.
+    // (skip no resume: o background já reinjetou o collector.)
+    if (!options.skipCountdown) {
+      sendCollectorInit({
+        mode,
+        slug,
+        userId,
+        effectiveName,
+        apiKey: options.apiKey,
+        applicationId: options.applicationId || slug,
+        onboardingRunId: options.onboardingRunId,
+        flows: options.flows,
+      });
+    }
 
     if (!options.skipCountdown) {
       const countdown = document.createElement('div');
@@ -545,23 +566,6 @@ async function startVoidrSessionRecording(testCaseName, options = {}) {
       ${recFlowsHtml}
     `;
     document.documentElement.appendChild(panel);
-
-    // Inject collector (skip if resuming — background already re-injected it)
-    if (!options.skipCountdown) {
-      const inlineApiKey = options.apiKey;
-      const applicationId = options.applicationId || slug;
-      const onboardingRunId = options.onboardingRunId;
-      sendCollectorInit({
-        mode,
-        slug,
-        userId,
-        effectiveName,
-        apiKey: inlineApiKey,
-        applicationId,
-        onboardingRunId,
-        flows: options.flows,
-      });
-    }
 
     // Handlers
     let voidrPaused = false;
@@ -640,8 +644,12 @@ async function startVoidrSessionRecording(testCaseName, options = {}) {
         allSessionIds = result.sessionIds || (sessionId ? [sessionId] : []);
       } catch (_) {}
 
-      if (allSessionIds.length > 0 && stopBtn) {
-        stopBtn.innerHTML = `${spinnerSvg} Validando sessão...`;
+      // Só afirmamos "capturada" se o servidor confirmar que a sessão persistiu.
+      // Sem isto o banner verde aparecia sempre (até quando o stop dava timeout
+      // sem sessionId), gerando falso positivo.
+      let validated = false;
+      if (allSessionIds.length > 0) {
+        if (stopBtn) stopBtn.innerHTML = `${spinnerSvg} Validando sessão...`;
 
         // Validate the latest session (most recent, needs time to reach the collector)
         const latestSid = sessionId || allSessionIds[allSessionIds.length - 1];
@@ -655,7 +663,10 @@ async function startVoidrSessionRecording(testCaseName, options = {}) {
                 },
               );
             });
-            if (res.found) break;
+            if (res.found) {
+              validated = true;
+              break;
+            }
           } catch (_) {}
           await new Promise((r) => setTimeout(r, 2000));
         }
@@ -669,7 +680,8 @@ async function startVoidrSessionRecording(testCaseName, options = {}) {
       border.remove();
       panel.remove();
       document.querySelectorAll('.voidr-rec-countdown').forEach((n) => n.remove());
-      showOnboardingDoneBanner(mode);
+      if (validated) showOnboardingDoneBanner(mode);
+      else showCaptureFailedBanner();
     });
   } catch (e) {
     console.error('Voidr session recording error:', e);
@@ -690,6 +702,20 @@ function showDiscardedBanner() {
   setTimeout(() => {
     if (banner.parentNode) banner.remove();
   }, 6000);
+}
+
+function showCaptureFailedBanner() {
+  document.querySelectorAll('.voidr-onb-done').forEach((n) => n.remove());
+  const banner = document.createElement('div');
+  banner.className = 'voidr-onb-done voidr-onb-done--warn';
+  banner.innerHTML = `
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#fcd34d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+    Não foi possível confirmar o salvamento da sessão — tente gravar novamente.
+  `;
+  document.documentElement.appendChild(banner);
+  setTimeout(() => {
+    if (banner.parentNode) banner.remove();
+  }, 10000);
 }
 
 function showOnboardingDoneBanner(mode) {

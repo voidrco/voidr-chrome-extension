@@ -236,6 +236,11 @@
   border-bottom-color: rgba(239, 68, 68, 0.3);
   color: #fca5a5;
 }
+.voidr-onb-done--warn {
+  background: linear-gradient(180deg, #3b2d09 0%, #2a1f05 100%);
+  border-bottom-color: rgba(245, 158, 11, 0.3);
+  color: #fcd34d;
+}
 
 @keyframes voidr-onb-slide-down {
   from {
