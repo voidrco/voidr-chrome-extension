@@ -19,6 +19,7 @@ export const state = {
   screenMapSyncInFlight: false,
   screenMapSyncQueued: false,
   screenMapSyncTimer: null,
+  tokenRefreshTimer: null,
   originalFetch: null,
   originalXHR: null,
   resourceObserver: null,
@@ -58,6 +59,10 @@ export function resetState() {
     clearTimeout(state.screenMapSyncTimer);
   }
   state.screenMapSyncTimer = null;
+  if (state.tokenRefreshTimer) {
+    clearTimeout(state.tokenRefreshTimer);
+  }
+  state.tokenRefreshTimer = null;
   state.originalFetch = null;
   state.originalXHR = null;
   state.resourceObserver = null;

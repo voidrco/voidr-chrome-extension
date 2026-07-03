@@ -5,6 +5,81 @@ import { compressEventsBase64 } from './utils/image-compression.js';
 
 const SCREEN_MAP_SYNC_DEBOUNCE_MS = 2000;
 
+// Renew the ingest JWT this long before it expires
+const TOKEN_REFRESH_MARGIN_MS = 5 * 60 * 1000;
+// setTimeout stores its delay in a signed 32-bit int
+const MAX_TIMEOUT_MS = 2 ** 31 - 1;
+
+/**
+ * Read the `exp` (seconds since epoch) from a JWT without verifying its signature
+ */
+function decodeJwtExp(token) {
+  try {
+    const payload = token.split('.')[1];
+    if (!payload) return null;
+    const base64 = payload.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=');
+    const claims = JSON.parse(atob(padded));
+    return typeof claims.exp === 'number' ? claims.exp : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * POST /refresh-token, persist the new JWT, and re-arm the proactive refresh
+ * timer against the new expiry.
+ */
+export async function refreshAuthToken() {
+  const refreshResponse = await fetch(`${state.config.collectorUrl}/refresh-token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: safeStringify({ apiKey: state.config.apiKey }),
+  });
+  if (!refreshResponse.ok) {
+    throw new Error('VoidrCollector: Failed to refresh token');
+  }
+  const data = await refreshResponse.json().catch(() => ({}));
+  const token = data.token || null;
+  if (!token) {
+    throw new Error('VoidrCollector: Failed to refresh token');
+  }
+  state.authToken = token;
+  try {
+    sessionStorage.setItem('voidr_jwt', token);
+  } catch (_) {
+  }
+  scheduleTokenRefresh();
+  return token;
+}
+
+/**
+ * Schedule a proactive token refresh shortly before the current JWT expires.
+ */
+export function scheduleTokenRefresh() {
+  if (state.tokenRefreshTimer) {
+    clearTimeout(state.tokenRefreshTimer);
+    state.tokenRefreshTimer = null;
+  }
+  if (state.forceStop || !state.authToken) return;
+
+  const exp = decodeJwtExp(state.authToken);
+  if (exp == null) return;
+
+  const delay = Math.min(
+    MAX_TIMEOUT_MS,
+    Math.max(0, exp * 1000 - Date.now() - TOKEN_REFRESH_MARGIN_MS),
+  );
+
+  state.tokenRefreshTimer = setTimeout(() => {
+    state.tokenRefreshTimer = null;
+    if (state.forceStop) return;
+    console.debug('VoidrCollector: refreshing ingest token proactively');
+    refreshAuthToken().catch(() => {
+    });
+  }, delay);
+}
+
 /**
  * Buffer a network event. Flushes automatically when buffer exceeds 10 entries.
  */
@@ -37,15 +112,15 @@ export function sendNetworkEvents() {
  */
 export async function sendEvents() {
   const MIN_BATCH_SIZE = 10;
-  if (state.isSending || state.events.length < MIN_BATCH_SIZE || state.forceStop || state.isPaused) return;
+  if (state.isSending || state.events.length < MIN_BATCH_SIZE || state.forceStop || state.isPaused)
+    return;
   state.isSending = true;
 
   const batch = state.events.splice(0, 100);
   const compressedBatch = await compressEventsBase64(batch);
 
   const startedAt = compressedBatch[0]?.timestamp ?? Date.now();
-  const endedAt =
-    compressedBatch[compressedBatch.length - 1]?.timestamp ?? Date.now();
+  const endedAt = compressedBatch[compressedBatch.length - 1]?.timestamp ?? Date.now();
 
   const payload = {
     userId: state.userId || null,
@@ -74,31 +149,15 @@ export async function sendEvents() {
       body: compressed,
     });
 
-    // Handle 401 - refresh token and retry
+    // Fallback: token expired/revoked mid-send — refresh and retry once.
     if (res.status === 401) {
-      const refreshResponse = await fetch(`${state.config.collectorUrl}/refresh-token`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: safeStringify({
-          apiKey: state.config.apiKey,
-        }),
-      });
-      if (!refreshResponse.ok) {
-        throw new Error('VoidrCollector: Failed to refresh token');
-      }
-      const data = await refreshResponse.json().catch(() => ({}));
-      state.authToken = data.token || null;
-      if (!state.authToken) {
-        throw new Error('VoidrCollector: Failed to refresh token');
-      }
-      sessionStorage.setItem('voidr_jwt', state.authToken);
-      // Retry the original request with new token
+      const token = await refreshAuthToken();
       res = await fetch(`${state.config.collectorUrl}/sessions/chunk`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Content-Encoding': 'gzip',
-          Authorization: `Bearer ${state.authToken}`,
+          Authorization: `Bearer ${token}`,
         },
         body: compressed,
       });
@@ -196,9 +255,10 @@ export async function syncScreenMap() {
   let runQueuedSync = false;
 
   try {
-    const dirtyVersion = typeof state.elementMapper.getDirtyVersion === 'function'
-      ? state.elementMapper.getDirtyVersion()
-      : undefined;
+    const dirtyVersion =
+      typeof state.elementMapper.getDirtyVersion === 'function'
+        ? state.elementMapper.getDirtyVersion()
+        : undefined;
     const snapshot = state.elementMapper.getSnapshot();
     if (!snapshot.screens.length) return;
 
@@ -221,28 +281,21 @@ export async function syncScreenMap() {
       body: compressed,
     });
 
-    // Handle 401 - refresh token and retry
+    // Fallback: token expired/revoked mid-sync — refresh and retry once.
     if (res.status === 401) {
-      const refreshResponse = await fetch(`${state.config.collectorUrl}/refresh-token`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: safeStringify({ apiKey: state.config.apiKey }),
-      });
-      if (refreshResponse.ok) {
-        const data = await refreshResponse.json().catch(() => ({}));
-        state.authToken = data.token || null;
-        if (state.authToken) {
-          sessionStorage.setItem('voidr_jwt', state.authToken);
-          res = await fetch(`${state.config.collectorUrl}/screen-map/sync`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Content-Encoding': 'gzip',
-              Authorization: `Bearer ${state.authToken}`,
-            },
-            body: compressed,
-          });
-        }
+      try {
+        const token = await refreshAuthToken();
+        res = await fetch(`${state.config.collectorUrl}/screen-map/sync`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Content-Encoding': 'gzip',
+            Authorization: `Bearer ${token}`,
+          },
+          body: compressed,
+        });
+      } catch {
+        /* non-fatal — next sync retries */
       }
     }
 

@@ -71,7 +71,7 @@ Requests to the collector itself are excluded to avoid feedback loops.
 
 - Session ID: timestamp-based, stored in `sessionStorage['voidr_session_id']`
 - Session expiry: configurable timeout (default 30 minutes of inactivity)
-- JWT token: cached in `sessionStorage['voidr_jwt']`, auto-refreshed on 401
+- JWT token: cached in `sessionStorage['voidr_jwt']` (1h TTL). Renewed proactively ~5 min before expiry via a scheduled `POST /refresh-token`, so long-lived tabs don't hit a 401 on the chunk-send path. A reactive refresh-on-401 remains as a fallback (e.g. server-side revocation or a missed timer).
 - On `beforeunload`: synchronous XHR fallback to ensure event delivery
 
 ### Data Privacy
