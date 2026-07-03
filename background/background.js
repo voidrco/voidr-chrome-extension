@@ -656,7 +656,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             });
           } catch (_) {}
 
-          await setActiveRecording({
+          const recording = await setActiveRecording({
             tabId: targetTabId,
             currentTabId: targetTabId,
             trackedTabIds: [targetTabId],
@@ -669,6 +669,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             sessionIds: [sessionId],
             startedAt: Date.now(),
           });
+
+          // The onboarding reload wipes the recording panel the content script
+          // rendered before sending this message — restore it now.
+          if (isOnboarding) {
+            await sendResumeRecordingUi(targetTabId, recording);
+          }
 
           sendResponse({ success: true });
         } catch (e) {
