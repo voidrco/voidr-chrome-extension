@@ -565,6 +565,29 @@ async function checkAuthenticationStatus() {
   }
 }
 
+function reloadTabAndWaitForLoad(tabId, timeoutMs = 15000) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      try {
+        chrome.tabs.onUpdated.removeListener(listener);
+      } catch (_) {}
+      clearTimeout(timer);
+      resolve();
+    };
+    const listener = (updatedTabId, changeInfo) => {
+      if (updatedTabId === tabId && changeInfo.status === 'complete') finish();
+    };
+    const timer = setTimeout(finish, timeoutMs);
+    chrome.tabs.onUpdated.addListener(listener);
+    chrome.tabs.reload(tabId, { bypassCache: false }, () => {
+      void chrome.runtime.lastError;
+    });
+  });
+}
+
 // Listener para mensagens dos content scripts
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   switch (request.action) {
@@ -599,6 +622,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           // to collector.voidr.co otherwise). Rule is removed on session stop.
           await enableCspBypassForTab(targetTabId);
 
+          const isOnboarding =
+            request.initOptions?.meta?.mode === 'onboarding' ||
+            Boolean(request.initOptions?.meta?.onboardingRunId);
+          if (isOnboarding) {
+            await reloadTabAndWaitForLoad(targetTabId);
+          }
+
           const canonicalSessionId =
             request.initOptions?.forcedSessionId || createRecordingSessionId();
           const initOptions = {
@@ -626,7 +656,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             });
           } catch (_) {}
 
-          await setActiveRecording({
+          const recording = await setActiveRecording({
             tabId: targetTabId,
             currentTabId: targetTabId,
             trackedTabIds: [targetTabId],
@@ -639,6 +669,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             sessionIds: [sessionId],
             startedAt: Date.now(),
           });
+
+          // The onboarding reload wipes the recording panel the content script
+          // rendered before sending this message — restore it now.
+          if (isOnboarding) {
+            await sendResumeRecordingUi(targetTabId, recording);
+          }
 
           sendResponse({ success: true });
         } catch (e) {
