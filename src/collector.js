@@ -12,8 +12,10 @@ import {
   finalizeSessionBeacon,
 } from './transport.js';
 import { startRecording, startRrwebOnly } from './recording.js';
+import { sendEnvironmentBundle } from './environment-bundle.js';
 import { initIdleWatch, stopIdleWatch } from './listeners/idle.js';
 import { inlineIconFonts } from './assets/inline-fonts.js';
+import { inlineUnreadableStylesheets } from './assets/inline-stylesheets.js';
 import { ElementMapper } from './element-mapper.js';
 
 /**
@@ -148,10 +150,15 @@ export function createCollector() {
         return;
       }
 
-      // Inline same-origin icon fonts as data: URIs BEFORE the first snapshot so
-      // the replay (different origin, strict CSP) can render them instead of
-      // showing tofu (□). Time-boxed and best-effort — never blocks recording.
+      // Inline replay-critical assets BEFORE the first snapshot so the replay
+      // (different origin, strict CSP) renders faithfully: unreadable
+      // cross-origin stylesheets as <style> text, and @font-face binaries as
+      // data: URIs (instead of tofu □). Both run in parallel, time-boxed and
+      // best-effort — never block recording. Stylesheets must land first-ish
+      // so newly readable @font-face rules are visible to the font pass, hence
+      // the sequential await inside the same guard.
       try {
+        await inlineUnreadableStylesheets();
         await inlineIconFonts();
       } catch {
         /* best-effort: recording proceeds regardless */
@@ -190,6 +197,10 @@ export function createCollector() {
 
       // Auto-pause recording on prolonged inactivity (idle/forgotten tabs)
       initIdleWatch(api);
+
+      // Snapshot the environment bundle (storage + cookies + viewport/UA) for
+      // future local replay. Best-effort, non-blocking — never gates recording.
+      sendEnvironmentBundle();
 
       console.log(`VoidrCollector v${VOIDR_VERSION} - Initialized successfully`);
     },
@@ -345,6 +356,11 @@ export function createCollector() {
         // Best-effort flush
       }
       finalizeSessionBeacon();
+
+      // Refresh the environment bundle with the FINAL page state (storage/cookies
+      // may have changed during the session). Fire-and-forget BEFORE resetState;
+      // sendEnvironmentBundle snapshots the config/token synchronously.
+      sendEnvironmentBundle();
 
       // Clear sessionStorage
       try {

@@ -30,9 +30,20 @@ export const DEFAULT_CONFIG = {
   // Attach a top-level `traceId` from request correlation headers when present
   // (x-correlation-id / x-request-id / traceparent / x-trace-id). OFF by default.
   captureTraceId: false,
-  // Inline same-origin icon/web fonts as data: URIs at record start so they
-  // render in the replay under its strict CSP. Set false to disable.
+  // Inline icon/web fonts as data: URIs at record start (same-origin with
+  // credentials, cross-origin via anonymous CORS) so they render in the replay
+  // under its strict CSP. Set false to disable.
   inlineFonts: true,
+  // Inline UNREADABLE cross-origin stylesheets (<link> without crossorigin)
+  // as <style> tags at record start so the replay renders the layout. Set
+  // false to disable.
+  inlineStylesheets: true,
+  // Capture a SessionEnvironmentBundle (localStorage/sessionStorage/cookies +
+  // viewport/UA/URL) at recording start and refresh it on stop, shipped to a
+  // dedicated collector endpoint for future local Playwright replay. OFF by
+  // default — only extension-driven captures (which set this true) opt in. The
+  // bundle contains secrets and is stored separately from replay-served data.
+  captureEnvironmentBundle: false,
   user: null,
   meta: null,
 };

@@ -22,10 +22,12 @@ import { state } from '../state.js';
  * which render fine under the replay CSP. Declared last, these rules win the
  * cascade over the original (unreachable) ones for the same family/weight/style.
  *
- * Safety: same-origin only (no cross-origin fetch / CORS / exfil surprises),
- * hard caps on count/size, per-fetch + total time budget, and the whole thing is
- * best-effort (never throws into the record path). Disable via config
- * `inlineFonts: false`.
+ * Safety: same-origin fonts are fetched with credentials; cross-origin fonts
+ * are fetched anonymously in CORS mode (browsers ALREADY require CORS for CSS
+ * fonts, so any font a page renders is CORS-readable — Google Fonts, CDNs,
+ * FontAwesome all send ACAO:*). Hard caps on count/size, per-fetch + total time
+ * budget, and the whole thing is best-effort (never throws into the record
+ * path). Disable via config `inlineFonts: false`.
  */
 
 const FONT_MIME = {
@@ -36,9 +38,9 @@ const FONT_MIME = {
   eot: 'application/vnd.ms-fontobject',
 };
 
-const MAX_FONTS = 10; // cap distinct fonts inlined per session
+const MAX_FONTS = 16; // cap distinct fonts inlined per session
 const MAX_FONT_BYTES = 512 * 1024; // skip anything larger than 512KB
-const TOTAL_BUDGET_MS = 2500; // overall wall-clock budget
+const TOTAL_BUDGET_MS = 3000; // overall wall-clock budget
 const PER_FETCH_MS = 1500; // per-font fetch timeout
 
 function extensionOf(url) {
@@ -107,11 +109,18 @@ function bufferToBase64(buffer) {
   return btoa(binary);
 }
 
-async function fetchFontAsDataUri(absUrl) {
+async function fetchFontAsDataUri(absUrl, crossOrigin) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), PER_FETCH_MS);
   try {
-    const res = await fetch(absUrl, { credentials: 'same-origin', signal: controller.signal });
+    // Cross-origin fonts must be CORS-readable to render at all (per CSS spec),
+    // so an anonymous CORS fetch normally hits the browser cache and succeeds.
+    const res = await fetch(
+      absUrl,
+      crossOrigin
+        ? { mode: 'cors', credentials: 'omit', signal: controller.signal }
+        : { credentials: 'same-origin', signal: controller.signal },
+    );
     if (!res.ok) return null;
     const buffer = await res.arrayBuffer();
     if (buffer.byteLength > MAX_FONT_BYTES) return null;
@@ -149,10 +158,12 @@ export async function inlineIconFonts() {
       const src = style.getPropertyValue('src');
       if (!src) continue;
 
-      // Pick the first SAME-ORIGIN, not-yet-inlined url(). Skip the rule entirely
-      // if it already has a data:/blob: source (nothing to do) or has no usable
-      // same-origin source.
-      let chosen = null;
+      // Pick the first not-yet-inlined url(), preferring SAME-ORIGIN sources.
+      // Skip the rule entirely if it already has a data:/blob: source (nothing
+      // to do). Cross-origin sources are kept as a fallback and fetched in
+      // anonymous CORS mode (see fetchFontAsDataUri).
+      let chosenSameOrigin = null;
+      let chosenCrossOrigin = null;
       let alreadyInline = false;
       for (const raw of parseSrcUrls(src)) {
         if (/^(data:|blob:)/i.test(raw)) {
@@ -165,14 +176,19 @@ export async function inlineIconFonts() {
         } catch {
           continue;
         }
-        if (abs.origin !== window.location.origin) continue; // same-origin only
-        chosen = abs.href;
-        break;
+        if (abs.origin === window.location.origin) {
+          chosenSameOrigin = abs.href;
+          break;
+        }
+        if (!chosenCrossOrigin && /^https?:$/.test(abs.protocol)) {
+          chosenCrossOrigin = abs.href;
+        }
       }
+      const chosen = chosenSameOrigin || chosenCrossOrigin;
       if (alreadyInline || !chosen || seen.has(chosen)) continue;
       seen.add(chosen);
 
-      const fetched = await fetchFontAsDataUri(chosen);
+      const fetched = await fetchFontAsDataUri(chosen, !chosenSameOrigin);
       if (!fetched) continue;
 
       const family = style.getPropertyValue('font-family');
