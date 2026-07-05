@@ -52,11 +52,14 @@ A focused, browser‑native assistant for test planning, exploratory testing, an
   - Persist user settings and last context via `chrome.storage`
 
 - **Environment config**
-  - `config/env.js` exposes `__VOIDR_ENV__` with sensible defaults:
-    - `VOIDR_API_BASE_URL` (default dev: `http://localhost:8000/v1`)
-    - `VOIDR_PLATFORM_URL` (default dev: `http://localhost:3030`)
+  - `config/env.js` (COMMITTED — always points to PRODUCTION) exposes `__VOIDR_ENV__`:
+    - `VOIDR_API_BASE_URL` (`https://api.voidr.co/v1`)
+    - `VOIDR_PLATFORM_URL` (`https://platform.voidr.co`)
+    - `VOIDR_COLLECTOR_URL` (`https://collector.voidr.co`)
     - Optional: `VOIDR_AUTH0_DOMAIN`, `VOIDR_AUTH0_CLIENT_ID`, `VOIDR_AUTH0_AUDIENCE`
-  - Example template provided at `config/env.example.js`
+  - Local dev overrides live in `config/env.local.js` (GITIGNORED), loaded after
+    `env.js` and merged on top — template at `config/env.local.example.js`.
+    Never edit `env.js` to point at localhost.
 
 ---
 
@@ -93,8 +96,9 @@ A focused, browser‑native assistant for test planning, exploratory testing, an
 │   ├── icon48.png
 │   └── icon128.png
 ├── config/
-│   ├── env.example.js
-│   └── env.js
+│   ├── env.js               (committed — production endpoints)
+│   ├── env.local.example.js (template for local overrides)
+│   └── env.local.js         (gitignored — your local overrides, optional)
 ├── build.md
 └── README.md
 ```
@@ -117,13 +121,18 @@ npm install
 chrome://extensions → Enable Developer Mode → Load unpacked → select this folder
 ```
 
-3) Configure environment (optional)
+3) Configure environment (optional — only for local backends)
 
 ```text
-Copy config/env.example.js → config/env.js and adjust values as needed
-Defaults for local dev:
-- VOIDR_API_BASE_URL = http://localhost:8000/v1
+Copy config/env.local.example.js → config/env.local.js and adjust values.
+env.local.js is gitignored and merges OVER the production values of env.js.
+Typical local dev overrides:
+- VOIDR_API_BASE_URL = http://localhost:3000/v1
 - VOIDR_PLATFORM_URL = http://localhost:3030
+- VOIDR_COLLECTOR_URL = http://localhost:3100
+
+To go back to production: delete config/env.local.js (and reload the extension).
+NEVER edit config/env.js for local dev — it is the committed production config.
 ```
 
 ---
