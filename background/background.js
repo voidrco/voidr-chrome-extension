@@ -8,6 +8,15 @@ try {
     importScripts('../config/env.js');
   } catch (__) {}
 }
+// Overrides locais de desenvolvimento (config/env.local.js, gitignored) —
+// ausente em builds de produção, então o catch silencioso é o caminho normal.
+try {
+  importScripts('config/env.local.js');
+} catch (_) {
+  try {
+    importScripts('../config/env.local.js');
+  } catch (__) {}
+}
 
 // Configurações da API - com overrides via __VOIDR_ENV__
 const __ENV__ = (typeof globalThis !== 'undefined' && globalThis.__VOIDR_ENV__) || {};
@@ -129,6 +138,7 @@ function normalizeActiveRecording(recording) {
     mode: recording.mode || recording.initOptions?.meta?.mode || 'test-case',
     onboardingRunId:
       recording.onboardingRunId || recording.initOptions?.meta?.onboardingRunId || null,
+    evidence: recording.evidence || recording.initOptions?.meta?.evidence || null,
     flows: recording.flows || recording.initOptions?.meta?.flows || [],
     sessionIds,
     startedAt: recording.startedAt || Date.now(),
@@ -270,6 +280,103 @@ function isHttpUrl(u) {
     return /^https?:/i.test(String(u || ''));
   } catch (_) {
     return false;
+  }
+}
+
+// ── SessionEnvironmentBundle: HttpOnly cookie capture ────────────────────────
+// The collector-script (page context) can only read NON-HttpOnly cookies via
+// document.cookie. The real auth session is almost always an HttpOnly cookie,
+// which is invisible to page JS — so we capture the FULL cookie set here in the
+// background using the chrome.cookies API (this is exactly why the "cookies"
+// permission is requested in manifest.json) and POST it to the collector's
+// environment-bundle endpoint, where it merges with the page bundle. This write
+// carries the HttpOnly truth and overwrites the page's best-effort cookies.
+
+function toPlaywrightSameSite(chromeSameSite) {
+  switch (chromeSameSite) {
+    case 'no_restriction':
+      return 'None';
+    case 'strict':
+      return 'Strict';
+    case 'lax':
+      return 'Lax';
+    default:
+      return 'Lax';
+  }
+}
+
+async function captureAndUploadCookies(sessionId, pageUrl) {
+  try {
+    if (!sessionId || !pageUrl || !isHttpUrl(pageUrl)) return;
+    if (!chrome.cookies?.getAll) return;
+    if (!globalAuthState.token) await checkAuthenticationStatus();
+    if (!globalAuthState.token) return;
+
+    const rawCookies = await chrome.cookies.getAll({ url: pageUrl });
+    if (!Array.isArray(rawCookies) || rawCookies.length === 0) return;
+
+    const cookies = rawCookies.map((c) => ({
+      name: c.name,
+      value: c.value,
+      domain: c.domain,
+      path: c.path || '/',
+      expires: typeof c.expirationDate === 'number' ? Math.round(c.expirationDate) : -1,
+      httpOnly: Boolean(c.httpOnly),
+      secure: Boolean(c.secure),
+      sameSite: toPlaywrightSameSite(c.sameSite),
+    }));
+
+    const url = `${API_CONFIG.collectorUrl}/sessions/${encodeURIComponent(sessionId)}/environment-bundle`;
+    const doPost = () =>
+      fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${globalAuthState.token}`,
+        },
+        // Top-level `cookies` marks this as the HttpOnly-authoritative write.
+        body: JSON.stringify({ sessionId, cookies, source: 'extension' }),
+      });
+
+    // The collector session is created by the collector-script's ASYNC /init
+    // handshake — at recording start this upload can race it and get a 404
+    // ("session not found YET"). Retry 404s with backoff until the session
+    // exists instead of silently dropping the HttpOnly cookies. Any other
+    // failure (401/5xx/network) gets a single retry and a loud warning, so
+    // `hasExtensionCookies:false` is never silent.
+    const RETRY_DELAYS_404_MS = [500, 1000, 2000, 4000];
+    let attempt = 0;
+    let extraRetryUsed = false;
+    for (;;) {
+      attempt += 1;
+      let status = null;
+      let failure = null;
+      try {
+        const res = await doPost();
+        if (res.ok) return;
+        status = res.status;
+        failure = `HTTP ${res.status}`;
+      } catch (e) {
+        failure = `network error: ${e?.message || e}`;
+      }
+
+      const is404 = status === 404;
+      const delay = is404 ? RETRY_DELAYS_404_MS[attempt - 1] : !extraRetryUsed ? 750 : undefined;
+      if (delay === undefined) {
+        console.warn(
+          `[Voidr] Environment-bundle cookie upload FAILED for session ${sessionId} (${failure}) — ` +
+            'HttpOnly cookies will be missing from the session bundle (hasExtensionCookies stays false).',
+        );
+        return;
+      }
+      if (!is404) extraRetryUsed = true;
+      console.warn(
+        `[Voidr] Environment-bundle cookie upload attempt ${attempt} failed (${failure}) — retrying in ${delay}ms`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  } catch (e) {
+    console.warn('[Voidr] captureAndUploadCookies failed', e?.message || e);
   }
 }
 
@@ -417,6 +524,7 @@ async function sendResumeRecordingUi(tabId, recording) {
     testCaseName: recording.testCaseName,
     mode: recording.mode,
     onboardingRunId: recording.onboardingRunId,
+    evidence: recording.evidence || null,
     flows: recording.flows,
     applicationId: recording.initOptions?.applicationId || null,
   };
@@ -635,10 +743,17 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             testCaseName: request.initOptions?.meta?.testCase || 'Test Case',
             mode: request.initOptions?.meta?.mode || 'test-case',
             onboardingRunId: request.initOptions?.meta?.onboardingRunId,
+            evidence: request.initOptions?.meta?.evidence || null,
             flows: request.initOptions?.meta?.flows || [],
             sessionIds: [sessionId],
             startedAt: Date.now(),
           });
+
+          // Capture HttpOnly cookies (invisible to the page) for the environment
+          // bundle when this recording opted in. Best-effort, non-blocking.
+          if (request.initOptions?.captureEnvironmentBundle) {
+            captureAndUploadCookies(sessionId, request.initOptions?.url);
+          }
 
           sendResponse({ success: true });
         } catch (e) {
@@ -1075,6 +1190,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           const sessionId =
             (await readCollectorSessionId(targetTabId)) || priorRecording?.canonicalSessionId || null;
           const activeRunId = request.onboardingRunId || null;
+          // Evidence coordinates travel back with the captured session so the
+          // platform can auto-attach it to the manual run without re-deriving.
+          const evidenceMeta = priorRecording?.evidence || null;
 
           // Merge current sessionId with all previously accumulated ones
           const allSessionIds = [...new Set([...priorSessionIds, sessionId].filter(Boolean))];
@@ -1085,6 +1203,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
               action: 'voidr:sessionCaptured',
               sessionId: sid,
               onboardingRunId: activeRunId,
+              evidence: evidenceMeta || undefined,
             };
             try {
               chrome.runtime.sendMessage(capturedPayload);
@@ -1116,11 +1235,21 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                         type: 'voidr:sessionCaptured',
                         sessionId: sid,
                         onboardingRunId: activeRunId,
+                        evidence: evidenceMeta || undefined,
                       },
                     ],
                   })
                   .catch(() => {});
               }
+            } catch (_) {}
+          }
+
+          // Refresh HttpOnly cookies for the environment bundle with the FINAL
+          // state before ending the session (cookies may have changed mid-run).
+          if (priorRecording?.initOptions?.captureEnvironmentBundle && sessionId) {
+            try {
+              const tab = await chrome.tabs.get(targetTabId).catch(() => null);
+              await captureAndUploadCookies(sessionId, tab?.url);
             } catch (_) {}
           }
 

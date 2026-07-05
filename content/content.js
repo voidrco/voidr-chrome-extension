@@ -127,8 +127,14 @@ function buildRecordingContext(providedName, options = {}) {
     ? providedName
     : mode === 'defect'
       ? `Sample Defect ${timestamp}`
-      : `Sample Test Case ${timestamp}`;
-  const userId = mode === 'defect' ? 'voidr-defect-assistant' : 'voidr-test-case-assistant';
+      : mode === 'evidence'
+        ? `Evidência ${timestamp}`
+        : `Sample Test Case ${timestamp}`;
+  const userId = mode === 'defect'
+    ? 'voidr-defect-assistant'
+    : mode === 'evidence'
+      ? 'voidr-evidence-assistant'
+      : 'voidr-test-case-assistant';
   return { mode, slug, userId, effectiveName };
 }
 
@@ -145,10 +151,17 @@ function sendCollectorInit(init) {
         slug: init.slug,
         onboardingRunId: init.onboardingRunId || undefined,
         flows: init.flows || undefined,
+        evidence: init.evidence || undefined,
       },
+      // Extension-driven recordings are the future replay targets: opt into the
+      // session environment bundle (localStorage/sessionStorage/cookies/viewport)
+      // so the collector snapshots the page state for local replay bootstrap.
+      captureEnvironmentBundle: true,
     };
     if (init.applicationId) initOptions.applicationId = init.applicationId;
-    if (init.mode === 'onboarding') initOptions.samplingRate = 1;
+    // Onboarding and evidence runs must never be sampled out — every one is a
+    // deliberate, user-initiated capture (onboarding coverage / manual-run proof).
+    if (init.mode === 'onboarding' || init.mode === 'evidence') initOptions.samplingRate = 1;
 
     chrome.runtime.sendMessage({ action: 'voidr:injectCollectorAndInit', initOptions }, () => {});
   } catch (_) {}
@@ -161,7 +174,9 @@ async function startVoidrSessionRecording(testCaseName, options = {}) {
     document.querySelectorAll('.voidr-rec-border, .voidr-rec-countdown, .voidr-rec-panel').forEach((n) => n.remove());
 
     const border = document.createElement('div');
-    border.className = 'voidr-rec-border' + (options.mode === 'defect' ? ' voidr-rec-border--defect' : '');
+    border.className = 'voidr-rec-border'
+      + (options.mode === 'defect' ? ' voidr-rec-border--defect' : '')
+      + (options.mode === 'evidence' ? ' voidr-rec-border--evidence' : '');
     document.documentElement.appendChild(border);
 
     if (!options.skipCountdown) {
@@ -189,13 +204,20 @@ async function startVoidrSessionRecording(testCaseName, options = {}) {
         ).join('')}</div>`
       : '';
 
+    // In evidence mode the panel reflects the manual-run case being proven,
+    // instead of the generic "recording session" copy.
+    const evidenceCaseName = options.evidence?.caseName || effectiveName;
+    const recTitleHtml = options.mode === 'evidence'
+      ? `Gravando evidência — &quot;${escapeHtml(evidenceCaseName)}&quot;`
+      : `Recording session for &quot;${escapeHtml(effectiveName)}&quot;`;
+
     const panel = document.createElement('div');
-    panel.className = 'voidr-rec-panel';
+    panel.className = 'voidr-rec-panel' + (options.mode === 'evidence' ? ' voidr-rec-panel--evidence' : '');
     panel.innerHTML = `
       <div class="voidr-rec-icon">
         <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" fill="#ef4444"><circle cx="12" cy="12" r="6" /></svg>
       </div>
-      <div class="voidr-rec-title">Recording session for &quot;${escapeHtml(effectiveName)}&quot;</div>
+      <div class="voidr-rec-title">${recTitleHtml}</div>
       <div class="voidr-rec-actions">
         <button class="voidr-rec-btn" id="voidr-rec-rollback">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -219,7 +241,7 @@ async function startVoidrSessionRecording(testCaseName, options = {}) {
       const inlineApiKey = options.apiKey;
       const applicationId = options.applicationId || slug;
       const onboardingRunId = options.onboardingRunId;
-      sendCollectorInit({ mode, slug, userId, effectiveName, apiKey: inlineApiKey, applicationId, onboardingRunId, flows: options.flows });
+      sendCollectorInit({ mode, slug, userId, effectiveName, apiKey: inlineApiKey, applicationId, onboardingRunId, flows: options.flows, evidence: options.evidence });
     }
 
     // Handlers
@@ -271,7 +293,7 @@ async function startVoidrSessionRecording(testCaseName, options = {}) {
         }
 
         for (const sid of allSessionIds) {
-          broadcastSessionToOnboarding(sid, activeRunId);
+          broadcastSessionToOnboarding(sid, activeRunId, options.evidence);
         }
         lastCapturedSessionId = latestSid;
       }
@@ -294,7 +316,9 @@ function showOnboardingDoneBanner(mode) {
   banner.className = 'voidr-onb-done';
   const message = mode === 'onboarding'
     ? 'Sessão capturada com sucesso — pode fechar esta aba e voltar ao onboarding.'
-    : 'Sessão capturada com sucesso — pode fechar esta aba e voltar à extensão.';
+    : mode === 'evidence'
+      ? 'Evidência capturada com sucesso — pode fechar esta aba e voltar à execução manual.'
+      : 'Sessão capturada com sucesso — pode fechar esta aba e voltar à extensão.';
   banner.innerHTML = `
     <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#86efac" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9 12l2 2 4-4"/></svg>
     ${message}
@@ -303,12 +327,15 @@ function showOnboardingDoneBanner(mode) {
   setTimeout(() => { if (banner.parentNode) banner.remove(); }, 15000);
 }
 
-function broadcastSessionToOnboarding(sessionId, onboardingRunId) {
+function broadcastSessionToOnboarding(sessionId, onboardingRunId, evidence) {
   try {
     const payload = JSON.stringify({
       type: 'voidr:sessionCaptured',
       sessionId,
       onboardingRunId: onboardingRunId || undefined,
+      // In evidence mode, carry the manual-run coordinates back to the platform
+      // so it can auto-attach this session as evidence without re-deriving them.
+      evidence: evidence || undefined,
     });
     const script = document.createElement('script');
     script.textContent = `try{var bc=new BroadcastChannel('voidr-onboarding');bc.postMessage(${payload});bc.close();}catch(_){}`;
@@ -332,6 +359,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         apiKey: request.apiKey,
         onboardingRunId: request.onboardingRunId,
         flows: request.flows || [],
+        evidence: request.evidence,
       });
       break;
     case 'voidr:resumeRecordingUI':
@@ -342,18 +370,91 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         applicationId: request.applicationId,
         onboardingRunId: request.onboardingRunId,
         flows: request.flows || [],
+        evidence: request.evidence,
         skipCountdown: true,
       });
       break;
     case 'voidr:sessionCaptured':
       if (request.sessionId) {
         lastCapturedSessionId = request.sessionId;
-        broadcastSessionToOnboarding(request.sessionId, request.onboardingRunId);
-        showOnboardingDoneBanner();
+        broadcastSessionToOnboarding(request.sessionId, request.onboardingRunId, request.evidence);
+        showOnboardingDoneBanner(request.evidence ? 'evidence' : undefined);
       }
       break;
   }
 });
+
+// ── Evidence deep-link (platform -> extension) ───────────────────────────────
+// For manual test execution the platform opens the app URL with recording
+// params (voidr_record=1&voidr_mode=evidence&voidr_plan_id=...&…). Unlike the
+// onboarding flow — which pairs through the popup + a VDR code — evidence mode is
+// fully deep-link driven: we read the params here and auto-start an evidence
+// recording so the tester just performs the case. The apiKey is resolved in the
+// background (authenticated), so it never rides in the URL.
+
+function parseEvidenceDeepLink() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('voidr_record') !== '1') return null;
+    if (params.get('voidr_mode') !== 'evidence') return null;
+    const caseName = params.get('voidr_case_name') || 'Execução manual';
+    return {
+      applicationId: params.get('voidr_application_id') || undefined,
+      caseName,
+      evidence: {
+        planId: params.get('voidr_plan_id') || undefined,
+        moduleSlug: params.get('voidr_module_slug') || undefined,
+        suiteSlug: params.get('voidr_suite_slug') || undefined,
+        caseSlug: params.get('voidr_case_slug') || undefined,
+        caseName,
+      },
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
+function resolveCollectorApiKey() {
+  return new Promise((resolve) => {
+    try {
+      chrome.runtime.sendMessage(
+        { action: 'apiRequest', endpoint: '/customer-configs', method: 'GET' },
+        (res) => {
+          if (chrome.runtime.lastError || !res?.success) {
+            resolve(null);
+            return;
+          }
+          const data = res.data || {};
+          resolve(data?.data?.apiKey || data?.apiKey || null);
+        },
+      );
+    } catch (_) {
+      resolve(null);
+    }
+  });
+}
+
+async function maybeStartEvidenceFromDeepLink() {
+  if (window.__voidr_evidence_started__) return;
+  const deepLink = parseEvidenceDeepLink();
+  if (!deepLink) return;
+  window.__voidr_evidence_started__ = true;
+
+  const apiKey = await resolveCollectorApiKey();
+  if (!apiKey) {
+    console.warn('[Voidr] Evidence deep-link detected but no collector API key (not authenticated?)');
+    window.__voidr_evidence_started__ = false;
+    return;
+  }
+
+  startVoidrSessionRecording(deepLink.caseName, {
+    mode: 'evidence',
+    slug: deepLink.applicationId,
+    applicationId: deepLink.applicationId,
+    apiKey,
+    evidence: deepLink.evidence,
+  });
+}
 
 // ── Onboarding code auto-connect (platform -> extension) ─────────────────────
 
@@ -372,7 +473,11 @@ try {
 // ── Boot ─────────────────────────────────────────────────────────────────────
 
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', () => initVoidrExtension());
+  document.addEventListener('DOMContentLoaded', () => {
+    initVoidrExtension();
+    maybeStartEvidenceFromDeepLink();
+  });
 } else {
   initVoidrExtension();
+  maybeStartEvidenceFromDeepLink();
 }
