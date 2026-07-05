@@ -24,9 +24,9 @@
     "vite": "^7.0.6"
   },
   "dependencies": {
-    "@rrweb/rrweb-plugin-console-record": "^2.0.0-alpha.18",
+    "@rrweb/rrweb-plugin-console-record": "^2.1.0",
     "pako": "^2.1.0",
-    "rrweb": "^2.0.0-alpha.4"
+    "rrweb": "^2.1.0"
   },
   "optionalDependencies": {
     "@rollup/rollup-linux-arm64-gnu": "^4.9.5",
