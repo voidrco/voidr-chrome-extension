@@ -30,8 +30,16 @@ function buildResourceEvent(entry) {
   // responseStatus is only exposed by modern browsers; otherwise unknown (0).
   const status = typeof entry.responseStatus === 'number' ? entry.responseStatus : 0;
 
+  // Reconstruct the wall-clock start of the resource load from the
+  // high-resolution entry (timeOrigin + startTime).
+  const timeOrigin =
+    typeof performance !== 'undefined' && performance.timeOrigin
+      ? performance.timeOrigin
+      : Date.now();
+
   return {
     type: 'resource',
+    timestamp: Math.round(timeOrigin + (entry.startTime || 0)),
     url,
     method: 'GET',
     status,

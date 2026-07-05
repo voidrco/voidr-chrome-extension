@@ -11,7 +11,7 @@ import {
   byteLength,
   extractTraceId,
 } from './extractors.js';
-import { logNetworkEvent } from '../transport.js';
+import { logNetworkEvent, nextRequestId } from '../transport.js';
 
 /**
  * Intercept the global fetch() to capture network requests.
@@ -60,6 +60,7 @@ export function initFetchInterceptor() {
     }
 
     const start = Date.now();
+    const requestId = nextRequestId();
     const method = init?.method || (input instanceof Request ? input.method : 'GET');
 
     // Capture request headers and body BEFORE making the request
@@ -84,6 +85,8 @@ export function initFetchInterceptor() {
 
           const event = {
             type: 'fetch',
+            requestId,
+            timestamp: start,
             url: requestUrl,
             method: method.toUpperCase(),
             status: response.status,
@@ -114,6 +117,8 @@ export function initFetchInterceptor() {
     } catch (error) {
       logNetworkEvent({
         type: 'fetchError',
+        requestId,
+        timestamp: start,
         url: requestUrl,
         method: method.toUpperCase(),
         error: error.message,

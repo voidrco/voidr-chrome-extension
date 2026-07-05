@@ -5,10 +5,30 @@ import { compressEventsBase64 } from './utils/image-compression.js';
 
 const SCREEN_MAP_SYNC_DEBOUNCE_MS = 2000;
 
+// Unique per page-load so requestIds never collide across pages of the same
+// session (multi-page sessions share a sessionId but reload this script).
+const pageToken = Math.random().toString(36).slice(2, 8);
+let requestSeq = 0;
+
+/**
+ * Monotonic, page-unique id for a captured network request. This is the
+ * stable identity used end-to-end (decode → ClickHouse → REST → viewer
+ * selection); batching assigns a single rrweb timestamp to many requests, so
+ * url+offset alone is NOT unique.
+ */
+export function nextRequestId() {
+  requestSeq += 1;
+  return `${pageToken}-${requestSeq}`;
+}
+
 /**
  * Buffer a network event. Flushes automatically when buffer exceeds 10 entries.
+ * Guarantees every request carries a unique `requestId` and an individual
+ * wall-clock `timestamp` (batch flush time is NOT per-request time).
  */
 export function logNetworkEvent(data) {
+  if (!data.requestId) data.requestId = nextRequestId();
+  if (!data.timestamp) data.timestamp = Date.now();
   state.networkBuffer.push(data);
   if (state.networkBuffer.length > 10) sendNetworkEvents();
 }

@@ -9,7 +9,7 @@ import {
   byteLength,
   extractTraceId,
 } from './extractors.js';
-import { logNetworkEvent } from '../transport.js';
+import { logNetworkEvent, nextRequestId } from '../transport.js';
 
 /**
  * Intercept XMLHttpRequest to capture network requests.
@@ -52,6 +52,7 @@ export function initXhrInterceptor() {
 
     xhr.send = function (body) {
       const start = Date.now();
+      const requestId = nextRequestId();
 
       // Capture request body
       if (body !== null && body !== undefined) {
@@ -133,6 +134,8 @@ export function initXhrInterceptor() {
 
           const event = {
             type: 'xhr',
+            requestId,
+            timestamp: start,
             url: url,
             method: method.toUpperCase(),
             status: this.status,

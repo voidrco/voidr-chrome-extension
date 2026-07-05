@@ -4,7 +4,8 @@ import { afterEach, beforeEach, describe, it } from 'node:test';
 globalThis.__VOIDR_COLLECTOR_URL__ = 'https://collector.test';
 
 const { state, resetState } = await import('../src/state.js');
-const { scheduleScreenMapSync, syncScreenMap } = await import('../src/transport.js');
+const { scheduleScreenMapSync, syncScreenMap, logNetworkEvent, sendNetworkEvents } =
+  await import('../src/transport.js');
 
 const screen = {
   fingerprint: 'abc12345',
@@ -44,6 +45,43 @@ function setupState() {
   };
   state.elementMapper = createElementMapper();
 }
+
+describe('network event identity', () => {
+  beforeEach(setupState);
+  afterEach(resetState);
+
+  it('assigns a unique requestId and timestamp to every buffered request', () => {
+    logNetworkEvent({ type: 'fetch', url: 'https://api.test/a' });
+    logNetworkEvent({ type: 'fetch', url: 'https://api.test/a' });
+    logNetworkEvent({ type: 'resource', url: 'https://cdn.test/b.js' });
+
+    const ids = state.networkBuffer.map((r) => r.requestId);
+    assert.equal(new Set(ids).size, 3);
+    for (const req of state.networkBuffer) {
+      assert.ok(typeof req.requestId === 'string' && req.requestId.length > 0);
+      assert.ok(typeof req.timestamp === 'number' && req.timestamp > 0);
+    }
+  });
+
+  it('preserves a caller-provided requestId and timestamp', () => {
+    logNetworkEvent({ type: 'xhr', url: 'https://api.test/c', requestId: 'fixed-1', timestamp: 123 });
+    assert.equal(state.networkBuffer[0].requestId, 'fixed-1');
+    assert.equal(state.networkBuffer[0].timestamp, 123);
+  });
+
+  it('keeps requestIds unique across batch flushes', () => {
+    for (let i = 0; i < 25; i += 1) {
+      logNetworkEvent({ type: 'fetch', url: 'https://api.test/same' });
+    }
+    sendNetworkEvents();
+
+    const all = state.events
+      .filter((e) => e.type === 5 && e.data?.plugin === 'network.batch')
+      .flatMap((e) => e.data.payload.requests);
+    assert.equal(all.length, 25);
+    assert.equal(new Set(all.map((r) => r.requestId)).size, 25);
+  });
+});
 
 describe('screen map transport sync coalescing', () => {
   beforeEach(setupState);
