@@ -10,6 +10,7 @@ import {
   syncScreenMap,
   syncScreenMapBeacon,
   finalizeSessionBeacon,
+  scheduleTokenRefresh,
 } from './transport.js';
 import { startRecording, startRrwebOnly } from './recording.js';
 import { sendEnvironmentBundle } from './environment-bundle.js';
@@ -144,6 +145,9 @@ export function createCollector() {
           state.isInitialized = false;
           return;
         }
+        // Renew the ingest token before it expires so long-lived tabs don't hit
+        // a 401 on the chunk-send path (which surfaces as a scary console error).
+        scheduleTokenRefresh();
       } catch (err) {
         console.error('VoidrCollector: Failed to validate API Key', err);
         state.isInitialized = false;
