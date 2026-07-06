@@ -117,7 +117,10 @@ function normalizeActiveRecording(recording) {
   if (!canonicalSessionId || trackedTabIds.length === 0) return null;
 
   const sessionIds = Array.from(
-    new Set([canonicalSessionId, ...(Array.isArray(recording.sessionIds) ? recording.sessionIds : [])]),
+    new Set([
+      canonicalSessionId,
+      ...(Array.isArray(recording.sessionIds) ? recording.sessionIds : []),
+    ]),
   );
 
   const currentTabId = trackedTabIds.includes(recording.currentTabId)
@@ -726,10 +729,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
               action: 'voidr:sessionStarted',
               sessionId,
               testCaseName:
-                (request.initOptions && request.initOptions.meta && request.initOptions.meta.testCase) ||
+                (request.initOptions &&
+                  request.initOptions.meta &&
+                  request.initOptions.meta.testCase) ||
                 null,
               mode:
-                (request.initOptions && request.initOptions.meta && request.initOptions.meta.mode) ||
+                (request.initOptions &&
+                  request.initOptions.meta &&
+                  request.initOptions.meta.mode) ||
                 'test-case',
             });
           } catch (_) {}
@@ -993,10 +1000,72 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             `${API_CONFIG.baseUrl}/collectors/sessions/${encodeURIComponent(request.sessionId)}`,
             { headers: { Authorization: `Bearer ${globalAuthState.token}` } },
           );
-          sendResponse({ found: res.ok });
+          // O endpoint responde 200 mesmo para sessão inexistente (data: null),
+          // então res.ok não basta — a sessão só persistiu se houver `data`.
+          let found = false;
+          let indexed = false;
+          if (res.ok) {
+            const json = await res.json().catch(() => null);
+            found = !!(json && json.data);
+            indexed = !!(json && json.indexStatus && json.indexStatus.indexed);
+          }
+          sendResponse({ found, indexed });
         } catch (_) {
           sendResponse({ found: false });
         }
+      })();
+      return true;
+
+    case 'voidr:pauseSession':
+    case 'voidr:resumeSession': {
+      const method = request.action === 'voidr:pauseSession' ? 'pause' : 'resume';
+      const tabId = sender?.tab?.id;
+      if (!tabId) {
+        sendResponse({ success: false, error: 'No tab' });
+        return true;
+      }
+      chrome.scripting
+        .executeScript({
+          target: { tabId },
+          world: 'MAIN',
+          func: (m) => {
+            try {
+              if (window.VoidrCollector && typeof window.VoidrCollector[m] === 'function') {
+                window.VoidrCollector[m]();
+              }
+            } catch (_) {}
+          },
+          args: [method],
+        })
+        .then(() => sendResponse({ success: true }))
+        .catch((e) => sendResponse({ success: false, error: e?.message }));
+      return true;
+    }
+
+    case 'voidr:discardSession':
+      (async () => {
+        const tabId = sender?.tab?.id;
+        // End the collector session in the page so nothing else is sent.
+        try {
+          if (tabId) {
+            await chrome.scripting.executeScript({
+              target: { tabId },
+              world: 'MAIN',
+              func: () => {
+                try {
+                  window.VoidrCollector &&
+                    window.VoidrCollector.endSession &&
+                    window.VoidrCollector.endSession();
+                } catch (_) {}
+              },
+            });
+          }
+        } catch (_) {}
+        // Drop the active recording state — session is discarded, not saved.
+        try {
+          await clearActiveRecording();
+        } catch (_) {}
+        sendResponse({ success: true });
       })();
       return true;
 
@@ -1188,7 +1257,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             return;
           }
           const sessionId =
-            (await readCollectorSessionId(targetTabId)) || priorRecording?.canonicalSessionId || null;
+            (await readCollectorSessionId(targetTabId)) ||
+            priorRecording?.canonicalSessionId ||
+            null;
           const activeRunId = request.onboardingRunId || null;
           // Evidence coordinates travel back with the captured session so the
           // platform can auto-attach it to the manual run without re-deriving.
@@ -1196,6 +1267,22 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
           // Merge current sessionId with all previously accumulated ones
           const allSessionIds = [...new Set([...priorSessionIds, sessionId].filter(Boolean))];
+
+          // Persist a marker so the popup can show a success screen when reopened
+          // (test-case flow only; onboarding has its own handling).
+          try {
+            const latestSid = sessionId || allSessionIds[allSessionIds.length - 1] || null;
+            if (latestSid && !activeRunId) {
+              await chrome.storage.session.set({
+                voidrLastCapture: { sessionId: latestSid, capturedAt: Date.now() },
+              });
+              // Reopen the assistant popup so the success screen shows automatically.
+              try {
+                const existing = await focusExistingAssistantWindow();
+                if (!existing) await openAssistantWindowAt();
+              } catch (_) {}
+            }
+          } catch (_) {}
 
           // Broadcast voidr:sessionCaptured for EACH accumulated sessionId
           for (const sid of allSessionIds) {
@@ -1412,6 +1499,27 @@ chrome.action.onClicked.addListener(() => {
     try {
       await chrome.storage.local.set({ lastActiveContentUrl: url });
     } catch (_) {}
+
+    // If the floating button was docked/hidden, just bring it back — don't also
+    // open the capture window (avoids opening both at once).
+    let wasHidden = false;
+    try {
+      const s = await chrome.storage.local.get(['voidr_fab_hidden']);
+      wasHidden = !!s.voidr_fab_hidden;
+    } catch (_) {}
+    if (wasHidden) {
+      try {
+        await chrome.storage.local.set({ voidr_fab_hidden: false });
+        if (t && t.id != null && url) {
+          chrome.tabs.sendMessage(
+            t.id,
+            { action: 'voidr:restoreFab' },
+            () => void chrome.runtime.lastError,
+          );
+        }
+      } catch (_) {}
+      return;
+    }
 
     const existingId = await focusExistingAssistantWindow();
     if (existingId) return;

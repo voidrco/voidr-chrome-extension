@@ -18,6 +18,28 @@
     VOIDR_API_BASE_URL: 'https://api.voidr.co/v1',
     VOIDR_PLATFORM_URL: 'https://platform.voidr.co',
     VOIDR_COLLECTOR_URL: 'https://collector.voidr.co',
+
+    // Preview (release-unified-hive-chat)
+    // VOIDR_API_BASE_URL: 'https://release-unified-hive-chat.api-preview.voidr.co/v1',
+    // VOIDR_PLATFORM_URL: 'https://release-unified-hive-chat.app-preview.voidr.co',
+    // VOIDR_COLLECTOR_URL: 'https://collector-staging.voidr.co',
+
+    // Staging
+    // VOIDR_API_BASE_URL: 'https://api-staging.voidr.co/v1',
+    // VOIDR_PLATFORM_URL: 'https://staging.voidr.co',
+    // VOIDR_COLLECTOR_URL: 'https://collector-staging.voidr.co',
+
+    // Local (dev)
+    // VOIDR_API_BASE_URL: 'http://localhost:3000/v1',
+    // VOIDR_PLATFORM_URL: 'http://localhost:3030',
+    // VOIDR_COLLECTOR_URL: 'http://localhost:3333',
+
+    // ---- Auth0 (opcional) --------------------------------------------------
+    // Deixe comentado para usar o default de produção (tenant bounties4).
+    // Só preencha se o ambiente usar um tenant/app Auth0 diferente.
+    // VOIDR_AUTH0_DOMAIN: 'bounties4.us.auth0.com',
+    // VOIDR_AUTH0_CLIENT_ID: 'c4eLr6uaq98KB2dCKNkmP9bz6sS3gJfS',
+    // VOIDR_AUTH0_AUDIENCE: 'https://service.bounties4.com/',
   };
 
   if (typeof globalThis !== 'undefined') {
