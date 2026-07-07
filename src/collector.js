@@ -9,9 +9,14 @@ import {
   flushEvents,
   syncScreenMap,
   syncScreenMapBeacon,
+  finalizeSessionBeacon,
+  scheduleTokenRefresh,
 } from './transport.js';
 import { startRecording, startRrwebOnly } from './recording.js';
+import { sendEnvironmentBundle } from './environment-bundle.js';
 import { initIdleWatch, stopIdleWatch } from './listeners/idle.js';
+import { inlineIconFonts } from './assets/inline-fonts.js';
+import { inlineUnreadableStylesheets } from './assets/inline-stylesheets.js';
 import { ElementMapper } from './element-mapper.js';
 
 /**
@@ -50,10 +55,12 @@ export function createCollector() {
     state.beforeUnloadHandler = () => {
       handleUnload();
       syncScreenMapBeacon();
+      finalizeSessionBeacon();
     };
     state.pageHideHandler = () => {
       handleUnload();
       syncScreenMapBeacon();
+      finalizeSessionBeacon();
     };
 
     window.addEventListener('beforeunload', state.beforeUnloadHandler);
@@ -108,7 +115,7 @@ export function createCollector() {
         return;
       }
 
-      // 2. Detect automation environment (skip check when system: true — virtual browser)
+      // 2. Detect automation environment (skip check when system: true)
       if (!state.config.system && isAutomationEnvironment()) {
         console.log('VoidrCollector: Recording skipped (automation environment detected)');
         state.isInitialized = false;
@@ -138,10 +145,27 @@ export function createCollector() {
           state.isInitialized = false;
           return;
         }
+        // Renew the ingest token before it expires so long-lived tabs don't hit
+        // a 401 on the chunk-send path (which surfaces as a scary console error).
+        scheduleTokenRefresh();
       } catch (err) {
         console.error('VoidrCollector: Failed to validate API Key', err);
         state.isInitialized = false;
         return;
+      }
+
+      // Inline replay-critical assets BEFORE the first snapshot so the replay
+      // (different origin, strict CSP) renders faithfully: unreadable
+      // cross-origin stylesheets as <style> text, and @font-face binaries as
+      // data: URIs (instead of tofu □). Both run in parallel, time-boxed and
+      // best-effort — never block recording. Stylesheets must land first-ish
+      // so newly readable @font-face rules are visible to the font pass, hence
+      // the sequential await inside the same guard.
+      try {
+        await inlineUnreadableStylesheets();
+        await inlineIconFonts();
+      } catch {
+        /* best-effort: recording proceeds regardless */
       }
 
       // Start recording
@@ -177,6 +201,10 @@ export function createCollector() {
 
       // Auto-pause recording on prolonged inactivity (idle/forgotten tabs)
       initIdleWatch(api);
+
+      // Snapshot the environment bundle (storage + cookies + viewport/UA) for
+      // future local replay. Best-effort, non-blocking — never gates recording.
+      sendEnvironmentBundle();
 
       console.log(`VoidrCollector v${VOIDR_VERSION} - Initialized successfully`);
     },
@@ -313,6 +341,31 @@ export function createCollector() {
         state.originalXHR = null;
       }
 
+      // Disconnect the static-resource PerformanceObserver
+      if (state.resourceObserver && typeof state.resourceObserver.disconnect === 'function') {
+        try {
+          state.resourceObserver.disconnect();
+        } catch (e) {
+          // Ignore disconnect errors
+        }
+        state.resourceObserver = null;
+      }
+
+      // Flush any trailing buffered events, then signal session completion so the
+      // collector indexes the recording into ClickHouse promptly. Both run while
+      // sessionId/state are still set (resetState() clears them below).
+      try {
+        handleUnload();
+      } catch (e) {
+        // Best-effort flush
+      }
+      finalizeSessionBeacon();
+
+      // Refresh the environment bundle with the FINAL page state (storage/cookies
+      // may have changed during the session). Fire-and-forget BEFORE resetState;
+      // sendEnvironmentBundle snapshots the config/token synchronously.
+      sendEnvironmentBundle();
+
       // Clear sessionStorage
       try {
         sessionStorage.removeItem('voidr_jwt');
@@ -341,7 +394,7 @@ export function createCollector() {
      * Force-flush all buffered events immediately.
      * Returns a Promise that resolves when all events have been sent to the server.
      * Does NOT stop recording — the session continues normally after flush.
-     * Use this before stopping a virtual browser session to ensure no events are lost.
+     * Use this before stopping a recording session to ensure no events are lost.
      * @returns {Promise<void>}
      */
     async flush() {

@@ -19,14 +19,37 @@ export const DEFAULT_CONFIG = {
   },
   networkCapture: true,
   captureConsole: true,
+  // ── Static resource capture (Phase 6) ─────────────────────────────────────
+  // Capture img/script/css/font/other static assets via PerformanceObserver as
+  // network events with type: 'resource'. OFF by default — high volume, opt-in.
+  captureResources: false,
+  // Hard cap on the number of resource events captured per session (volume guard).
+  captureResourcesMaxPerSession: 200,
+  // Per-entry sampling rate (0..1) applied when captureResources is enabled.
+  captureResourcesSampleRate: 1,
+  // Attach a top-level `traceId` from request correlation headers when present
+  // (x-correlation-id / x-request-id / traceparent / x-trace-id). OFF by default.
+  captureTraceId: false,
+  // Inline icon/web fonts as data: URIs at record start (same-origin with
+  // credentials, cross-origin via anonymous CORS) so they render in the replay
+  // under its strict CSP. Set false to disable.
+  inlineFonts: true,
+  // Inline UNREADABLE cross-origin stylesheets (<link> without crossorigin)
+  // as <style> tags at record start so the replay renders the layout. Set
+  // false to disable.
+  inlineStylesheets: true,
+  // Capture a SessionEnvironmentBundle (localStorage/sessionStorage/cookies +
+  // viewport/UA/URL) at recording start and refresh it on stop, shipped to a
+  // dedicated collector endpoint for future local Playwright replay. OFF by
+  // default — only extension-driven captures (which set this true) opt in. The
+  // bundle contains secrets and is stored separately from replay-served data.
+  captureEnvironmentBundle: false,
   user: null,
   meta: null,
 };
 
 // HOTFIX: TASY-specific selector masking (remove after proper selector-based solution is deployed)
-export const isTasy =
-  typeof window !== 'undefined' &&
-  window.location.hostname.includes('tasy');
+export const isTasy = typeof window !== 'undefined' && window.location.hostname.includes('tasy');
 
 export const TASY_MASK_SELECTORS = [
   '.grid-canvas-right',
@@ -65,6 +88,36 @@ export const CAPTURABLE_CONTENT_TYPES = [
   'application/graphql+json',
 ];
 
+// Request headers that carry a trace/correlation id (checked when captureTraceId
+// is enabled). Lower-cased; matched case-insensitively against request headers.
+export const TRACE_ID_HEADERS = ['x-correlation-id', 'x-request-id', 'traceparent', 'x-trace-id'];
+
+// Best-effort content-type guesses for static resources by file extension, used
+// only when no response header is available (PerformanceResourceTiming exposes
+// no headers). Bare MIME types — the decoder stores these verbatim.
+export const RESOURCE_EXT_CONTENT_TYPES = {
+  js: 'text/javascript',
+  mjs: 'text/javascript',
+  css: 'text/css',
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  svg: 'image/svg+xml',
+  avif: 'image/avif',
+  ico: 'image/x-icon',
+  woff: 'font/woff',
+  woff2: 'font/woff2',
+  ttf: 'font/ttf',
+  otf: 'font/otf',
+  eot: 'application/vnd.ms-fontobject',
+  json: 'application/json',
+  mp4: 'video/mp4',
+  webm: 'video/webm',
+  mp3: 'audio/mpeg',
+};
+
 // Content types to ignore (files, HTML, binaries)
 export const IGNORED_CONTENT_TYPES = [
   'text/html',
@@ -82,8 +135,7 @@ export const IGNORED_CONTENT_TYPES = [
 ];
 
 // Base64 image compression thresholds
-export const BASE64_DATA_URL_REGEX =
-  /^data:image\/[^;]+;base64,[A-Za-z0-9+/=]{1000,}/;
+export const BASE64_DATA_URL_REGEX = /^data:image\/[^;]+;base64,[A-Za-z0-9+/=]{1000,}/;
 export const MIN_BASE64_LENGTH = 100_000;
 
 /**

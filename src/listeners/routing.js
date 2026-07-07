@@ -1,6 +1,6 @@
 import { record } from 'rrweb';
 import { state } from '../state.js';
-import { syncScreenMap } from '../transport.js';
+import { scheduleScreenMapSync } from '../transport.js';
 
 /**
  * Capture SPA route changes via pushState, replaceState, popstate, and hashchange.
@@ -59,8 +59,8 @@ export function initRoutingCapture() {
       // Notify element mapper of navigation
       if (state.elementMapper) state.elementMapper.onPageView(current, document.title || '');
 
-      // Sync screen map after scan discovers new page elements
-      setTimeout(() => syncScreenMap(), 2000);
+      // Coalesce noisy SPA route updates into one sync after the mapper scan.
+      scheduleScreenMapSync();
 
       // Custom rrweb event to indicate route change
       try {

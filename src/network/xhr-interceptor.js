@@ -5,8 +5,11 @@ import {
   isCapturableContentType,
   extractPerformanceTiming,
   isThirdParty,
+  getContentType,
+  byteLength,
+  extractTraceId,
 } from './extractors.js';
-import { logNetworkEvent } from '../transport.js';
+import { logNetworkEvent, nextRequestId } from '../transport.js';
 
 /**
  * Intercept XMLHttpRequest to capture network requests.
@@ -49,6 +52,7 @@ export function initXhrInterceptor() {
 
     xhr.send = function (body) {
       const start = Date.now();
+      const requestId = nextRequestId();
 
       // Capture request body
       if (body !== null && body !== undefined) {
@@ -126,9 +130,12 @@ export function initXhrInterceptor() {
         // Delay slightly so the Performance API entry is available
         setTimeout(() => {
           const timing = extractPerformanceTiming(url);
+          const sanitizedRequestHeaders = sanitizeHeaders(requestHeaders);
 
-          logNetworkEvent({
+          const event = {
             type: 'xhr',
+            requestId,
+            timestamp: start,
             url: url,
             method: method.toUpperCase(),
             status: this.status,
@@ -136,13 +143,24 @@ export function initXhrInterceptor() {
             duration: Date.now() - start,
             thirdParty: isThirdParty(url),
             origin: window.location.origin,
-            requestHeaders: sanitizeHeaders(requestHeaders),
+            requestHeaders: sanitizedRequestHeaders,
             responseHeaders: sanitizeHeaders(responseHeaders),
             requestBody,
             responseBody,
             timing,
+            contentType: contentType
+              ? contentType.split(';')[0].trim().toLowerCase()
+              : getContentType(responseHeaders),
             responseSize: responseBody ? responseBody.length : 0,
-          });
+            requestSize: byteLength(requestBody),
+          };
+
+          if (state.config.captureTraceId) {
+            const traceId = extractTraceId(requestHeaders);
+            if (traceId) event.traceId = traceId;
+          }
+
+          logNetworkEvent(event);
         }, 50);
       });
 

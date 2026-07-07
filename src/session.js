@@ -1,5 +1,6 @@
 import { state } from './state.js';
 import { safeStringify } from './utils/helpers.js';
+import { TOKEN_REFRESH_MARGIN_MS, decodeJwtExp } from './utils/jwt.js';
 
 /**
  * Initialize the user ID from config or sessionStorage.
@@ -45,8 +46,13 @@ export async function authenticateSession() {
   const storedSession = sessionStorage.getItem('voidr_session_id');
 
   if (storedJwt && storedSession && storedSession === state.sessionId) {
-    state.authToken = storedJwt;
-    return true;
+    // Only reuse the cached JWT while it's outside the refresh margin — a
+    // restored tab shouldn't start on a token about to expire.
+    const exp = decodeJwtExp(storedJwt);
+    if (exp != null && exp * 1000 - Date.now() > TOKEN_REFRESH_MARGIN_MS) {
+      state.authToken = storedJwt;
+      return true;
+    }
   }
 
   sessionStorage.removeItem('voidr_jwt');
@@ -99,7 +105,7 @@ export async function authenticateSession() {
     return false;
   }
 
-  // Persist JWT for reuse on re-init
+  // Persist JWT and session ID for reuse on re-init (e.g. page reload)
   try {
     sessionStorage.setItem('voidr_jwt', state.authToken);
     sessionStorage.setItem('voidr_session_id', state.sessionId);
