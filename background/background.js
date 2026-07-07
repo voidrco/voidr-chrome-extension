@@ -814,13 +814,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     case 'syncAuthFromPlatformTabs':
       (async () => {
         try {
-          const tabs = await chrome.tabs.query({ url: `${API_CONFIG.platformUrl}/*` });
-          for (const tab of tabs) {
-            try {
-              await syncAuthWithPlatform(tab.id);
-              if (globalAuthState.isAuthenticated) break;
-            } catch (_) {}
-          }
+          await resyncAuthFromPlatformTabs();
           sendResponse({
             isAuthenticated: globalAuthState.isAuthenticated,
             user: globalAuthState.user,
@@ -887,14 +881,24 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           return;
         }
 
+        /**
+         * Ensure we have a token:
+         * 1. Use the in-memory one, or:
+         * 2. Load the stored one, or:
+         * 3. Pull a fresh one from the platform Auth0 session
+         */
         if (!globalAuthState.token) await checkAuthenticationStatus();
+        if (!globalAuthState.token) await resyncAuthFromPlatformTabs();
         if (!globalAuthState.token) {
-          sendResponse({ context: null, error: 'Not authenticated' });
+          sendResponse({
+            context: null,
+            error: `Sessão do Voidr não encontrada. Abra e faça login em ${API_CONFIG.platformUrl} nesta janela e tente de novo.`,
+          });
           return;
         }
 
-        try {
-          const res = await fetch(
+        const doFetch = () =>
+          fetch(
             `${API_CONFIG.baseUrl}/onboarding/recording-sessions/code/${encodeURIComponent(code)}`,
             {
               headers: {
@@ -903,17 +907,42 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
               },
             },
           );
+
+        try {
+          let res = await doFetch();
+
+          /**
+           * Stale or unsynced token leads to 401 / 403
+           * Pull a fresh token and retry once
+           */
+          if (res.status === 401 || res.status === 403) {
+            const before = globalAuthState.token;
+            await resyncAuthFromPlatformTabs();
+            if (globalAuthState.token && globalAuthState.token !== before) {
+              res = await doFetch();
+            }
+          }
+
           if (!res.ok) {
-            sendResponse({
-              context: null,
-              error: res.status === 404 ? 'Código não encontrado' : `Error ${res.status}`,
-            });
+            let error;
+            if (res.status === 404) {
+              error = 'Código não encontrado. Verifique e tente novamente.';
+            } else if (res.status === 401 || res.status === 403) {
+              error = `Sessão do Voidr expirada ou não sincronizada. Abra/atualize ${API_CONFIG.platformUrl} (logado) nesta janela e tente de novo.`;
+            } else {
+              error = `Erro ${res.status} ao buscar o código. Tente novamente.`;
+            }
+            sendResponse({ context: null, error });
             return;
           }
+
           const json = await res.json();
           sendResponse({ context: json.data || null });
         } catch (e) {
-          sendResponse({ context: null, error: e?.message || 'Network error' });
+          sendResponse({
+            context: null,
+            error: e?.message || 'Erro de rede. Verifique sua conexão e tente novamente.',
+          });
         }
       })();
       return true;
@@ -1602,6 +1631,23 @@ chrome.tabs.onRemoved.addListener((tabId) => {
     });
   });
 });
+
+/**
+ * 
+ * @returns Resync auth reading Auth0 token from platform
+ */
+async function resyncAuthFromPlatformTabs() {
+  try {
+    const tabs = await chrome.tabs.query({ url: `${API_CONFIG.platformUrl}/*` });
+    for (const tab of tabs) {
+      try {
+        await syncAuthWithPlatform(tab.id);
+        if (globalAuthState.isAuthenticated && globalAuthState.token) return true;
+      } catch (_) {}
+    }
+  } catch (_) {}
+  return false;
+}
 
 // Sincroniza autenticação com a plataforma
 async function syncAuthWithPlatform(tabId) {
