@@ -703,8 +703,19 @@ async function startVoidrSessionRecording(testCaseName, options = {}) {
       border.remove();
       panel.remove();
       document.querySelectorAll('.voidr-rec-countdown').forEach((n) => n.remove());
-      if (validated) showOnboardingDoneBanner(mode);
-      else showCaptureFailedBanner();
+      if (validated) {
+        showOnboardingDoneBanner(mode);
+      } else if (allSessionIds.length > 0) {
+        /**
+         * Session captured and send to collector
+         * But confirmation still not on the validation window
+         * This may be a fake-negative, so we can't affirm failure
+         */
+        showCapturePendingBanner(mode);
+      } else {
+        // No session captured --> real failure
+        showCaptureFailedBanner();
+      }
     });
   } catch (e) {
     console.error('Voidr session recording error:', e);
@@ -739,6 +750,26 @@ function showCaptureFailedBanner() {
   setTimeout(() => {
     if (banner.parentNode) banner.remove();
   }, 10000);
+}
+
+function showCapturePendingBanner(mode) {
+  document.querySelectorAll('.voidr-onb-done').forEach((n) => n.remove());
+  const banner = document.createElement('div');
+  banner.className = 'voidr-onb-done voidr-onb-done--pending';
+  const where =
+    mode === 'onboarding'
+      ? 'no onboarding'
+      : mode === 'evidence'
+        ? 'na execução manual'
+        : 'na extensão';
+  banner.innerHTML = `
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#93c5fd" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 7 12 12 15 14"/></svg>
+    Sessão enviada — pode levar alguns segundos para aparecer ${where}. Não precisa gravar de novo.
+  `;
+  document.documentElement.appendChild(banner);
+  setTimeout(() => {
+    if (banner.parentNode) banner.remove();
+  }, 12000);
 }
 
 function showOnboardingDoneBanner(mode) {
