@@ -12,6 +12,8 @@ import {
   extractTraceId,
 } from './extractors.js';
 import { logNetworkEvent, nextRequestId } from '../transport.js';
+import { markNetworkActivity } from '../listeners/click-effect.js';
+import { extractGraphQL } from './extractors.js';
 
 /**
  * Intercept the global fetch() to capture network requests.
@@ -62,6 +64,7 @@ export function initFetchInterceptor() {
     const start = Date.now();
     const requestId = nextRequestId();
     const method = init?.method || (input instanceof Request ? input.method : 'GET');
+    markNetworkActivity();
 
     // Capture request headers and body BEFORE making the request
     const requestHeaders = extractRequestHeaders(input, init);
@@ -108,6 +111,9 @@ export function initFetchInterceptor() {
             const traceId = extractTraceId(requestHeaders);
             if (traceId) event.traceId = traceId;
           }
+
+          const gql = extractGraphQL(requestUrl, method, requestBody);
+          if (gql) event.graphql = gql;
 
           logNetworkEvent(event);
         }, 50);

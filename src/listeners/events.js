@@ -30,6 +30,13 @@ export function initEventListeners() {
     try { return el.matches(sel) || !!el.closest(sel); } catch { return false; }
   };
 
+  const isMaskedInput = (el) =>
+    isTasyMasked(el) ||
+    state.config.dataMasking.inputs === true ||
+    el?.type === 'password' ||
+    el?.autocomplete === 'current-password' ||
+    el?.autocomplete === 'new-password';
+
   // Input events
   document.addEventListener('input', (e) => {
     const target = e.target;
@@ -43,7 +50,7 @@ export function initEventListeners() {
         payload: {
           selector: generateSelector(target),
           tag: target.tagName,
-          value: isTasyMasked(target) ? '***' : truncate(target.value, 100),
+          value: isMaskedInput(target) ? '***' : truncate(target.value, 100),
           type: target.type,
         },
       },
@@ -65,7 +72,7 @@ export function initEventListeners() {
         payload: {
           selector: generateSelector(target),
           tag: target.tagName,
-          value: isTasyMasked(target) ? '***' : truncate(target.value, 100),
+          value: isMaskedInput(target) ? '***' : truncate(target.value, 100),
           type: target.type,
         },
       },
@@ -88,6 +95,7 @@ export function initEventListeners() {
           selector: generateSelector(target),
           tag: target.tagName,
           text: isTasyMasked(target) ? '***' : getTextContent(target),
+          clickId: e.__voidrClickId || null,
           position: {
             x: e.clientX,
             y: e.clientY,

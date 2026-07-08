@@ -8,6 +8,10 @@ import { initResourceObserver } from './network/resource-observer.js';
 import { initEventListeners } from './listeners/events.js';
 import { initRoutingCapture } from './listeners/routing.js';
 import { initTracking } from './listeners/tracking.js';
+import { initClickEffect } from './listeners/click-effect.js';
+import { initVitals } from './listeners/vitals.js';
+import { initLongTasks } from './listeners/longtasks.js';
+import { initWhiteScreenDetection } from './listeners/whitescreen.js';
 
 /**
  * Start only the rrweb recording (no listeners or interceptors).
@@ -23,12 +27,16 @@ export function startRrwebOnly() {
     );
   }
 
+  // Coarse privacy level (Datadog-style) on top of the fine-grained selectors:
+  // 'mask' hides all text+inputs, 'mask-user-input' hides inputs only, 'allow'
+  // records everything not covered by blockSelectors.
+  const privacyLevel = state.config.privacyLevel;
+  const maskAllText = privacyLevel === 'mask' || state.config.dataMasking.text;
+  const maskInputs =
+    privacyLevel === 'mask' || privacyLevel === 'mask-user-input' || state.config.dataMasking.inputs;
+
   // Build maskTextSelector: global mask > TASY hotfix > null
-  const maskTextSelector = state.config.dataMasking.text
-    ? '*'
-    : isTasy
-      ? TASY_MASK_SELECTORS.join(', ')
-      : null;
+  const maskTextSelector = maskAllText ? '*' : isTasy ? TASY_MASK_SELECTORS.join(', ') : null;
 
   state.stopRecording = record({
     emit: (event) => state.events.push(event),
@@ -50,7 +58,7 @@ export function startRrwebOnly() {
     // content; those sessions keep image references only.
     inlineImages: !isTasy,
     maskTextSelector,
-    maskAllInputs: isTasy || state.config.dataMasking.inputs,
+    maskAllInputs: isTasy || maskInputs,
     blockSelector: state.config.dataMasking.blockSelectors?.join(', '),
     checkoutEveryNms: 120000,
     checkoutEveryNth: 1000,
@@ -74,10 +82,14 @@ export function startRrwebOnly() {
  */
 export function startRecording() {
   startRrwebOnly();
+  initClickEffect();
   initEventListeners();
   initFetchInterceptor();
   initXhrInterceptor();
   initResourceObserver();
   initTracking();
   initRoutingCapture();
+  initVitals();
+  initLongTasks();
+  initWhiteScreenDetection();
 }
