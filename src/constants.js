@@ -1,4 +1,4 @@
-export const VOIDR_VERSION = '1.15.0';
+export const VOIDR_VERSION = '1.16.1';
 
 // Default configuration for the collector
 export const DEFAULT_CONFIG = {
