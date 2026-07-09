@@ -4,8 +4,14 @@ import { afterEach, beforeEach, describe, it } from 'node:test';
 globalThis.__VOIDR_COLLECTOR_URL__ = 'https://collector.test';
 
 const { state, resetState } = await import('../src/state.js');
-const { scheduleScreenMapSync, syncScreenMap, logNetworkEvent, sendNetworkEvents } =
-  await import('../src/transport.js');
+const {
+  scheduleScreenMapSync,
+  syncScreenMap,
+  logNetworkEvent,
+  sendNetworkEvents,
+  sendEvents,
+  flushEvents,
+} = await import('../src/transport.js');
 
 const screen = {
   fingerprint: 'abc12345',
@@ -80,6 +86,85 @@ describe('network event identity', () => {
       .flatMap((e) => e.data.payload.requests);
     assert.equal(all.length, 25);
     assert.equal(new Set(all.map((r) => r.requestId)).size, 25);
+  });
+});
+
+describe('chunk send retry semantics', () => {
+  beforeEach(setupState);
+
+  afterEach(() => {
+    resetState();
+    delete globalThis.fetch;
+  });
+
+  function fillEvents(count) {
+    for (let i = 0; i < count; i += 1) {
+      state.events.push({ type: 3, timestamp: Date.now() + i, data: { i } });
+    }
+  }
+
+  it('drops the batch on 4xx instead of requeueing it', async () => {
+    let requestCount = 0;
+    globalThis.fetch = async () => {
+      requestCount += 1;
+      return { ok: false, status: 422 };
+    };
+
+    fillEvents(20);
+    await sendEvents();
+
+    assert.equal(requestCount, 1);
+    assert.equal(state.events.length, 0);
+    assert.equal(state.isSending, false);
+  });
+
+  it('requeues the batch on 5xx', async () => {
+    globalThis.fetch = async () => ({ ok: false, status: 503 });
+
+    fillEvents(20);
+    await sendEvents();
+
+    assert.equal(state.events.length, 20);
+    assert.equal(state.isSending, false);
+  });
+
+  it('requeues the batch on network error', async () => {
+    globalThis.fetch = async () => {
+      throw new TypeError('network down');
+    };
+
+    fillEvents(20);
+    await sendEvents();
+
+    assert.equal(state.events.length, 20);
+    assert.equal(state.isSending, false);
+  });
+
+  it('flushEvents skips a 4xx-rejected batch and keeps flushing the rest', async () => {
+    const statuses = [422, 200];
+    let requestCount = 0;
+    globalThis.fetch = async () => {
+      const status = statuses[requestCount];
+      requestCount += 1;
+      return { ok: status === 200, status };
+    };
+
+    fillEvents(150);
+    await flushEvents();
+
+    assert.equal(requestCount, 2);
+    assert.equal(state.events.length, 0);
+    assert.equal(state.isSending, false);
+  });
+
+  it('flushEvents still requeues and stops on 5xx', async () => {
+    globalThis.fetch = async () => ({ ok: false, status: 500 });
+
+    fillEvents(150);
+    await flushEvents();
+
+    assert.equal(state.events.length, 150);
+    assert.equal(state.isSending, false);
   });
 });
 

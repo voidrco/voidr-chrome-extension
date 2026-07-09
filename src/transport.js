@@ -6,6 +6,13 @@ import { TOKEN_REFRESH_MARGIN_MS, decodeJwtExp } from './utils/jwt.js';
 
 const SCREEN_MAP_SYNC_DEBOUNCE_MS = 2000;
 
+// 4xx means the server deterministically rejects this chunk (e.g. 422 for
+// poison chunks that fail anonymization) — requeueing would resend the same
+// payload forever, so the batch must be dropped instead of retried.
+function isNonRetryableStatus(status) {
+  return status >= 400 && status < 500;
+}
+
 // Unique per page-load so requestIds never collide across pages of the same
 // session (multi-page sessions share a sessionId but reload this script).
 const pageToken = Math.random().toString(36).slice(2, 8);
@@ -202,6 +209,13 @@ export async function sendEvents() {
     }
 
     if (!res.ok) {
+      if (isNonRetryableStatus(res.status)) {
+        console.debug('VoidrCollector: chunk rejected by collector, dropping batch', {
+          status: res.status,
+          events: batch.length,
+        });
+        return;
+      }
       throw new Error('VoidrCollector: Failed to send events');
     }
   } catch (error) {
@@ -264,6 +278,13 @@ export async function flushEvents() {
       });
 
       if (!res.ok) {
+        if (isNonRetryableStatus(res.status)) {
+          console.debug('VoidrCollector: chunk rejected by collector, dropping batch', {
+            status: res.status,
+            events: batch.length,
+          });
+          continue;
+        }
         state.events.unshift(...batch);
         break;
       }
