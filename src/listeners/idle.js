@@ -1,8 +1,17 @@
 import { state } from '../state.js';
+import { flushEvents } from '../transport.js';
 
 const ACTIVITY_EVENTS = ['mousemove', 'mousedown', 'keydown', 'scroll', 'touchstart', 'click'];
 const CHECK_INTERVAL_MS = 30000;
 const THROTTLE_MS = 1000;
+
+function pushIdleMarker(plugin, extra) {
+  state.events.push({
+    type: 5,
+    timestamp: Date.now(),
+    data: { plugin, payload: { ...extra } },
+  });
+}
 
 /**
  * Start idle detection: auto-pause recording after a period of no user
@@ -14,12 +23,18 @@ export function initIdleWatch(collector) {
 
   state.lastActivity = Date.now();
   let lastWrite = 0;
+  let idleStartedAt = null;
 
   const onActivity = () => {
     // Resume only when the pause was triggered by idle, not by a manual/SSE pause.
     if (state.pausedByIdle && state.isPaused) {
       state.pausedByIdle = false;
       collector.resume();
+      // Marker lands AFTER resume so it rides the fresh full snapshot chunk.
+      pushIdleMarker('session.idle.end', {
+        idleMs: idleStartedAt ? Date.now() - idleStartedAt : null,
+      });
+      idleStartedAt = null;
     }
 
     const now = Date.now();
@@ -44,7 +59,11 @@ export function initIdleWatch(collector) {
     if (state.isPaused) return;
     if (Date.now() - state.lastActivity > idleTimeoutMs) {
       state.pausedByIdle = true;
+      idleStartedAt = Date.now();
+      pushIdleMarker('session.idle.start', { lastActivity: state.lastActivity });
       collector.pause();
+      // Drain the buffer so idle events aren't stuck client-side until resume.
+      flushEvents().catch(() => {});
       console.log('VoidrCollector: Recording paused (idle)');
     }
   }, CHECK_INTERVAL_MS);
