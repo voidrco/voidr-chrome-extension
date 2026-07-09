@@ -521,6 +521,45 @@ async function readCollectorSessionId(tabId) {
   }
 }
 
+// Takeover: if the target app already embeds a running Voidr collector, stop it
+// BEFORE we inject ours. endSession() tears down its rrweb/timers/fetch-XHR
+// interceptors (kills the two-recorder race) AND clears voidr_jwt/voidr_session_id
+// from sessionStorage — otherwise the cached JWT short-circuits our forced
+// session's /init and the session is never created server-side. No-op when no
+// collector is present. Must run before injectCollectorInTab (which reassigns
+// window.VoidrCollector, losing the handle to the native instance).
+async function teardownExistingCollectorInTab(tabId) {
+  try {
+    const res = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      func: () => {
+        try {
+          const existing = window.VoidrCollector;
+          if (!existing) return { present: false };
+          const info = {
+            present: true,
+            version: existing.version || null,
+            sessionId:
+              (typeof existing.getSessionId === 'function' && existing.getSessionId()) || null,
+            toreDown: false,
+          };
+          if (typeof existing.endSession === 'function') {
+            existing.endSession();
+            info.toreDown = true;
+          }
+          return info;
+        } catch (e) {
+          return { present: false, error: String(e) };
+        }
+      },
+    });
+    return (res && res[0] && res[0].result) || { present: false };
+  } catch (_) {
+    return { present: false };
+  }
+}
+
 async function sendResumeRecordingUi(tabId, recording) {
   const payload = {
     action: 'voidr:resumeRecordingUI',
@@ -553,6 +592,7 @@ async function resumeActiveRecordingInTab(tabId) {
   const tab = await chrome.tabs.get(tabId).catch(() => null);
   if (!tab?.url || !isHttpUrl(tab.url)) return false;
 
+  await teardownExistingCollectorInTab(tabId);
   const collectorCode = await fetchCollectorCode();
   await injectCollectorInTab(tabId, collectorCode);
   await initializeCollectorInTab(tabId, recording.initOptions);
@@ -717,6 +757,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             collectorUrl: API_CONFIG.collectorUrl,
             forcedSessionId: canonicalSessionId,
           };
+
+          // If the app already embeds a running collector, stop it before we
+          // inject ours (avoids the two-recorder race and clears the cached JWT
+          // that would skip our forced session's /init).
+          await teardownExistingCollectorInTab(targetTabId);
 
           const collectorCode = await fetchCollectorCode();
           await injectCollectorInTab(targetTabId, collectorCode);
