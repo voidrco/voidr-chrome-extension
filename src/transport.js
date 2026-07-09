@@ -35,6 +35,14 @@ async function gzipBytes(str) {
   return gzip(str);
 }
 
+// 4xx means the server deterministically rejects this chunk (e.g. 422 for
+// poison chunks that fail anonymization, 409 past the session cap, 413 for
+// oversized payloads) — requeueing would resend the same payload forever, so
+// the batch must be dropped instead of retried.
+function isNonRetryableStatus(status) {
+  return status >= 400 && status < 500;
+}
+
 // Unique per page-load so requestIds never collide across pages of the same
 // session (multi-page sessions share a sessionId but reload this script).
 const pageToken = Math.random().toString(36).slice(2, 8);
@@ -254,6 +262,13 @@ export async function sendEvents() {
     }
 
     if (!res.ok) {
+      if (isNonRetryableStatus(res.status)) {
+        console.debug('VoidrCollector: chunk rejected by collector, dropping batch', {
+          status: res.status,
+          events: batch.length,
+        });
+        return;
+      }
       throw new Error('VoidrCollector: Failed to send events');
     }
   } catch (error) {
@@ -316,7 +331,14 @@ export async function flushEvents() {
       });
 
       if (!res.ok) {
-        if (res.status !== 409) state.events.unshift(...batch);
+        if (isNonRetryableStatus(res.status)) {
+          console.debug('VoidrCollector: chunk rejected by collector, dropping batch', {
+            status: res.status,
+            events: batch.length,
+          });
+          continue;
+        }
+        state.events.unshift(...batch);
         break;
       }
     } catch {
