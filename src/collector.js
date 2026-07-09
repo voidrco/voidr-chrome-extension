@@ -84,59 +84,94 @@ export function createCollector() {
   // Max-duration handling: finalize the current session and, when rotation is
   // enabled, continue recording under a fresh sessionId (Sentry/PostHog
   // pattern for long-lived tabs).
-  async function rotateSession() {
-    if (!state.isInitialized || state.forceStop) return;
+  //
+  // reason:
+  // - 'max-duration' — client-side cap timer fired; flush remaining events first
+  // - 'server-expired' — collector returned 409 SESSION_EXPIRED; skip flush
+  //   (the old sessionId is already rejected server-side)
+  let rotationPromise = null;
 
-    const previousSessionId = state.sessionId;
-    await flushEvents();
-    finalizeSessionBeacon();
+  function rotateSession(reason = 'max-duration') {
+    if (!state.isInitialized || state.forceStop) return Promise.resolve();
+    if (rotationPromise) return rotationPromise;
 
-    if (!state.config.sessionRotation) {
-      api.endSession();
-      return;
-    }
+    // Set synchronously so concurrent sendEvents/sync calls stop immediately.
+    state.sessionRotationInFlight = true;
+    rotationPromise = (async () => {
+      try {
+        const previousSessionId = state.sessionId;
 
-    state.sessionStartedAt = Date.now();
-    state.sessionId = state.sessionStartedAt.toString();
-    try {
-      sessionStorage.setItem('voidr_session_id', state.sessionId);
-      sessionStorage.setItem('voidr_last_activity', String(Date.now()));
-      sessionStorage.removeItem('voidr_jwt');
-    } catch (_) {
-      // Ignore sessionStorage errors
-    }
+        // Server already rejected the session — flushing would only 409-loop.
+        // Drop undeliverable leftovers so the new session starts clean.
+        if (reason === 'server-expired') {
+          state.events.length = 0;
+          state.networkBuffer.length = 0;
+        } else {
+          await flushEvents();
+        }
+        finalizeSessionBeacon();
 
-    try {
-      const authenticated = await authenticateSession();
-      if (!authenticated) {
-        api.endSession();
-        return;
+        if (!state.config.sessionRotation) {
+          api.endSession();
+          return;
+        }
+
+        state.sessionStartedAt = Date.now();
+        state.sessionId = state.sessionStartedAt.toString();
+        try {
+          sessionStorage.setItem('voidr_session_id', state.sessionId);
+          sessionStorage.setItem('voidr_last_activity', String(Date.now()));
+          sessionStorage.removeItem('voidr_jwt');
+        } catch (_) {
+          // Ignore sessionStorage errors
+        }
+
+        try {
+          const authenticated = await authenticateSession();
+          if (!authenticated) {
+            api.endSession();
+            return;
+          }
+          scheduleTokenRefresh();
+        } catch (_) {
+          api.endSession();
+          return;
+        }
+
+        state.events.push({
+          type: 5,
+          timestamp: Date.now(),
+          data: {
+            plugin: 'session.rotated',
+            payload: { previousSessionId, reason },
+          },
+        });
+
+        // New session must start from a valid snapshot.
+        try {
+          record.takeFullSnapshot(true);
+        } catch (_) {
+          // noop
+        }
+
+        armSessionCap();
+        console.log(`VoidrCollector: Session rotated (${reason})`);
+      } finally {
+        rotationPromise = null;
+        // endSession() clears this via resetState; only clear when still alive.
+        if (state.isInitialized) {
+          state.sessionRotationInFlight = false;
+        }
       }
-      scheduleTokenRefresh();
-    } catch (_) {
-      api.endSession();
-      return;
-    }
+    })();
 
-    state.events.push({
-      type: 5,
-      timestamp: Date.now(),
-      data: {
-        plugin: 'session.rotated',
-        payload: { previousSessionId, reason: 'max-duration' },
-      },
-    });
-
-    // New session must start from a valid snapshot.
-    try {
-      record.takeFullSnapshot(true);
-    } catch (_) {
-      // noop
-    }
-
-    armSessionCap();
-    console.log('VoidrCollector: Session rotated (max duration reached)');
+    return rotationPromise;
   }
+
+  // Wire transport 409 SESSION_EXPIRED → rotate (single-flight via rotationPromise).
+  state.onSessionExpired = (reason) => {
+    rotateSession(reason).catch(() => {});
+  };
 
   // Buffer-mode upgrade: an error occurred in an unsampled session and the
   // onErrorSampleRate dice roll passed — authenticate and start shipping the

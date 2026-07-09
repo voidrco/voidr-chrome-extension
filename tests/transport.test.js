@@ -166,6 +166,46 @@ describe('chunk send retry semantics', () => {
     assert.equal(state.events.length, 150);
     assert.equal(state.isSending, false);
   });
+
+  it('invokes onSessionExpired on 409 SESSION_EXPIRED and drops the batch', async () => {
+    let expiredReason = null;
+    state.onSessionExpired = (reason) => {
+      expiredReason = reason;
+    };
+
+    globalThis.fetch = async () => ({
+      ok: false,
+      status: 409,
+      clone() {
+        return this;
+      },
+      async json() {
+        return { error: 'Session exceeded max duration', code: 'SESSION_EXPIRED' };
+      },
+    });
+
+    fillEvents(20);
+    await sendEvents();
+
+    assert.equal(expiredReason, 'server-expired');
+    assert.equal(state.events.length, 0);
+    assert.equal(state.isSending, false);
+  });
+
+  it('does not send while sessionRotationInFlight is set', async () => {
+    let requestCount = 0;
+    globalThis.fetch = async () => {
+      requestCount += 1;
+      return { ok: true, status: 200 };
+    };
+
+    state.sessionRotationInFlight = true;
+    fillEvents(20);
+    await sendEvents();
+
+    assert.equal(requestCount, 0);
+    assert.equal(state.events.length, 20);
+  });
 });
 
 describe('screen map transport sync coalescing', () => {

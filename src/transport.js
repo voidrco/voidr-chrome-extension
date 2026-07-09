@@ -43,6 +43,33 @@ function isNonRetryableStatus(status) {
   return status >= 400 && status < 500;
 }
 
+/**
+ * Detect SESSION_EXPIRED on a chunk response and kick off session rotation.
+ * Single-flight: concurrent 409s share one rotation.
+ */
+async function handleSessionExpiredResponse(res) {
+  if (res.status !== 409) return false;
+
+  let code = null;
+  try {
+    const body = await res.clone().json();
+    code = body?.code || null;
+  } catch {
+    /* body may be empty or non-JSON */
+  }
+
+  // /sessions/chunk uses 409 for the max-duration cap; treat unknown 409 the
+  // same way so a missing body still recovers instead of looping forever.
+  if (code && code !== 'SESSION_EXPIRED') return false;
+
+  console.warn('VoidrCollector: Session expired server-side, rotating session');
+  const onExpired = state.onSessionExpired;
+  if (typeof onExpired === 'function') {
+    onExpired('server-expired');
+  }
+  return true;
+}
+
 // Unique per page-load so requestIds never collide across pages of the same
 // session (multi-page sessions share a sessionId but reload this script).
 const pageToken = Math.random().toString(36).slice(2, 8);
@@ -204,7 +231,13 @@ export function sendNetworkEvents() {
  */
 export async function sendEvents() {
   const MIN_BATCH_SIZE = 10;
-  if (state.isSending || state.events.length < MIN_BATCH_SIZE || state.forceStop || state.isPaused)
+  if (
+    state.isSending ||
+    state.sessionRotationInFlight ||
+    state.events.length < MIN_BATCH_SIZE ||
+    state.forceStop ||
+    state.isPaused
+  )
     return;
   state.isSending = true;
 
@@ -255,9 +288,7 @@ export async function sendEvents() {
       });
     }
 
-    // 409 = session exceeded max duration server-side; requeueing would loop.
-    if (res.status === 409) {
-      console.warn('VoidrCollector: Session expired server-side, dropping batch');
+    if (await handleSessionExpiredResponse(res)) {
       return;
     }
 
@@ -288,7 +319,7 @@ export async function flushEvents() {
   // Flush network buffer into main events array first
   sendNetworkEvents();
 
-  if (state.events.length === 0 || state.forceStop) return;
+  if (state.events.length === 0 || state.forceStop || state.sessionRotationInFlight) return;
 
   // Wait for any in-flight send to complete before flushing
   while (state.isSending) {
@@ -296,7 +327,7 @@ export async function flushEvents() {
   }
 
   // Send all remaining events (may need multiple batches of 100)
-  while (state.events.length > 0 && !state.forceStop) {
+  while (state.events.length > 0 && !state.forceStop && !state.sessionRotationInFlight) {
     state.isSending = true;
     const batch = state.events.splice(0, 100);
     const compressedBatch = await compressEventsBase64(batch);
@@ -330,6 +361,10 @@ export async function flushEvents() {
         body: compressed,
       });
 
+      if (await handleSessionExpiredResponse(res)) {
+        break;
+      }
+
       if (!res.ok) {
         if (isNonRetryableStatus(res.status)) {
           console.debug('VoidrCollector: chunk rejected by collector, dropping batch', {
@@ -356,7 +391,7 @@ export async function flushEvents() {
  * Failures are non-fatal — recording continues normally.
  */
 export async function syncScreenMap() {
-  if (!state.elementMapper || state.forceStop) return;
+  if (!state.elementMapper || state.forceStop || state.sessionRotationInFlight) return;
   if (!state.elementMapper.isDirty()) return;
   if (state.screenMapSyncInFlight) {
     state.screenMapSyncQueued = true;
