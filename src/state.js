@@ -35,6 +35,8 @@ export const state = {
   sessionCapTimer: null,
   bufferMode: false,
   bufferUpgradeInFlight: false,
+  sessionRotationInFlight: false,
+  onSessionExpired: null,
   featureFlags: {},
 };
 
@@ -86,5 +88,7 @@ export function resetState() {
   state.sessionCapTimer = null;
   state.bufferMode = false;
   state.bufferUpgradeInFlight = false;
+  state.sessionRotationInFlight = false;
+  // Keep onSessionExpired — wired once by createCollector for the instance lifetime.
   state.featureFlags = {};
 }
