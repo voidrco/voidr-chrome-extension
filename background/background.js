@@ -572,6 +572,7 @@ async function sendResumeRecordingUi(tabId, recording) {
     evidence: recording.evidence || null,
     flows: recording.flows,
     applicationId: recording.initOptions?.applicationId || null,
+    environment: recording.initOptions?.environment || null,
   };
 
   try {

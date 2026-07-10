@@ -470,6 +470,10 @@ function sendCollectorInit(init) {
       captureEnvironmentBundle: true,
     };
     if (init.applicationId) initOptions.applicationId = init.applicationId;
+    // Carimba o environment na sessão do collector. Sem isto a sessão nasce com
+    // environment=null e não casa no filtro por ambiente da app/jornada (não é
+    // listada nem associada).
+    if (init.environment) initOptions.environment = init.environment;
     // Capturas pela extensão são deliberadas (o usuário clicou "Gravar"), então
     // sempre gravam 100% — ignoram a taxa de amostragem de produção do app (ex. 10%).
     // Sem isto, o VoidrCollector v1.15.0 não amostra a sessão e o init() vira no-op.
@@ -508,6 +512,7 @@ async function startVoidrSessionRecording(testCaseName, options = {}) {
         effectiveName,
         apiKey: options.apiKey,
         applicationId: options.applicationId || slug,
+        environment: options.environment,
         onboardingRunId: options.onboardingRunId,
         flows: options.flows,
         evidence: options.evidence,
@@ -826,6 +831,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         mode: request.mode,
         slug: request.slug,
         applicationId: request.applicationId,
+        environment: request.environment,
         apiKey: request.apiKey,
         onboardingRunId: request.onboardingRunId,
         flows: request.flows || [],
@@ -840,6 +846,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         mode: request.mode,
         slug: request.applicationId,
         applicationId: request.applicationId,
+        environment: request.environment,
         onboardingRunId: request.onboardingRunId,
         flows: request.flows || [],
         evidence: request.evidence,
@@ -872,6 +879,7 @@ function parseEvidenceDeepLink() {
     const caseName = params.get('voidr_case_name') || 'Execução manual';
     return {
       applicationId: params.get('voidr_application_id') || undefined,
+      environment: params.get('voidr_environment') || undefined,
       caseName,
       evidence: {
         planId: params.get('voidr_plan_id') || undefined,
@@ -923,6 +931,7 @@ async function maybeStartEvidenceFromDeepLink() {
     mode: 'evidence',
     slug: deepLink.applicationId,
     applicationId: deepLink.applicationId,
+    environment: deepLink.environment,
     apiKey,
     evidence: deepLink.evidence,
   });

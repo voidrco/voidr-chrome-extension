@@ -311,6 +311,15 @@ async function loadProducts() {
       return withUrl?.applicationUrl || '';
     };
 
+    // Slug do environment a carimbar na gravação: o mesmo env usado pra URL-alvo
+    // (primeiro com applicationUrl); senão o primeiro env. Sem isto a sessão nasce
+    // com environment=null e não casa no filtro por ambiente da app/jornada.
+    const getAppEnv = (app) => {
+      const envs = Array.isArray(app?.environments) ? app.environments : [];
+      const withUrl = envs.find((e) => e && e.applicationUrl);
+      return (withUrl || envs[0])?.slug || '';
+    };
+
     if (apps.length === 0) {
       container.innerHTML = `
         <div class="empty-state">
@@ -326,7 +335,7 @@ async function loadProducts() {
         ${apps
           .map(
             (app) => `
-          <button class="product-item" data-app-id="${escapeHtml(app._id)}" data-app-name="${escapeHtml(app.name)}" data-app-type="${escapeHtml(app.type || '')}" data-app-url="${escapeHtml(getAppUrl(app))}">
+          <button class="product-item" data-app-id="${escapeHtml(app._id)}" data-app-name="${escapeHtml(app.name)}" data-app-type="${escapeHtml(app.type || '')}" data-app-url="${escapeHtml(getAppUrl(app))}" data-app-env="${escapeHtml(getAppEnv(app))}">
             <div class="product-item-info">
               <span class="product-item-name">${escapeHtml(app.name)}</span>
               ${app.type ? `<span class="product-item-type">${escapeHtml(app.type)}</span>` : ''}
@@ -346,6 +355,7 @@ async function loadProducts() {
           name: item.dataset.appName,
           type: item.dataset.appType,
           url: item.dataset.appUrl || '',
+          env: item.dataset.appEnv || '',
         };
         showRecordingSetupView(app);
       });
@@ -500,6 +510,7 @@ async function handleStartTestCaseRecording(app) {
         mode: 'test-case',
         slug: app._id,
         applicationId: app._id,
+        environment: app.env || undefined,
         apiKey,
       },
     },
