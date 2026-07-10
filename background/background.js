@@ -534,9 +534,23 @@ async function teardownExistingCollectorInTab(tabId) {
       target: { tabId },
       world: 'MAIN',
       func: () => {
+        // The real poison is the orphan voidr_jwt in sessionStorage (a stale
+        // token makes the recorder skip /init and flush under the wrong org),
+        // so wipe it on EVERY path — even when no instance is present (e.g.
+        // async embeds that haven't loaded yet, or endSession-less versions).
+        const wipe = () => {
+          for (const k of ['voidr_jwt', 'voidr_session_id', 'voidr_user_id', 'voidr_last_activity']) {
+            try {
+              sessionStorage.removeItem(k);
+            } catch (_) {}
+          }
+        };
         try {
           const existing = window.VoidrCollector;
-          if (!existing) return { present: false };
+          if (!existing) {
+            wipe();
+            return { present: false, wiped: true };
+          }
           const info = {
             present: true,
             version: existing.version || null,
@@ -548,16 +562,58 @@ async function teardownExistingCollectorInTab(tabId) {
             existing.endSession();
             info.toreDown = true;
           }
+          // Drop the dead handle so page code can't revive/reuse the native
+          // instance after we inject ours.
+          try {
+            delete window.VoidrCollector;
+          } catch (_) {
+            window.VoidrCollector = undefined;
+          }
+          wipe();
+          info.wiped = true;
           return info;
         } catch (e) {
-          return { present: false, error: String(e) };
+          wipe();
+          return { present: false, wiped: true, error: String(e) };
         }
       },
     });
-    return (res && res[0] && res[0].result) || { present: false };
-  } catch (_) {
+    const info = (res && res[0] && res[0].result) || { present: false };
+    console.log('[Voidr] native collector teardown', JSON.stringify(info));
+    return info;
+  } catch (e) {
+    console.warn('[Voidr] native collector teardown failed', e?.message || e);
     return { present: false };
   }
+}
+
+// Async embeds (script injected via createElement/GTM) can finish loading AFTER
+// our injection: the native bundle unconditionally reassigns window.VoidrCollector
+// and its init() adopts our forced session — two recorders on one session, and
+// the stop flow would endSession the wrong instance. Stash our handle and, on a
+// delayed re-check, tear down the usurper and restore ours.
+async function armCollectorTakeoverWatchdog(tabId) {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      func: () => {
+        if (!window.VoidrCollector) return;
+        window.__voidrExtCollector = window.VoidrCollector;
+        const check = () => {
+          const current = window.VoidrCollector;
+          if (!current || current === window.__voidrExtCollector) return;
+          try {
+            if (typeof current.endSession === 'function') current.endSession();
+          } catch (_) {}
+          window.VoidrCollector = window.__voidrExtCollector;
+          console.warn('[Voidr] native collector re-appeared after injection — torn down, handle restored');
+        };
+        setTimeout(check, 4000);
+        setTimeout(check, 12000);
+      },
+    });
+  } catch (_) {}
 }
 
 async function sendResumeRecordingUi(tabId, recording) {
@@ -592,10 +648,13 @@ async function resumeActiveRecordingInTab(tabId) {
   const tab = await chrome.tabs.get(tabId).catch(() => null);
   if (!tab?.url || !isHttpUrl(tab.url)) return false;
 
-  await teardownExistingCollectorInTab(tabId);
+  // Fetch the bundle BEFORE the teardown so the native collector has no
+  // CDN-roundtrip window to keep flushing between teardown and our injection.
   const collectorCode = await fetchCollectorCode();
+  await teardownExistingCollectorInTab(tabId);
   await injectCollectorInTab(tabId, collectorCode);
   await initializeCollectorInTab(tabId, recording.initOptions);
+  await armCollectorTakeoverWatchdog(tabId);
   await attachTrackedRecordingTab(tabId, { makeCurrent: true });
   await sendResumeRecordingUi(tabId, recording);
 
@@ -760,12 +819,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
           // If the app already embeds a running collector, stop it before we
           // inject ours (avoids the two-recorder race and clears the cached JWT
-          // that would skip our forced session's /init).
-          await teardownExistingCollectorInTab(targetTabId);
-
+          // that would skip our forced session's /init). Bundle is fetched
+          // BEFORE the teardown so the native collector has no CDN-roundtrip
+          // window to keep flushing between teardown and injection.
           const collectorCode = await fetchCollectorCode();
+          await teardownExistingCollectorInTab(targetTabId);
           await injectCollectorInTab(targetTabId, collectorCode);
           await initializeCollectorInTab(targetTabId, initOptions);
+          await armCollectorTakeoverWatchdog(targetTabId);
 
           const sessionId = (await readCollectorSessionId(targetTabId)) || canonicalSessionId;
 
@@ -1131,6 +1192,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                     window.VoidrCollector.endSession &&
                     window.VoidrCollector.endSession();
                 } catch (_) {}
+                // Wipe our session's keys so a native collector on the next
+                // navigation can't adopt (and pollute) the recorded session.
+                for (const k of ['voidr_jwt', 'voidr_session_id', 'voidr_user_id', 'voidr_last_activity']) {
+                  try {
+                    sessionStorage.removeItem(k);
+                  } catch (_) {}
+                }
               },
             });
           }
@@ -1425,6 +1493,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                     window.VoidrCollector.endSession &&
                     window.VoidrCollector.endSession();
                 } catch (_) {}
+                // Wipe our session's keys so a native collector on the next
+                // navigation can't adopt (and pollute) the recorded session.
+                for (const k of ['voidr_jwt', 'voidr_session_id', 'voidr_user_id', 'voidr_last_activity']) {
+                  try {
+                    sessionStorage.removeItem(k);
+                  } catch (_) {}
+                }
               },
             });
           } catch (_) {}
