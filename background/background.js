@@ -775,6 +775,55 @@ async function checkAuthenticationStatus() {
   }
 }
 
+function reloadTabAndWaitForLoad(tabId, timeoutMs = 15000) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      try {
+        chrome.tabs.onUpdated.removeListener(listener);
+      } catch (_) {}
+      clearTimeout(timer);
+      resolve();
+    };
+    const listener = (updatedTabId, changeInfo) => {
+      if (updatedTabId === tabId && changeInfo.status === 'complete') finish();
+    };
+    const timer = setTimeout(finish, timeoutMs);
+    chrome.tabs.onUpdated.addListener(listener);
+    chrome.tabs.reload(tabId, { bypassCache: false }, () => {
+      void chrome.runtime.lastError;
+    });
+  });
+}
+
+// A document loaded BEFORE the CSP-bypass rule existed keeps its original CSP:
+// every collector request (init/chunks/bundle) is silently blocked and the
+// recording "runs" but nothing is saved. declarativeNetRequest only strips
+// headers on future navigations, so those tabs need one reload. A CSP-blocked
+// fetch rejects immediately even in no-cors mode, which makes a cheap probe.
+async function tabBlocksCollectorConnects(tabId, collectorUrl) {
+  try {
+    const res = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      func: async (url) => {
+        try {
+          await fetch(url, { method: 'GET', mode: 'no-cors', cache: 'no-store' });
+          return false;
+        } catch (_) {
+          return true;
+        }
+      },
+      args: [collectorUrl],
+    });
+    return Boolean(res && res[0] && res[0].result);
+  } catch (_) {
+    return false;
+  }
+}
+
 // Listener para mensagens dos content scripts
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   switch (request.action) {
@@ -808,6 +857,18 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           // across navigations (auth providers like Microsoft B2C block connect-src
           // to collector.voidr.co otherwise). Rule is removed on session stop.
           await enableCspBypassForTab(targetTabId);
+
+          // Pages already open before the rule keep their document CSP — probe
+          // and reload once so the fresh document loads without those headers
+          // (generalização do PR #6, que fazia isso só para onboarding).
+          const reloadedForCsp = await tabBlocksCollectorConnects(
+            targetTabId,
+            API_CONFIG.collectorUrl,
+          );
+          if (reloadedForCsp) {
+            console.log('[Voidr] page CSP blocks the collector — reloading tab', targetTabId);
+            await reloadTabAndWaitForLoad(targetTabId);
+          }
 
           const canonicalSessionId =
             request.initOptions?.forcedSessionId || createRecordingSessionId();
@@ -861,6 +922,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             sessionIds: [sessionId],
             startedAt: Date.now(),
           });
+
+          // The CSP reload wiped the recording panel the content script had
+          // rendered before sending this message — restore it now.
+          if (reloadedForCsp && activeRecording) {
+            await sendResumeRecordingUi(targetTabId, activeRecording);
+          }
 
           // Capture HttpOnly cookies (invisible to the page) for the environment
           // bundle when this recording opted in. Best-effort, non-blocking.
@@ -1323,6 +1390,22 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
               !active.url.startsWith(API_CONFIG.platformUrl)
             ) {
               targetTabId = active.id;
+            }
+          }
+
+          // The floating assistant window breaks the active-tab fallback above
+          // (the "current window" is the popup itself), which silently opened a
+          // fresh targetUrl tab instead of recording the page the user was on.
+          // lastActiveContentTabId is stamped when the popup opens, so it points
+          // at exactly that page.
+          if (!targetTabId && Number.isInteger(lastActiveContentTabId)) {
+            const last = await chrome.tabs.get(lastActiveContentTabId).catch(() => null);
+            if (
+              last?.url &&
+              /^https?:/i.test(last.url) &&
+              !last.url.startsWith(API_CONFIG.platformUrl)
+            ) {
+              targetTabId = last.id;
             }
           }
 
