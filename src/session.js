@@ -45,7 +45,14 @@ export async function authenticateSession() {
   const storedJwt = sessionStorage.getItem('voidr_jwt');
   const storedSession = sessionStorage.getItem('voidr_session_id');
 
-  if (storedJwt && storedSession && storedSession === state.sessionId) {
+  // A forced session (extension-driven recording) must always POST /init so the
+  // server session doc is created. A leftover voidr_jwt from a natively-embedded
+  // collector would otherwise short-circuit init and the forced session would
+  // never exist server-side.
+  const isForced =
+    typeof state.config.forcedSessionId === 'string' && !!state.config.forcedSessionId.trim();
+
+  if (!isForced && storedJwt && storedSession && storedSession === state.sessionId) {
     // Only reuse the cached JWT while it's outside the refresh margin — a
     // restored tab shouldn't start on a token about to expire.
     const exp = decodeJwtExp(storedJwt);

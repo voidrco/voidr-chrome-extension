@@ -6,6 +6,10 @@ import {
   throttle,
   truncate,
 } from '../utils/helpers.js';
+import {
+  resolveInteractiveTarget,
+  getAccessibleLabel,
+} from '../utils/interactive-element.js';
 
 /**
  * Check if an element matches any block selector (should be ignored for capture).
@@ -81,31 +85,52 @@ export function initEventListeners() {
     if (state.elementMapper) state.elementMapper.onInteraction(target, 'change');
   });
 
-  // Click events
-  document.addEventListener('click', (e) => {
-    const target = e.composedPath()[0];
-    if (shouldIgnore(target)) return;
+  // Click events — CAPTURE phase: runs before the app's own handlers (and any
+  // history.pushState they trigger), so a navigation click is recorded on the
+  // ORIGIN page, before the page.view event. We never stop propagation or
+  // preventDefault, so the host app is unaffected.
+  document.addEventListener(
+    'click',
+    (e) => {
+      const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
+      const rawTarget = path[0] || e.target;
+      if (!rawTarget || !rawTarget.tagName) return;
+      // The deepest node is usually an icon's <svg>/<path> with no text and a
+      // positional selector — resolve the interactive ancestor (a/button/...)
+      // so text/selector/interaction describe the real control.
+      const target = resolveInteractiveTarget(path) || rawTarget;
+      if (shouldIgnore(target) || shouldIgnore(rawTarget)) return;
 
-    state.events.push({
-      type: 5,
-      timestamp: Date.now(),
-      data: {
-        plugin: 'user.click',
-        payload: {
-          selector: generateSelector(target),
-          tag: target.tagName,
-          text: isTasyMasked(target) ? '***' : getTextContent(target),
-          clickId: e.__voidrClickId || null,
-          position: {
-            x: e.clientX,
-            y: e.clientY,
+      const label = getAccessibleLabel(target) || getTextContent(target);
+      const href =
+        typeof target.getAttribute === 'function' ? target.getAttribute('href') : null;
+      const role =
+        typeof target.getAttribute === 'function' ? target.getAttribute('role') : null;
+
+      state.events.push({
+        type: 5,
+        timestamp: Date.now(),
+        data: {
+          plugin: 'user.click',
+          payload: {
+            selector: generateSelector(target),
+            tag: target.tagName,
+            text: isTasyMasked(target) ? '***' : truncate(label, 100),
+            ...(href ? { href } : {}),
+            ...(role ? { role } : {}),
+            clickId: e.__voidrClickId || null,
+            position: {
+              x: e.clientX,
+              y: e.clientY,
+            },
           },
         },
-      },
-    });
+      });
 
-    if (state.elementMapper) state.elementMapper.onInteraction(target, 'click');
-  });
+      if (state.elementMapper) state.elementMapper.onInteraction(target, 'click');
+    },
+    { capture: true },
+  );
 
   // Scroll events (throttled)
   const scrollHandler = throttle(() => {
