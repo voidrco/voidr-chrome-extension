@@ -10,25 +10,12 @@
  * fingerprint deduplicates screens that share the same visual state.
  */
 
+import { INTERACTIVE_SELECTOR, nameFromHref } from './utils/interactive-element.js'
+
 const MAX_LABEL_LENGTH = 120
 const MAX_TEXT_LENGTH = 50
 const SCAN_INTERVAL_MS = 5000
 const SKELETON_MAX_DEPTH = 4
-
-const INTERACTIVE_SELECTOR = [
-  'button',
-  'a[href]',
-  'input:not([type="hidden"])',
-  'select',
-  'textarea',
-  '[role="button"]',
-  '[role="link"]',
-  '[role="tab"]',
-  '[role="combobox"]',
-  '[role="menuitem"]',
-  '[data-testid]',
-  '[data-test-id]',
-].join(', ')
 
 const LANDMARK_TAGS = new Set(['nav', 'main', 'aside', 'footer', 'header', 'form', 'dialog'])
 const LANDMARK_ROLES = new Set(['navigation', 'main', 'complementary', 'contentinfo', 'banner', 'form', 'dialog'])
@@ -463,8 +450,13 @@ export class ElementMapper {
     const ariaLabelledby = element.getAttribute('aria-labelledby') || null
     const computedText = this._getComputedText(element, tag)
 
-    // Must have at least one identifiable trait
-    const hasIdentity = visibleLabel || ariaLabel || placeholder || testid || id || computedText
+    // Must have at least one identifiable trait. A navigable href counts:
+    // icon-only links (collapsed sidebars) have no label of any kind, and
+    // dropping them erased entire navigation menus from the screenmap.
+    const navigableHref =
+      tag === 'a' && href && !href.startsWith('#') && !/^(javascript|mailto|tel):/i.test(href)
+    const hasIdentity =
+      visibleLabel || ariaLabel || placeholder || testid || id || computedText || navigableHref
     if (!hasIdentity) return null
 
     return {
@@ -629,6 +621,15 @@ export class ElementMapper {
       } catch { /* */ }
     }
 
+    // Test href uniqueness (icon-only links have no other locatable trait)
+    if (descriptor.tag === 'a' && descriptor.attributes.href) {
+      try {
+        const hrefValue = descriptor.attributes.href.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+        const count = document.querySelectorAll(`a[href="${hrefValue}"]`).length
+        if (count === 1) uniqueBy.push('href')
+      } catch { /* invalid selector */ }
+    }
+
     // Test role+name uniqueness
     if (descriptor.role && descriptor.labels.computed_text) {
       try {
@@ -658,12 +659,16 @@ export class ElementMapper {
     const screen = this.screens.get(this.currentUrl)
     if (!screen) return
 
-    // Dedup key: role + best name
+    // Dedup key: role + best name. Href-derived fallback keeps icon-only links
+    // (whose labels are all empty) from colliding into a single `link::` key.
     const name = descriptor.labels.visible_label
       || descriptor.labels.aria_label
       || descriptor.labels.placeholder
       || descriptor.labels.computed_text
       || descriptor.attributes['data-testid']
+      || (descriptor.tag === 'a' && descriptor.attributes.href
+        ? nameFromHref(descriptor.attributes.href) || descriptor.attributes.href
+        : '')
       || ''
     const key = `${descriptor.role || descriptor.tag}::${name}::${descriptor.action}`
 
