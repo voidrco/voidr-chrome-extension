@@ -31,6 +31,13 @@ export const state = {
   idleInterval: null,
   idleListeners: [],
   pausedByIdle: false,
+  longTaskObserver: null,
+  sessionCapTimer: null,
+  bufferMode: false,
+  bufferUpgradeInFlight: false,
+  sessionRotationInFlight: false,
+  onSessionExpired: null,
+  featureFlags: {},
 };
 
 /**
@@ -74,4 +81,14 @@ export function resetState() {
   state.idleInterval = null;
   state.idleListeners = [];
   state.pausedByIdle = false;
+  state.longTaskObserver = null;
+  if (state.sessionCapTimer) {
+    clearTimeout(state.sessionCapTimer);
+  }
+  state.sessionCapTimer = null;
+  state.bufferMode = false;
+  state.bufferUpgradeInFlight = false;
+  state.sessionRotationInFlight = false;
+  // Keep onSessionExpired — wired once by createCollector for the instance lifetime.
+  state.featureFlags = {};
 }

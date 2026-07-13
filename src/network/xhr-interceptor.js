@@ -10,6 +10,8 @@ import {
   extractTraceId,
 } from './extractors.js';
 import { logNetworkEvent, nextRequestId } from '../transport.js';
+import { markNetworkActivity } from '../listeners/click-effect.js';
+import { extractGraphQL } from './extractors.js';
 
 /**
  * Intercept XMLHttpRequest to capture network requests.
@@ -53,6 +55,7 @@ export function initXhrInterceptor() {
     xhr.send = function (body) {
       const start = Date.now();
       const requestId = nextRequestId();
+      markNetworkActivity();
 
       // Capture request body
       if (body !== null && body !== undefined) {
@@ -159,6 +162,9 @@ export function initXhrInterceptor() {
             const traceId = extractTraceId(requestHeaders);
             if (traceId) event.traceId = traceId;
           }
+
+          const gql = extractGraphQL(url, method, requestBody);
+          if (gql) event.graphql = gql;
 
           logNetworkEvent(event);
         }, 50);

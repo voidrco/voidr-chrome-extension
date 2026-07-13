@@ -220,6 +220,33 @@ export function extractTraceId(headers) {
 }
 
 /**
+ * Best-effort GraphQL operation metadata from a request body. Returns
+ * { operationName, operationType } or null when the request isn't GraphQL.
+ */
+export function extractGraphQL(url, method, requestBody) {
+  try {
+    if (String(method).toUpperCase() !== 'POST' || typeof requestBody !== 'string') return null;
+    const looksGraphql = /graphql/i.test(url) || requestBody.includes('"query"');
+    if (!looksGraphql) return null;
+
+    const parsed = JSON.parse(requestBody.slice(0, 20000));
+    const doc = Array.isArray(parsed) ? parsed[0] : parsed;
+    if (!doc || typeof doc.query !== 'string') return null;
+
+    const typeMatch = doc.query.match(/^\s*(query|mutation|subscription)\b/);
+    const operationType = typeMatch ? typeMatch[1] : 'query';
+    let operationName = typeof doc.operationName === 'string' ? doc.operationName : null;
+    if (!operationName) {
+      const nameMatch = doc.query.match(/^\s*(?:query|mutation|subscription)\s+([A-Za-z0-9_]+)/);
+      operationName = nameMatch ? nameMatch[1] : null;
+    }
+    return { operationName, operationType };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Best-effort content-type for a static resource derived from its URL extension.
  * PerformanceResourceTiming exposes no headers, so this is the only signal we
  * have when the entry doesn't carry an explicit content-type.

@@ -3,8 +3,72 @@ import { state } from './state.js';
 import { safeStringify } from './utils/helpers.js';
 import { compressEventsBase64 } from './utils/image-compression.js';
 import { TOKEN_REFRESH_MARGIN_MS, decodeJwtExp } from './utils/jwt.js';
+import { notifyBufferTrigger } from './buffer-mode.js';
 
 const SCREEN_MAP_SYNC_DEBOUNCE_MS = 2000;
+
+// fetch keepalive bodies share a ~64KB in-flight quota; leave headroom.
+const KEEPALIVE_BODY_LIMIT = 60 * 1024;
+
+// Payloads above this compress off the main thread via CompressionStream;
+// smaller ones use pako synchronously (cheaper than the stream setup).
+const NATIVE_COMPRESSION_THRESHOLD = 50 * 1024;
+
+/**
+ * Gzip a string using the native CompressionStream for large payloads (keeps
+ * the main thread free), falling back to pako.
+ */
+async function gzipBytes(str) {
+  if (
+    str.length >= NATIVE_COMPRESSION_THRESHOLD &&
+    typeof CompressionStream === 'function' &&
+    typeof Response === 'function'
+  ) {
+    try {
+      const stream = new Blob([str]).stream().pipeThrough(new CompressionStream('gzip'));
+      const buf = await new Response(stream).arrayBuffer();
+      return new Uint8Array(buf);
+    } catch {
+      /* fall through to pako */
+    }
+  }
+  return gzip(str);
+}
+
+// 4xx means the server deterministically rejects this chunk (e.g. 422 for
+// poison chunks that fail anonymization, 409 past the session cap, 413 for
+// oversized payloads) — requeueing would resend the same payload forever, so
+// the batch must be dropped instead of retried.
+function isNonRetryableStatus(status) {
+  return status >= 400 && status < 500;
+}
+
+/**
+ * Detect SESSION_EXPIRED on a chunk response and kick off session rotation.
+ * Single-flight: concurrent 409s share one rotation.
+ */
+async function handleSessionExpiredResponse(res) {
+  if (res.status !== 409) return false;
+
+  let code = null;
+  try {
+    const body = await res.clone().json();
+    code = body?.code || null;
+  } catch {
+    /* body may be empty or non-JSON */
+  }
+
+  // /sessions/chunk uses 409 for the max-duration cap; treat unknown 409 the
+  // same way so a missing body still recovers instead of looping forever.
+  if (code && code !== 'SESSION_EXPIRED') return false;
+
+  console.warn('VoidrCollector: Session expired server-side, rotating session');
+  const onExpired = state.onSessionExpired;
+  if (typeof onExpired === 'function') {
+    onExpired('server-expired');
+  }
+  return true;
+}
 
 // Unique per page-load so requestIds never collide across pages of the same
 // session (multi-page sessions share a sessionId but reload this script).
@@ -122,8 +186,25 @@ function installExpiryWatch() {
 export function logNetworkEvent(data) {
   if (!data.requestId) data.requestId = nextRequestId();
   if (!data.timestamp) data.timestamp = Date.now();
+
+  // App-provided sanitizer (OpenReplay-style): may mutate/replace the event
+  // or return null to drop it entirely.
+  if (typeof state.config.networkSanitizer === 'function') {
+    try {
+      const sanitized = state.config.networkSanitizer(data);
+      if (sanitized === null) return;
+      if (sanitized && typeof sanitized === 'object') data = sanitized;
+    } catch {
+      /* sanitizer bugs must not break capture */
+    }
+  }
+
   state.networkBuffer.push(data);
   if (state.networkBuffer.length > 10) sendNetworkEvents();
+
+  if (data.type === 'fetchError' || (typeof data.status === 'number' && data.status >= 500)) {
+    notifyBufferTrigger('network-error');
+  }
 }
 
 /**
@@ -150,7 +231,13 @@ export function sendNetworkEvents() {
  */
 export async function sendEvents() {
   const MIN_BATCH_SIZE = 10;
-  if (state.isSending || state.events.length < MIN_BATCH_SIZE || state.forceStop || state.isPaused)
+  if (
+    state.isSending ||
+    state.sessionRotationInFlight ||
+    state.events.length < MIN_BATCH_SIZE ||
+    state.forceStop ||
+    state.isPaused
+  )
     return;
   state.isSending = true;
 
@@ -175,7 +262,7 @@ export async function sendEvents() {
   };
 
   try {
-    const compressed = gzip(safeStringify(payload));
+    const compressed = await gzipBytes(safeStringify(payload));
 
     let res = await fetch(`${state.config.collectorUrl}/sessions/chunk`, {
       method: 'POST',
@@ -201,7 +288,18 @@ export async function sendEvents() {
       });
     }
 
+    if (await handleSessionExpiredResponse(res)) {
+      return;
+    }
+
     if (!res.ok) {
+      if (isNonRetryableStatus(res.status)) {
+        console.debug('VoidrCollector: chunk rejected by collector, dropping batch', {
+          status: res.status,
+          events: batch.length,
+        });
+        return;
+      }
       throw new Error('VoidrCollector: Failed to send events');
     }
   } catch (error) {
@@ -221,7 +319,7 @@ export async function flushEvents() {
   // Flush network buffer into main events array first
   sendNetworkEvents();
 
-  if (state.events.length === 0 || state.forceStop) return;
+  if (state.events.length === 0 || state.forceStop || state.sessionRotationInFlight) return;
 
   // Wait for any in-flight send to complete before flushing
   while (state.isSending) {
@@ -229,7 +327,7 @@ export async function flushEvents() {
   }
 
   // Send all remaining events (may need multiple batches of 100)
-  while (state.events.length > 0 && !state.forceStop) {
+  while (state.events.length > 0 && !state.forceStop && !state.sessionRotationInFlight) {
     state.isSending = true;
     const batch = state.events.splice(0, 100);
     const compressedBatch = await compressEventsBase64(batch);
@@ -252,7 +350,7 @@ export async function flushEvents() {
     };
 
     try {
-      const compressed = gzip(safeStringify(payload));
+      const compressed = await gzipBytes(safeStringify(payload));
       const res = await fetch(`${state.config.collectorUrl}/sessions/chunk`, {
         method: 'POST',
         headers: {
@@ -263,7 +361,18 @@ export async function flushEvents() {
         body: compressed,
       });
 
+      if (await handleSessionExpiredResponse(res)) {
+        break;
+      }
+
       if (!res.ok) {
+        if (isNonRetryableStatus(res.status)) {
+          console.debug('VoidrCollector: chunk rejected by collector, dropping batch', {
+            status: res.status,
+            events: batch.length,
+          });
+          continue;
+        }
         state.events.unshift(...batch);
         break;
       }
@@ -282,7 +391,7 @@ export async function flushEvents() {
  * Failures are non-fatal — recording continues normally.
  */
 export async function syncScreenMap() {
-  if (!state.elementMapper || state.forceStop) return;
+  if (!state.elementMapper || state.forceStop || state.sessionRotationInFlight) return;
   if (!state.elementMapper.isDirty()) return;
   if (state.screenMapSyncInFlight) {
     state.screenMapSyncQueued = true;
@@ -307,7 +416,7 @@ export async function syncScreenMap() {
       screens: snapshot.screens,
     });
 
-    const compressed = gzip(payload);
+    const compressed = await gzipBytes(payload);
 
     let res = await fetch(`${state.config.collectorUrl}/screen-map/sync`, {
       method: 'POST',
@@ -433,7 +542,9 @@ export function finalizeSessionBeacon() {
 /**
  * Handle the beforeunload event: flush ALL remaining events.
  * No minimum batch size — sends everything that's buffered.
- * Uses synchronous XMLHttpRequest for reliable delivery during unload.
+ * Prefers fetch keepalive (non-blocking, survives unload, supports auth
+ * headers); falls back to synchronous XMLHttpRequest for oversized payloads
+ * since keepalive bodies are capped at ~64KB.
  */
 export function handleUnload() {
   sendNetworkEvents();
@@ -449,6 +560,28 @@ export function handleUnload() {
     applicationId: state.config.applicationId,
     environment: state.config.environment,
   };
+  const body = safeStringify(payload);
+
+  try {
+    // Unload path must stay synchronous — pako, not CompressionStream.
+    const compressed = gzip(body);
+    if (compressed.byteLength < KEEPALIVE_BODY_LIMIT) {
+      const doFetch = state.originalFetch || fetch;
+      doFetch(`${state.config.collectorUrl}/sessions/chunk`, {
+        method: 'POST',
+        keepalive: true,
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Encoding': 'gzip',
+          ...(state.authToken ? { Authorization: `Bearer ${state.authToken}` } : {}),
+        },
+        body: compressed,
+      }).catch(() => {});
+      return;
+    }
+  } catch {
+    // Fall through to sync XHR
+  }
 
   try {
     const XHRConstructor = state.originalXHR || XMLHttpRequest;
@@ -458,7 +591,7 @@ export function handleUnload() {
     if (state.authToken) {
       xhr.setRequestHeader('Authorization', `Bearer ${state.authToken}`);
     }
-    xhr.send(safeStringify(payload));
+    xhr.send(body);
   } catch {
     // Best-effort — nothing more we can do during unload
   }

@@ -1,4 +1,4 @@
-export const VOIDR_VERSION = '1.16.1';
+export const VOIDR_VERSION = '1.17.0';
 
 // Default configuration for the collector
 export const DEFAULT_CONFIG = {
@@ -12,12 +12,38 @@ export const DEFAULT_CONFIG = {
   system: false,
   skipRecording: false,
   samplingRate: 0.1, // 0 to 1 (0% to 100%), default 10%
+  // When the session loses the samplingRate dice roll, keep recording into an
+  // in-memory ring buffer and upgrade to a real session if an error occurs
+  // (Sentry-style replaysOnErrorSampleRate). 0 disables buffer mode.
+  onErrorSampleRate: 0,
+  // Hard cap on a single session's duration. When reached the session is
+  // finalized; with sessionRotation a fresh sessionId continues recording.
+  maxSessionDurationMinutes: 60,
+  sessionRotation: true,
   dataMasking: {
     text: false,
     inputs: false,
     blockSelectors: ['[data-sensitivity="block"]'],
   },
+  // Coarse privacy level applied on top of dataMasking:
+  // 'mask' | 'mask-user-input' | 'allow' | null (null = dataMasking only)
+  privacyLevel: null,
+  captureWebVitals: true,
+  captureLongTasks: true,
+  longTaskThresholdMs: 100,
+  captureResourceErrors: true,
+  captureCspViolations: true,
+  // White screen detection (web-see-style point sampling). Opt-in; skeleton
+  // projects must set skeleton: true for accurate results.
+  whiteScreen: {
+    enabled: false,
+    skeleton: false,
+    containers: ['html', 'body', '#app', '#root'],
+  },
   networkCapture: true,
+  // Optional (event) => event|null hook to scrub URLs/bodies/headers before
+  // buffering; return null to drop the request entirely.
+  networkSanitizer: null,
   captureConsole: true,
   // ── Static resource capture (Phase 6) ─────────────────────────────────────
   // Capture img/script/css/font/other static assets via PerformanceObserver as

@@ -107,6 +107,12 @@ export async function authenticateSession() {
   if (typeof data.sessionId === 'string' && data.sessionId.trim()) {
     state.sessionId = data.sessionId.trim();
   }
+  // Server-driven recording config: authoritative over local options when
+  // present, so ops can tune sampling / ignorelists / privacyLevel without a
+  // client redeploy.
+  if (data.recording && typeof data.recording === 'object') {
+    state.config = { ...state.config, ...data.recording };
+  }
   if (!state.authToken) {
     console.error('VoidrCollector: Failed to get authentication token');
     return false;
