@@ -576,7 +576,7 @@ function showSessionSummaryView(sessionId, scenarioName, appName) {
     <div class="summary-view">
       <div class="summary-icon-wrap summary-icon-wrap--pending loading-state">${getIcon('Loader', 36)}</div>
       <h2 class="summary-title">Verificando gravação…</h2>
-      <p class="summary-desc">Confirmando que a sessão foi salva no servidor.</p>
+      <p class="summary-desc">Confirmando que a sessão foi salva no servidor. Isso pode levar alguns segundos enquanto o envio termina.</p>
       ${card}
     </div>
   `;
@@ -624,14 +624,21 @@ function showSessionSummaryView(sessionId, scenarioName, appName) {
       }
     });
 
-  // A indexação no servidor pode atrasar 1-2s após o stop; tenta algumas vezes.
+  // O upload dos chunks + persistência no servidor pode demorar bem mais que
+  // 1-2s — a aba-alvo às vezes ainda está enviando quando o popup abre (a
+  // sessão "fica verde" só depois). Faz polling com backoff por ~45s antes de
+  // declarar não-confirmada, para não dar falso-negativo numa sessão que só
+  // demorou a subir.
   (async () => {
-    for (let attempt = 0; attempt < 3; attempt++) {
+    const delays = [1000, 1500, 2000, 2500, 3000, 3500, 4000, 5000, 6000, 8000, 8000];
+    for (let attempt = 0; attempt <= delays.length; attempt++) {
       if (await validateOnce()) {
         renderSuccess();
         return;
       }
-      await new Promise((r) => setTimeout(r, 1200));
+      if (attempt < delays.length) {
+        await new Promise((r) => setTimeout(r, delays[attempt]));
+      }
     }
     renderFailure();
   })();
