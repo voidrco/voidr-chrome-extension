@@ -372,6 +372,20 @@ function createRefocusButton(forceShow) {
       const center = rect.left + rect.width / 2;
       const side = center < w / 2 ? 'left' : 'right';
       const topRatio = voidrClamp(rect.top / h, 0, 1);
+      // Ease the snap instead of teleporting. The transition lives only for the
+      // glide (host normally has no left/top transition, keeping the drag 1:1).
+      const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+      if (!reduceMotion) {
+        host.style.transition =
+          'opacity .18s ease, left .32s cubic-bezier(.22,.88,.26,1.08), top .32s cubic-bezier(.22,.88,.26,1.08)';
+        host.addEventListener(
+          'transitionend',
+          () => {
+            host.style.transition = 'opacity .18s ease';
+          },
+          { once: true },
+        );
+      }
       voidrApplyPosition(host, { side, topRatio });
       voidrStorageSet({ [VOIDR_FAB.posKey]: { side, topRatio } });
     }
@@ -799,7 +813,14 @@ function showOnboardingDoneBanner(mode) {
 
 function broadcastSessionToOnboarding(sessionId, onboardingRunId, evidence) {
   try {
-    const payload = JSON.stringify({
+    // Post straight from the content script: BroadcastChannel is origin-scoped
+    // (the auto-connect listener below already relies on it), and injecting an
+    // inline <script> instead trips the CSP of strict pages (platform, most
+    // client apps) with a red console error on every stop. Platform tabs are
+    // additionally covered by the background's executeScript broadcast, which
+    // is what actually crosses origins.
+    const bc = new BroadcastChannel('voidr-onboarding');
+    bc.postMessage({
       type: 'voidr:sessionCaptured',
       sessionId,
       onboardingRunId: onboardingRunId || undefined,
@@ -807,10 +828,7 @@ function broadcastSessionToOnboarding(sessionId, onboardingRunId, evidence) {
       // so it can auto-attach this session as evidence without re-deriving them.
       evidence: evidence || undefined,
     });
-    const script = document.createElement('script');
-    script.textContent = `try{var bc=new BroadcastChannel('voidr-onboarding');bc.postMessage(${payload});bc.close();}catch(_){}`;
-    document.documentElement.appendChild(script);
-    script.remove();
+    bc.close();
   } catch (_) {}
 }
 

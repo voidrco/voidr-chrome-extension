@@ -537,9 +537,23 @@ async function teardownExistingCollectorInTab(tabId) {
       target: { tabId },
       world: 'MAIN',
       func: () => {
+        // The real poison is the orphan voidr_jwt in sessionStorage (a stale
+        // token makes the recorder skip /init and flush under the wrong org),
+        // so wipe it on EVERY path — even when no instance is present (e.g.
+        // async embeds that haven't loaded yet, or endSession-less versions).
+        const wipe = () => {
+          for (const k of ['voidr_jwt', 'voidr_session_id', 'voidr_user_id', 'voidr_last_activity']) {
+            try {
+              sessionStorage.removeItem(k);
+            } catch (_) {}
+          }
+        };
         try {
           const existing = window.VoidrCollector;
-          if (!existing) return { present: false };
+          if (!existing) {
+            wipe();
+            return { present: false, wiped: true };
+          }
           const info = {
             present: true,
             version: existing.version || null,
@@ -551,16 +565,58 @@ async function teardownExistingCollectorInTab(tabId) {
             existing.endSession();
             info.toreDown = true;
           }
+          // Drop the dead handle so page code can't revive/reuse the native
+          // instance after we inject ours.
+          try {
+            delete window.VoidrCollector;
+          } catch (_) {
+            window.VoidrCollector = undefined;
+          }
+          wipe();
+          info.wiped = true;
           return info;
         } catch (e) {
-          return { present: false, error: String(e) };
+          wipe();
+          return { present: false, wiped: true, error: String(e) };
         }
       },
     });
-    return (res && res[0] && res[0].result) || { present: false };
-  } catch (_) {
+    const info = (res && res[0] && res[0].result) || { present: false };
+    console.log('[Voidr] native collector teardown', JSON.stringify(info));
+    return info;
+  } catch (e) {
+    console.warn('[Voidr] native collector teardown failed', e?.message || e);
     return { present: false };
   }
+}
+
+// Async embeds (script injected via createElement/GTM) can finish loading AFTER
+// our injection: the native bundle unconditionally reassigns window.VoidrCollector
+// and its init() adopts our forced session — two recorders on one session, and
+// the stop flow would endSession the wrong instance. Stash our handle and, on a
+// delayed re-check, tear down the usurper and restore ours.
+async function armCollectorTakeoverWatchdog(tabId) {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      func: () => {
+        if (!window.VoidrCollector) return;
+        window.__voidrExtCollector = window.VoidrCollector;
+        const check = () => {
+          const current = window.VoidrCollector;
+          if (!current || current === window.__voidrExtCollector) return;
+          try {
+            if (typeof current.endSession === 'function') current.endSession();
+          } catch (_) {}
+          window.VoidrCollector = window.__voidrExtCollector;
+          console.warn('[Voidr] native collector re-appeared after injection — torn down, handle restored');
+        };
+        setTimeout(check, 4000);
+        setTimeout(check, 12000);
+      },
+    });
+  } catch (_) {}
 }
 
 async function sendResumeRecordingUi(tabId, recording) {
@@ -596,10 +652,13 @@ async function resumeActiveRecordingInTab(tabId) {
   const tab = await chrome.tabs.get(tabId).catch(() => null);
   if (!tab?.url || !isHttpUrl(tab.url)) return false;
 
-  await teardownExistingCollectorInTab(tabId);
+  // Fetch the bundle BEFORE the teardown so the native collector has no
+  // CDN-roundtrip window to keep flushing between teardown and our injection.
   const collectorCode = await fetchCollectorCode();
+  await teardownExistingCollectorInTab(tabId);
   await injectCollectorInTab(tabId, collectorCode);
   await initializeCollectorInTab(tabId, recording.initOptions);
+  await armCollectorTakeoverWatchdog(tabId);
   await attachTrackedRecordingTab(tabId, { makeCurrent: true });
   await sendResumeRecordingUi(tabId, recording);
 
@@ -720,6 +779,55 @@ async function checkAuthenticationStatus() {
   }
 }
 
+function reloadTabAndWaitForLoad(tabId, timeoutMs = 15000) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      try {
+        chrome.tabs.onUpdated.removeListener(listener);
+      } catch (_) {}
+      clearTimeout(timer);
+      resolve();
+    };
+    const listener = (updatedTabId, changeInfo) => {
+      if (updatedTabId === tabId && changeInfo.status === 'complete') finish();
+    };
+    const timer = setTimeout(finish, timeoutMs);
+    chrome.tabs.onUpdated.addListener(listener);
+    chrome.tabs.reload(tabId, { bypassCache: false }, () => {
+      void chrome.runtime.lastError;
+    });
+  });
+}
+
+// A document loaded BEFORE the CSP-bypass rule existed keeps its original CSP:
+// every collector request (init/chunks/bundle) is silently blocked and the
+// recording "runs" but nothing is saved. declarativeNetRequest only strips
+// headers on future navigations, so those tabs need one reload. A CSP-blocked
+// fetch rejects immediately even in no-cors mode, which makes a cheap probe.
+async function tabBlocksCollectorConnects(tabId, collectorUrl) {
+  try {
+    const res = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      func: async (url) => {
+        try {
+          await fetch(url, { method: 'GET', mode: 'no-cors', cache: 'no-store' });
+          return false;
+        } catch (_) {
+          return true;
+        }
+      },
+      args: [collectorUrl],
+    });
+    return Boolean(res && res[0] && res[0].result);
+  } catch (_) {
+    return false;
+  }
+}
+
 // Listener para mensagens dos content scripts
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   switch (request.action) {
@@ -754,6 +862,18 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           // to collector.voidr.co otherwise). Rule is removed on session stop.
           await enableCspBypassForTab(targetTabId);
 
+          // Pages already open before the rule keep their document CSP — probe
+          // and reload once so the fresh document loads without those headers
+          // (generalização do PR #6, que fazia isso só para onboarding).
+          const reloadedForCsp = await tabBlocksCollectorConnects(
+            targetTabId,
+            API_CONFIG.collectorUrl,
+          );
+          if (reloadedForCsp) {
+            console.log('[Voidr] page CSP blocks the collector — reloading tab', targetTabId);
+            await reloadTabAndWaitForLoad(targetTabId);
+          }
+
           const canonicalSessionId =
             request.initOptions?.forcedSessionId || createRecordingSessionId();
           const initOptions = {
@@ -764,12 +884,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
           // If the app already embeds a running collector, stop it before we
           // inject ours (avoids the two-recorder race and clears the cached JWT
-          // that would skip our forced session's /init).
-          await teardownExistingCollectorInTab(targetTabId);
-
+          // that would skip our forced session's /init). Bundle is fetched
+          // BEFORE the teardown so the native collector has no CDN-roundtrip
+          // window to keep flushing between teardown and injection.
           const collectorCode = await fetchCollectorCode();
+          await teardownExistingCollectorInTab(targetTabId);
           await injectCollectorInTab(targetTabId, collectorCode);
           await initializeCollectorInTab(targetTabId, initOptions);
+          await armCollectorTakeoverWatchdog(targetTabId);
 
           const sessionId = (await readCollectorSessionId(targetTabId)) || canonicalSessionId;
 
@@ -804,6 +926,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             sessionIds: [sessionId],
             startedAt: Date.now(),
           });
+
+          // The CSP reload wiped the recording panel the content script had
+          // rendered before sending this message — restore it now.
+          if (reloadedForCsp && activeRecording) {
+            await sendResumeRecordingUi(targetTabId, activeRecording);
+          }
 
           // Capture HttpOnly cookies (invisible to the page) for the environment
           // bundle when this recording opted in. Best-effort, non-blocking.
@@ -906,6 +1034,17 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
               });
             }
           } catch (_) {}
+
+          chrome.runtime
+            .sendMessage({
+              action: 'authStateUpdated',
+              authData: {
+                isAuthenticated: true,
+                user: globalAuthState.user,
+                token: request.token,
+              },
+            })
+            .catch(() => {});
 
           sendResponse({
             isAuthenticated: true,
@@ -1135,6 +1274,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                     window.VoidrCollector.endSession &&
                     window.VoidrCollector.endSession();
                 } catch (_) {}
+                // Wipe our session's keys so a native collector on the next
+                // navigation can't adopt (and pollute) the recorded session.
+                for (const k of ['voidr_jwt', 'voidr_session_id', 'voidr_user_id', 'voidr_last_activity']) {
+                  try {
+                    sessionStorage.removeItem(k);
+                  } catch (_) {}
+                }
               },
             });
           }
@@ -1259,6 +1405,22 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
               !active.url.startsWith(API_CONFIG.platformUrl)
             ) {
               targetTabId = active.id;
+            }
+          }
+
+          // The floating assistant window breaks the active-tab fallback above
+          // (the "current window" is the popup itself), which silently opened a
+          // fresh targetUrl tab instead of recording the page the user was on.
+          // lastActiveContentTabId is stamped when the popup opens, so it points
+          // at exactly that page.
+          if (!targetTabId && Number.isInteger(lastActiveContentTabId)) {
+            const last = await chrome.tabs.get(lastActiveContentTabId).catch(() => null);
+            if (
+              last?.url &&
+              /^https?:/i.test(last.url) &&
+              !last.url.startsWith(API_CONFIG.platformUrl)
+            ) {
+              targetTabId = last.id;
             }
           }
 
@@ -1429,6 +1591,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                     window.VoidrCollector.endSession &&
                     window.VoidrCollector.endSession();
                 } catch (_) {}
+                // Wipe our session's keys so a native collector on the next
+                // navigation can't adopt (and pollute) the recorded session.
+                for (const k of ['voidr_jwt', 'voidr_session_id', 'voidr_user_id', 'voidr_last_activity']) {
+                  try {
+                    sessionStorage.removeItem(k);
+                  } catch (_) {}
+                }
               },
             });
           } catch (_) {}
