@@ -141,6 +141,7 @@ function normalizeActiveRecording(recording) {
     mode: recording.mode || recording.initOptions?.meta?.mode || 'test-case',
     onboardingRunId:
       recording.onboardingRunId || recording.initOptions?.meta?.onboardingRunId || null,
+    code: recording.code || recording.initOptions?.meta?.code || null,
     evidence: recording.evidence || recording.initOptions?.meta?.evidence || null,
     flows: recording.flows || recording.initOptions?.meta?.flows || [],
     sessionIds,
@@ -917,6 +918,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             testCaseName: request.initOptions?.meta?.testCase || 'Test Case',
             mode: request.initOptions?.meta?.mode || 'test-case',
             onboardingRunId: request.initOptions?.meta?.onboardingRunId,
+            code: request.initOptions?.meta?.code || null,
             evidence: request.initOptions?.meta?.evidence || null,
             flows: request.initOptions?.meta?.flows || [],
             sessionIds: [sessionId],
@@ -1504,13 +1506,49 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           // Merge current sessionId with all previously accumulated ones
           const allSessionIds = [...new Set([...priorSessionIds, sessionId].filter(Boolean))];
 
-          // Persist a marker so the popup can show a success screen when reopened
-          // (test-case flow only; onboarding has its own handling).
+          // Onboarding-code captures are cross-org: the session is stored under
+          // the code's org, not the recording user's org. Link each session to
+          // the code via the org-agnostic endpoint — this registers the recording
+          // against the onboarding code AND serves as the save confirmation (the
+          // org-scoped session lookup can't see cross-org sessions).
+          const onboardingCode =
+            priorRecording?.code || priorRecording?.initOptions?.meta?.code || null;
+          let captureConfirmed = false;
+          if (onboardingCode && globalAuthState.token) {
+            for (const sid of allSessionIds) {
+              try {
+                const res = await fetch(
+                  `${API_CONFIG.baseUrl}/onboarding/recording-sessions/code/${encodeURIComponent(onboardingCode)}/sessions`,
+                  {
+                    method: 'POST',
+                    headers: {
+                      Authorization: `Bearer ${globalAuthState.token}`,
+                      'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ collectorSessionId: sid }),
+                  },
+                );
+                const json = await res.json().catch(() => null);
+                if (res.ok && json?.success && Array.isArray(json?.data?.sessions)) {
+                  captureConfirmed = json.data.sessions.includes(sid) || captureConfirmed;
+                }
+              } catch (_) {}
+            }
+          }
+
+          // Persist a marker so the popup can show a success screen when reopened.
+          // Onboarding-code captures pass `confirmed` from the link above so the
+          // popup skips the org-scoped (cross-org: always-failing) lookup.
           try {
             const latestSid = sessionId || allSessionIds[allSessionIds.length - 1] || null;
-            if (latestSid && !activeRunId) {
+            if (latestSid && (!activeRunId || onboardingCode)) {
               await chrome.storage.session.set({
-                voidrLastCapture: { sessionId: latestSid, capturedAt: Date.now() },
+                voidrLastCapture: {
+                  sessionId: latestSid,
+                  capturedAt: Date.now(),
+                  confirmed: captureConfirmed,
+                  code: onboardingCode || undefined,
+                },
               });
               // Reopen the assistant popup so the success screen shows automatically.
               try {

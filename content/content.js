@@ -475,6 +475,7 @@ function sendCollectorInit(init) {
         mode: init.mode,
         slug: init.slug,
         onboardingRunId: init.onboardingRunId || undefined,
+        code: init.code || undefined,
         flows: init.flows || undefined,
         evidence: init.evidence || undefined,
       },
@@ -523,6 +524,7 @@ async function startVoidrSessionRecording(testCaseName, options = {}) {
         apiKey: options.apiKey,
         applicationId: options.applicationId || slug,
         onboardingRunId: options.onboardingRunId,
+        code: options.code,
         flows: options.flows,
         evidence: options.evidence,
       });
@@ -846,6 +848,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         applicationId: request.applicationId,
         apiKey: request.apiKey,
         onboardingRunId: request.onboardingRunId,
+        code: request.code,
         flows: request.flows || [],
         evidence: request.evidence,
       });
