@@ -59,7 +59,7 @@ async function initVoidrExtension() {
   }
 }
 
-// ── Refocus Button (Shadow DOM, draggable + snap-to-edge) ────────────────────
+// ── Refocus Button (Shadow DOM, draggable + free-floating) ───────────────────
 
 const VOIDR_FAB = {
   size: 56,
@@ -67,7 +67,7 @@ const VOIDR_FAB = {
   dragThreshold: 5,
   handleW: 9,
   handleH: 54,
-  posKey: 'voidr_fab_pos', // { side: 'left' | 'right', topRatio: 0..1 }
+  posKey: 'voidr_fab_pos', // { leftRatio: 0..1, topRatio: 0..1 } (free position)
   hiddenKey: 'voidr_fab_hidden', // boolean — docked to the edge as a thin handle
 };
 
@@ -98,17 +98,32 @@ function voidrViewport() {
 
 function voidrApplyPosition(host, pos) {
   const { w, h } = voidrViewport();
-  const side = pos && pos.side === 'left' ? 'left' : 'right';
-  const left = side === 'left' ? VOIDR_FAB.margin : w - VOIDR_FAB.margin - VOIDR_FAB.size;
-  const ratio = pos && typeof pos.topRatio === 'number' ? pos.topRatio : 1;
-  const top = voidrClamp(ratio * h, VOIDR_FAB.margin, h - VOIDR_FAB.margin - VOIDR_FAB.size);
+  const maxLeft = Math.max(VOIDR_FAB.margin, w - VOIDR_FAB.margin - VOIDR_FAB.size);
+  const maxTop = Math.max(VOIDR_FAB.margin, h - VOIDR_FAB.margin - VOIDR_FAB.size);
+  const spanX = maxLeft - VOIDR_FAB.margin;
+  const spanY = maxTop - VOIDR_FAB.margin;
+  // Free position stored as ratios (0..1) of the travel range, so it survives
+  // viewport resizes. Backward-compat: migrate the old edge-snapped format
+  // { side, topRatio } → leftRatio 0 (left) or 1 (right).
+  let leftRatio =
+    pos && typeof pos.leftRatio === 'number'
+      ? pos.leftRatio
+      : pos && pos.side === 'left'
+        ? 0
+        : 1;
+  let topRatio = pos && typeof pos.topRatio === 'number' ? pos.topRatio : 1;
+  leftRatio = voidrClamp(leftRatio, 0, 1);
+  topRatio = voidrClamp(topRatio, 0, 1);
+  const left = VOIDR_FAB.margin + leftRatio * spanX;
+  const top = VOIDR_FAB.margin + topRatio * spanY;
   host.style.width = VOIDR_FAB.size + 'px';
   host.style.height = VOIDR_FAB.size + 'px';
   host.style.left = Math.round(left) + 'px';
   host.style.top = Math.round(top) + 'px';
   host.style.right = 'auto';
   host.style.bottom = 'auto';
-  host.dataset.side = side;
+  // side drives only the label/tooltip orientation now (which half has room).
+  host.dataset.side = left + VOIDR_FAB.size / 2 < w / 2 ? 'left' : 'right';
 }
 
 // First-run safety net: if the resting spot lands on an interactive element,
@@ -366,28 +381,18 @@ function createRefocusButton(forceShow) {
         openAssistant();
         return;
       }
-      // Snap to the nearest horizontal edge; remember vertical position as a ratio.
+      // Free-floating: leave the button exactly where it was dropped (onPointerMove
+      // already set its px position). Persist as ratios of the travel range so it
+      // survives viewport resizes. No edge snapping.
       const { w, h } = voidrViewport();
       const rect = host.getBoundingClientRect();
-      const center = rect.left + rect.width / 2;
-      const side = center < w / 2 ? 'left' : 'right';
-      const topRatio = voidrClamp(rect.top / h, 0, 1);
-      // Ease the snap instead of teleporting. The transition lives only for the
-      // glide (host normally has no left/top transition, keeping the drag 1:1).
-      const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
-      if (!reduceMotion) {
-        host.style.transition =
-          'opacity .18s ease, left .32s cubic-bezier(.22,.88,.26,1.08), top .32s cubic-bezier(.22,.88,.26,1.08)';
-        host.addEventListener(
-          'transitionend',
-          () => {
-            host.style.transition = 'opacity .18s ease';
-          },
-          { once: true },
-        );
-      }
-      voidrApplyPosition(host, { side, topRatio });
-      voidrStorageSet({ [VOIDR_FAB.posKey]: { side, topRatio } });
+      const spanX = Math.max(1, w - 2 * VOIDR_FAB.margin - VOIDR_FAB.size);
+      const spanY = Math.max(1, h - 2 * VOIDR_FAB.margin - VOIDR_FAB.size);
+      const leftRatio = voidrClamp((rect.left - VOIDR_FAB.margin) / spanX, 0, 1);
+      const topRatio = voidrClamp((rect.top - VOIDR_FAB.margin) / spanY, 0, 1);
+      // Update label orientation without moving the button.
+      host.dataset.side = rect.left + rect.width / 2 < w / 2 ? 'left' : 'right';
+      voidrStorageSet({ [VOIDR_FAB.posKey]: { leftRatio, topRatio } });
     }
 
     btn.addEventListener('pointerdown', onPointerDown);
