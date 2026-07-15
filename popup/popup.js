@@ -88,7 +88,7 @@ async function initializeExtension() {
     if (last?.sessionId && Date.now() - (last.capturedAt || 0) < 15 * 60 * 1000) {
       const pend = cap?.voidrPendingTestCase || {};
       await chrome.storage.session.remove(['voidrLastCapture', 'voidrPendingTestCase']);
-      showSessionSummaryView(last.sessionId, pend.scenarioName, pend.appName);
+      showSessionSummaryView(last.sessionId, pend.scenarioName, pend.appName, !!last.confirmed);
       return;
     }
 
@@ -526,7 +526,7 @@ async function handleStartTestCaseRecording(app) {
 
 // ── Session Summary View ─────────────────────────────────────────────────────
 
-function showSessionSummaryView(sessionId, scenarioName, appName) {
+function showSessionSummaryView(sessionId, scenarioName, appName, preConfirmed = false) {
   const contentDiv = document.getElementById('main-extension-content');
   if (!contentDiv) return;
   currentView = 'session-summary';
@@ -598,6 +598,14 @@ function showSessionSummaryView(sessionId, scenarioName, appName) {
 
   if (!sessionId) {
     renderFailure();
+    return;
+  }
+
+  // Already confirmed upstream (onboarding-code capture linked to its code via a
+  // org-agnostic endpoint) — the org-scoped session lookup below can't see
+  // cross-org onboarding sessions, so trust the upstream confirmation.
+  if (preConfirmed) {
+    renderSuccess();
     return;
   }
 
@@ -745,6 +753,7 @@ async function handleStartOnboardingRecording() {
         applicationId: onboardingRecordingContext.applicationId || onboardingRecordingContext.appId,
         apiKey: onboardingRecordingContext.apiKey,
         onboardingRunId: onboardingRecordingContext.onboardingRunId,
+        code: onboardingRecordingContext.code,
         flows: onboardingRecordingContext.criticalFlows || onboardingRecordingContext.flows || [],
       },
     },
