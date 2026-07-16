@@ -115,8 +115,10 @@ function assertActivePerformance(sample, multiplier = 1) {
     label(sample, 'large chunk flush frame gap'),
   );
   assertAtMost(sample.dom.maxLongTaskMs, 150 * multiplier, label(sample, 'DOM longest task'));
-  assertAtMost(sample.flush.taskDurationMs, 225 * multiplier, label(sample, 'flush task time'));
+  assertAtMost(sample.flush.durationMs, 1000 * multiplier, label(sample, 'flush duration'));
+  assertAtMost(sample.flush.scriptDurationMs, 35 * multiplier, label(sample, 'flush script time'));
   assertAtMost(sample.flush.totalBlockingTimeMs, 75 * multiplier, label(sample, 'flush TBT'));
+  assertAtMost(sample.flush.maxFrameGapMs, 180 * multiplier, label(sample, 'flush frame gap'));
   assertAtMost(sample.teardown.durationMs, 50 * multiplier, label(sample, 'teardown duration'));
   assert.equal(
     sample.teardown.externalFetchPreserved,
