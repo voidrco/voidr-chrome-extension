@@ -4,7 +4,7 @@ The collector has a deterministic Chromium stress suite that runs the same page 
 
 ## Workload and measurements
 
-Local baseline runs use 4x CPU throttling. Required CI and deployment checks use 2x throttling because shared runners already exhibit substantial control-page blocking time; paired active-minus-control budgets remain identical. Each iteration exercises:
+Local baseline runs use 4x CPU throttling. The required GitHub check uses 2x, while deployment builds use 1x because their shared workers exhibit substantial control-page blocking time. Paired active-minus-control budgets remain identical. Each iteration exercises:
 
 - 1,500 interactive controls;
 - four DOM mutation bursts producing 256 clicks and 64 inputs;
