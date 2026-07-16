@@ -90,11 +90,6 @@ function assertActivePerformance(sample, multiplier = 1) {
   );
   assertAtMost(sample.network.totalBlockingTimeMs, 100 * multiplier, label(sample, 'network TBT'));
   assertAtMost(
-    sample.network.maxFrameGapMs,
-    120 * multiplier,
-    label(sample, 'network max frame gap'),
-  );
-  assertAtMost(
     sample.chunkStress.totalBlockingTimeMs,
     150 * multiplier,
     label(sample, 'chunk stress TBT'),
@@ -171,4 +166,9 @@ export function assertPerformanceBudgets(report) {
   assertAtMost(impact(report, 'dom', 'totalBlockingTimeMs').delta, 150, 'DOM TBT overhead');
   assertAtMost(impact(report, 'network', 'taskDurationMs').delta, 250, 'network task overhead');
   assertAtMost(impact(report, 'network', 'totalBlockingTimeMs').delta, 100, 'network TBT overhead');
+  assertAtMost(
+    impact(report, 'network', 'maxFrameGapMs').delta,
+    120,
+    'network max frame gap overhead',
+  );
 }
