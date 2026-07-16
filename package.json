@@ -1,6 +1,6 @@
 {
   "name": "voidr-collector-script",
-  "version": "1.17.2",
+  "version": "1.17.3",
   "description": "",
   "main": "index.js",
   "scripts": {

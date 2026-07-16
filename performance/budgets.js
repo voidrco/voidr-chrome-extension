@@ -62,20 +62,26 @@ function assertActiveFidelity(sample) {
 
 function assertActivePerformance(sample, multiplier = 1) {
   assertAtMost(
-    sample.load.taskDurationMs,
-    180 * multiplier,
-    label(sample, 'bundle load task time'),
+    sample.load.scriptDurationMs,
+    120 * multiplier,
+    label(sample, 'bundle load script time'),
   );
   assertAtMost(sample.load.totalBlockingTimeMs, 75 * multiplier, label(sample, 'bundle load TBT'));
+  assertAtMost(sample.load.maxFrameGapMs, 180 * multiplier, label(sample, 'bundle load frame gap'));
   assertAtMost(
-    sample.init.taskDurationMs,
-    350 * multiplier,
-    label(sample, 'initialization task time'),
+    sample.init.scriptDurationMs,
+    150 * multiplier,
+    label(sample, 'initialization script time'),
   );
   assertAtMost(
     sample.init.totalBlockingTimeMs,
     100 * multiplier,
     label(sample, 'initialization TBT'),
+  );
+  assertAtMost(
+    sample.init.maxFrameGapMs,
+    180 * multiplier,
+    label(sample, 'initialization frame gap'),
   );
   assertAtMost(
     sample.network.fetchDispatchP95Ms,
@@ -87,17 +93,6 @@ function assertActivePerformance(sample, multiplier = 1) {
     sample.network.xhrCallbackDelayP95Ms,
     35 * multiplier,
     label(sample, 'XHR application callback delay p95'),
-  );
-  assertAtMost(sample.network.totalBlockingTimeMs, 100 * multiplier, label(sample, 'network TBT'));
-  assertAtMost(
-    sample.chunkStress.totalBlockingTimeMs,
-    150 * multiplier,
-    label(sample, 'chunk stress TBT'),
-  );
-  assertAtMost(
-    sample.chunkStress.maxFrameGapMs,
-    180 * multiplier,
-    label(sample, 'chunk stress max frame gap'),
   );
   assertAtMost(
     sample.chunkFlush.durationMs,
@@ -114,9 +109,10 @@ function assertActivePerformance(sample, multiplier = 1) {
     120 * multiplier,
     label(sample, 'large chunk flush frame gap'),
   );
-  assertAtMost(sample.dom.maxLongTaskMs, 150 * multiplier, label(sample, 'DOM longest task'));
-  assertAtMost(sample.flush.taskDurationMs, 225 * multiplier, label(sample, 'flush task time'));
+  assertAtMost(sample.flush.durationMs, 1000 * multiplier, label(sample, 'flush duration'));
+  assertAtMost(sample.flush.scriptDurationMs, 35 * multiplier, label(sample, 'flush script time'));
   assertAtMost(sample.flush.totalBlockingTimeMs, 75 * multiplier, label(sample, 'flush TBT'));
+  assertAtMost(sample.flush.maxFrameGapMs, 180 * multiplier, label(sample, 'flush frame gap'));
   assertAtMost(sample.teardown.durationMs, 50 * multiplier, label(sample, 'teardown duration'));
   assert.equal(
     sample.teardown.externalFetchPreserved,
@@ -129,11 +125,12 @@ function assertActivePerformance(sample, multiplier = 1) {
 
 function assertLoadedPerformance(sample, multiplier = 1) {
   assertAtMost(
-    sample.load.taskDurationMs,
-    180 * multiplier,
-    label(sample, 'bundle load task time'),
+    sample.load.scriptDurationMs,
+    120 * multiplier,
+    label(sample, 'bundle load script time'),
   );
   assertAtMost(sample.load.totalBlockingTimeMs, 75 * multiplier, label(sample, 'bundle load TBT'));
+  assertAtMost(sample.load.maxFrameGapMs, 180 * multiplier, label(sample, 'bundle load frame gap'));
   assertAtMost(sample.heap.usedBytes, 5 * 1024 * 1024 * multiplier, label(sample, 'loaded heap'));
 }
 
@@ -164,11 +161,27 @@ export function assertPerformanceBudgets(report) {
   assertAtMost(impact(report, 'dom', 'durationMs').delta, 400, 'DOM elapsed overhead');
   assertAtMost(impact(report, 'dom', 'taskDurationMs').delta, 450, 'DOM task overhead');
   assertAtMost(impact(report, 'dom', 'totalBlockingTimeMs').delta, 150, 'DOM TBT overhead');
+  assertAtMost(impact(report, 'dom', 'maxLongTaskMs').delta, 150, 'DOM longest-task overhead');
   assertAtMost(impact(report, 'network', 'taskDurationMs').delta, 250, 'network task overhead');
   assertAtMost(impact(report, 'network', 'totalBlockingTimeMs').delta, 100, 'network TBT overhead');
   assertAtMost(
     impact(report, 'network', 'maxFrameGapMs').delta,
     120,
     'network max frame gap overhead',
+  );
+  assertAtMost(
+    impact(report, 'chunkStress', 'scriptDurationMs').delta,
+    100,
+    'chunk stress script overhead',
+  );
+  assertAtMost(
+    impact(report, 'chunkStress', 'totalBlockingTimeMs').delta,
+    150,
+    'chunk stress TBT overhead',
+  );
+  assertAtMost(
+    impact(report, 'chunkStress', 'maxFrameGapMs').delta,
+    180,
+    'chunk stress max frame gap overhead',
   );
 }

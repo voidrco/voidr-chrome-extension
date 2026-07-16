@@ -17,6 +17,7 @@ steps:
     args: ['run', 'test:performance']
     env:
       - 'CI=true'
+      - 'PERF_CPU_THROTTLE=1'
       - 'VOIDR_COLLECTOR_URL=https://collector.voidr.co'
     id: 'performance-tests'
     waitFor:
