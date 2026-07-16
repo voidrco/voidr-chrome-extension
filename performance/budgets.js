@@ -95,16 +95,6 @@ function assertActivePerformance(sample, multiplier = 1) {
     label(sample, 'XHR application callback delay p95'),
   );
   assertAtMost(
-    sample.chunkStress.totalBlockingTimeMs,
-    150 * multiplier,
-    label(sample, 'chunk stress TBT'),
-  );
-  assertAtMost(
-    sample.chunkStress.maxFrameGapMs,
-    180 * multiplier,
-    label(sample, 'chunk stress max frame gap'),
-  );
-  assertAtMost(
     sample.chunkFlush.durationMs,
     1000 * multiplier,
     label(sample, 'large chunk flush time'),
@@ -119,7 +109,6 @@ function assertActivePerformance(sample, multiplier = 1) {
     120 * multiplier,
     label(sample, 'large chunk flush frame gap'),
   );
-  assertAtMost(sample.dom.maxLongTaskMs, 150 * multiplier, label(sample, 'DOM longest task'));
   assertAtMost(sample.flush.durationMs, 1000 * multiplier, label(sample, 'flush duration'));
   assertAtMost(sample.flush.scriptDurationMs, 35 * multiplier, label(sample, 'flush script time'));
   assertAtMost(sample.flush.totalBlockingTimeMs, 75 * multiplier, label(sample, 'flush TBT'));
@@ -172,11 +161,27 @@ export function assertPerformanceBudgets(report) {
   assertAtMost(impact(report, 'dom', 'durationMs').delta, 400, 'DOM elapsed overhead');
   assertAtMost(impact(report, 'dom', 'taskDurationMs').delta, 450, 'DOM task overhead');
   assertAtMost(impact(report, 'dom', 'totalBlockingTimeMs').delta, 150, 'DOM TBT overhead');
+  assertAtMost(impact(report, 'dom', 'maxLongTaskMs').delta, 150, 'DOM longest-task overhead');
   assertAtMost(impact(report, 'network', 'taskDurationMs').delta, 250, 'network task overhead');
   assertAtMost(impact(report, 'network', 'totalBlockingTimeMs').delta, 100, 'network TBT overhead');
   assertAtMost(
     impact(report, 'network', 'maxFrameGapMs').delta,
     120,
     'network max frame gap overhead',
+  );
+  assertAtMost(
+    impact(report, 'chunkStress', 'scriptDurationMs').delta,
+    100,
+    'chunk stress script overhead',
+  );
+  assertAtMost(
+    impact(report, 'chunkStress', 'totalBlockingTimeMs').delta,
+    150,
+    'chunk stress TBT overhead',
+  );
+  assertAtMost(
+    impact(report, 'chunkStress', 'maxFrameGapMs').delta,
+    180,
+    'chunk stress max frame gap overhead',
   );
 }
