@@ -62,20 +62,26 @@ function assertActiveFidelity(sample) {
 
 function assertActivePerformance(sample, multiplier = 1) {
   assertAtMost(
-    sample.load.taskDurationMs,
-    180 * multiplier,
-    label(sample, 'bundle load task time'),
+    sample.load.scriptDurationMs,
+    120 * multiplier,
+    label(sample, 'bundle load script time'),
   );
   assertAtMost(sample.load.totalBlockingTimeMs, 75 * multiplier, label(sample, 'bundle load TBT'));
+  assertAtMost(sample.load.maxFrameGapMs, 180 * multiplier, label(sample, 'bundle load frame gap'));
   assertAtMost(
-    sample.init.taskDurationMs,
-    350 * multiplier,
-    label(sample, 'initialization task time'),
+    sample.init.scriptDurationMs,
+    150 * multiplier,
+    label(sample, 'initialization script time'),
   );
   assertAtMost(
     sample.init.totalBlockingTimeMs,
     100 * multiplier,
     label(sample, 'initialization TBT'),
+  );
+  assertAtMost(
+    sample.init.maxFrameGapMs,
+    180 * multiplier,
+    label(sample, 'initialization frame gap'),
   );
   assertAtMost(
     sample.network.fetchDispatchP95Ms,
@@ -130,11 +136,12 @@ function assertActivePerformance(sample, multiplier = 1) {
 
 function assertLoadedPerformance(sample, multiplier = 1) {
   assertAtMost(
-    sample.load.taskDurationMs,
-    180 * multiplier,
-    label(sample, 'bundle load task time'),
+    sample.load.scriptDurationMs,
+    120 * multiplier,
+    label(sample, 'bundle load script time'),
   );
   assertAtMost(sample.load.totalBlockingTimeMs, 75 * multiplier, label(sample, 'bundle load TBT'));
+  assertAtMost(sample.load.maxFrameGapMs, 180 * multiplier, label(sample, 'bundle load frame gap'));
   assertAtMost(sample.heap.usedBytes, 5 * 1024 * 1024 * multiplier, label(sample, 'loaded heap'));
 }
 
