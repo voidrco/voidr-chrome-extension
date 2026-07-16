@@ -1,4 +1,4 @@
-export const VOIDR_VERSION = '1.17.0';
+export const VOIDR_VERSION = '1.17.1';
 
 // Default configuration for the collector
 export const DEFAULT_CONFIG = {
@@ -33,6 +33,12 @@ export const DEFAULT_CONFIG = {
   longTaskThresholdMs: 100,
   captureResourceErrors: true,
   captureCspViolations: true,
+  uiHeuristics: {
+    enabled: true,
+    mutationThreshold: 250,
+    debounceMs: 800,
+    minSnapshotIntervalMs: 15000,
+  },
   // White screen detection (web-see-style point sampling). Opt-in; skeleton
   // projects must set skeleton: true for accurate results.
   whiteScreen: {
@@ -58,12 +64,12 @@ export const DEFAULT_CONFIG = {
   captureTraceId: false,
   // Inline icon/web fonts as data: URIs at record start (same-origin with
   // credentials, cross-origin via anonymous CORS) so they render in the replay
-  // under its strict CSP. Set false to disable.
-  inlineFonts: true,
+  // under its strict CSP. Set true to enable.
+  inlineFonts: false,
   // Inline UNREADABLE cross-origin stylesheets (<link> without crossorigin)
   // as <style> tags at record start so the replay renders the layout. Set
-  // false to disable.
-  inlineStylesheets: true,
+  // true to enable.
+  inlineStylesheets: false,
   // Capture a SessionEnvironmentBundle (localStorage/sessionStorage/cookies +
   // viewport/UA/URL) at recording start and refresh it on stop, shipped to a
   // dedicated collector endpoint for future local Playwright replay. OFF by

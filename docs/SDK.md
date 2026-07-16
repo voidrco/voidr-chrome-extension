@@ -68,6 +68,10 @@ VoidrCollector.init(options);
 |-----------|------|---------|-----------|
 | `networkCapture` | `boolean` | `true` | Captura requisições de rede (Fetch e XMLHttpRequest). Inclui URL, método, status, duração e resposta. |
 | `captureConsole` | `boolean` | `true` | Captura logs do console (`log`, `warn`, `error`, `info`). |
+| `inlineFonts` | `boolean` | `false` | Faz inline de fontes no snapshot inicial para melhorar a fidelidade do replay. Ative apenas quando necessário. |
+| `inlineStylesheets` | `boolean` | `false` | Faz inline de folhas de estilo cross-origin ilegíveis para melhorar a fidelidade do replay. Ative apenas quando necessário. |
+
+Desde a versão 1.17.1, `inlineFonts` e `inlineStylesheets` são opt-in para não atrasar a inicialização em sites com muitos assets. Quando habilitadas, as duas operações compartilham um prazo de 1,5 segundo, possuem limites de quantidade e bytes e são canceladas ao pausar ou encerrar a sessão.
 
 ---
 
@@ -266,8 +270,8 @@ Para testar rapidamente o collector em qualquer página via DevTools Console:
 
 ## Notas Técnicas
 
-- **Versão atual do SDK:** 1.7.2
-- **Snapshots completos:** Capturados automaticamente a cada 60 segundos ou a cada 1000 eventos
+- **Versão atual do SDK:** 1.17.1
+- **Checkout do rrweb:** Executado a cada 120 segundos ou a cada 1000 eventos
 - **Envio de eventos:** Em lotes a cada 7 segundos
 - **Lote mínimo:** 10 eventos são necessários antes do envio
 - **Armazenamento local:** Utiliza `sessionStorage` para persistir JWT, session ID e user ID

@@ -58,6 +58,7 @@ function buildResourceEvent(entry) {
  * and the per-session cap, then emit through the same network batch path.
  */
 function handleEntries(entries) {
+  if (state.forceStop || state.isPaused || !state.isInitialized) return;
   const sampleRate = state.config.captureResourcesSampleRate;
   const maxPerSession = state.config.captureResourcesMaxPerSession;
 

@@ -1,20 +1,27 @@
 # cloudbuild.yaml
 steps:
-  # Etapa 1: Instalar as dependências do projeto
-  - name: 'gcr.io/cloud-builders/npm'
-    args: ['install']
+  - name: 'mcr.microsoft.com/playwright:v1.61.1-noble'
+    entrypoint: 'npm'
+    args: ['ci']
     id: 'npm-install'
 
-  # Etapa 2: Executar o build para gerar o script em dist/
-  - name: 'gcr.io/cloud-builders/npm'
-    args: ['run', 'build']
-    env:
-      - 'VOIDR_COLLECTOR_URL=https://collector.voidr.co'
-    id: 'npm-build'
+  - name: 'mcr.microsoft.com/playwright:v1.61.1-noble'
+    entrypoint: 'npm'
+    args: ['test']
+    id: 'unit-tests'
     waitFor:
       - 'npm-install'
 
-  # Etapa 3: Copiar o script para a pasta da versão (tag) no GCS
+  - name: 'mcr.microsoft.com/playwright:v1.61.1-noble'
+    entrypoint: 'npm'
+    args: ['run', 'test:performance']
+    env:
+      - 'CI=true'
+      - 'VOIDR_COLLECTOR_URL=https://collector.voidr.co'
+    id: 'performance-tests'
+    waitFor:
+      - 'unit-tests'
+
   - name: 'gcr.io/cloud-builders/gsutil'
     args:
       - 'cp'
@@ -22,9 +29,8 @@ steps:
       - 'gs://cdn-voidr-global/voidr-collector/default/${TAG_NAME}/recorder.min.js'
     id: 'gcs-upload-versioned'
     waitFor:
-      - 'npm-build'
+      - 'performance-tests'
 
-  # Etapa 4: Copiar o script para a pasta "latest" no GCS
   - name: 'gcr.io/cloud-builders/gsutil'
     args:
       - 'cp'
@@ -32,9 +38,8 @@ steps:
       - 'gs://cdn-voidr-global/voidr-collector/default/latest/recorder.min.js'
     id: 'gcs-upload-latest'
     waitFor:
-      - 'npm-build'
+      - 'performance-tests'
 
-  # Etapa 5: Invalidar o cache do Cloud CDN para os arquivos atualizados
   - name: 'gcr.io/cloud-builders/gcloud'
     args:
       - 'compute'
@@ -47,7 +52,6 @@ steps:
     waitFor:
       - 'gcs-upload-latest'
 
-  # Etapa 6: Limpar o cache do Cloudflare
   - name: 'gcr.io/cloud-builders/gcloud'
     entrypoint: 'bash'
     secretEnv: ['API_TOKEN']

@@ -59,6 +59,7 @@ Browser Events (rrweb + custom listeners)
 ### Network Capture
 
 Both `fetch` and `XMLHttpRequest` are intercepted to capture:
+
 - URL, method, status, duration
 - Request/response headers (sensitive headers redacted)
 - Request/response bodies (JSON/XML/FormData only, max 2MB)
@@ -72,7 +73,7 @@ Requests to the collector itself are excluded to avoid feedback loops.
 - Session ID: timestamp-based, stored in `sessionStorage['voidr_session_id']`
 - Session expiry: configurable timeout (default 30 minutes of inactivity)
 - JWT token: cached in `sessionStorage['voidr_jwt']` (1h TTL). Renewed proactively ~5 min before expiry via a scheduled `POST /refresh-token`, so long-lived tabs don't hit a 401 on the chunk-send path. A reactive refresh-on-401 remains as a fallback (e.g. server-side revocation or a missed timer), and the expiry is re-checked when the tab becomes visible again, since timers don't tick through system sleep.
-- On `beforeunload`: synchronous XHR fallback to ensure event delivery
+- On `beforeunload`: `fetch` keepalive delivery, with synchronous XHR only when the payload exceeds the keepalive limit
 
 ### Data Privacy
 
@@ -94,25 +95,27 @@ Initialize the collector. Must be called once.
 
 ```javascript
 VoidrCollector.init({
-  apiKey: 'your-api-key',          // Required
-  user: { id: 'user-123' },       // Required
+  apiKey: 'your-api-key', // Required
+  user: { id: 'user-123' }, // Required
 
   // Optional
   collectorUrl: 'https://collector.voidr.co',
   applicationId: 'my-app',
   environment: 'production',
-  samplingRate: 0.1,               // 0-1, default 10%
-  sessionTimeout: 30,              // minutes
+  samplingRate: 0.1, // 0-1, default 10%
+  sessionTimeout: 30, // minutes
   skipRecording: false,
   system: false,
   networkCapture: true,
   captureConsole: true,
+  inlineFonts: false,
+  inlineStylesheets: false,
   dataMasking: {
     text: false,
     inputs: false,
-    blockSelectors: ['[data-sensitivity="block"]']
+    blockSelectors: ['[data-sensitivity="block"]'],
   },
-  meta: { tenant: 'acme' }
+  meta: { tenant: 'acme' },
 });
 ```
 
@@ -123,7 +126,7 @@ Update user identity mid-session. Retries up to 3 times with exponential backoff
 ```javascript
 VoidrCollector.identify('user-456', {
   email: 'user@example.com',
-  name: 'Jane Doe'
+  name: 'Jane Doe',
 });
 ```
 
@@ -145,7 +148,7 @@ Returns the current session ID string, or `null` if not initialized.
 
 ### `VoidrCollector.version`
 
-Returns the SDK version string (e.g. `'1.8.2'`).
+Returns the SDK version string (e.g. `'1.17.1'`).
 
 ## Development
 
@@ -170,7 +173,7 @@ npm run dev
 
 ### Build
 
-Produces `dist/recorder.min.js` — a single minified IIFE bundle (~360 kB, ~115 kB gzipped).
+Produces `dist/recorder.min.js` — a single minified IIFE bundle (~312 kB, ~99 kB gzipped).
 
 ```bash
 npm run build
@@ -184,13 +187,24 @@ The `__VOIDR_COLLECTOR_URL__` define is injected at build time via the `VOIDR_CO
 npm run format
 ```
 
+### Client-side performance
+
+Run the Chromium stress suite and enforce the client-impact budgets:
+
+```bash
+npm run test:performance
+```
+
+See [docs/PERFORMANCE.md](docs/PERFORMANCE.md) for the baseline, methodology, results, and manual benchmark commands.
+
 ## Dependencies
 
-| Package | Version | Purpose |
-|---------|---------|---------|
-| `rrweb` | ^2.0.0-alpha.4 | Core session recording (DOM snapshots, incremental events) |
-| `@rrweb/rrweb-plugin-console-record` | ^2.0.0-alpha.18 | Capture console.log/warn/error/info |
-| `pako` | ^2.1.0 | gzip compression for event payloads |
+| Package                              | Version | Purpose                                                    |
+| ------------------------------------ | ------- | ---------------------------------------------------------- |
+| `rrweb`                              | ^2.1.0  | Core session recording (DOM snapshots, incremental events) |
+| `@rrweb/rrweb-plugin-console-record` | ^2.1.0  | Capture console.log/warn/error/info                        |
+| `pako`                               | ^2.1.0  | gzip compression for event payloads                        |
+| `web-vitals`                         | ^5.3.0  | Browser performance metrics                                |
 
 ## Deployment
 
@@ -212,18 +226,18 @@ Automated via Google Cloud Build, triggered by Git tags.
 ```
 
 Cloud Build pipeline:
-1. `npm install`
-2. `npm run build` (with production collector URL)
-3. Upload versioned + latest to GCS bucket
+
+1. `npm ci` in the pinned Playwright image
+2. Run unit and client-side performance tests
+3. Upload the tested bundle to the versioned and latest GCS paths
 4. Invalidate Cloud CDN cache
 5. Purge Cloudflare cache
 
 ## Technical Notes
 
-- **SDK version**: 1.8.2 (constant in `src/constants.js`)
-- **Package version**: 1.11.0 (in `package.json`)
-- **Full snapshots**: Every 60 seconds or 1000 events
-- **Checkout interval**: Every 120 seconds (resets incremental diff baseline)
+- **SDK version**: 1.17.1 (constant in `src/constants.js`)
+- **Package version**: 1.17.1 (in `package.json`)
+- **rrweb checkout**: Every 120 seconds or 1000 events
 - **Event batch frequency**: Every 7 seconds
 - **Minimum batch size**: 10 events
 - **Max body capture**: 2 MB (truncated beyond)

@@ -13,7 +13,7 @@ import {
   finalizeSessionBeacon,
   scheduleTokenRefresh,
 } from './transport.js';
-import { startRecording, startRrwebOnly } from './recording.js';
+import { initCaptureInfrastructure, startRecording, startRrwebOnly } from './recording.js';
 import { sendEnvironmentBundle } from './environment-bundle.js';
 import { initIdleWatch, stopIdleWatch } from './listeners/idle.js';
 import { inlineIconFonts } from './assets/inline-fonts.js';
@@ -21,64 +21,201 @@ import { inlineUnreadableStylesheets } from './assets/inline-stylesheets.js';
 import { ElementMapper } from './element-mapper.js';
 import { stopClickEffect } from './listeners/click-effect.js';
 import { stopLongTasks } from './listeners/longtasks.js';
-import { captureManualError } from './listeners/tracking.js';
+import { initWhiteScreenDetection, stopWhiteScreenDetection } from './listeners/whitescreen.js';
+import { stopEventListeners } from './listeners/events.js';
+import { captureRouteOnResume, stopRoutingCapture } from './listeners/routing.js';
+import { captureManualError, stopTracking } from './listeners/tracking.js';
 import { armBufferMode, disarmBufferMode } from './buffer-mode.js';
+
+const isLifecycleActive = (lifecycleId) =>
+  state.lifecycleId === lifecycleId && state.isInitialized && !state.forceStop;
+
+export function attachUnloadLifecycleHandlers({ target, onUnload }) {
+  const useAnimationFrame = typeof target.requestAnimationFrame === 'function';
+  const scheduleReset = useAnimationFrame
+    ? target.requestAnimationFrame.bind(target)
+    : (callback) => setTimeout(callback, 0);
+  const cancelReset = useAnimationFrame
+    ? target.cancelAnimationFrame?.bind(target)
+    : (handle) => clearTimeout(handle);
+  let handled = false;
+  let resetHandle = null;
+
+  const cancelPendingReset = () => {
+    if (resetHandle == null) return;
+    cancelReset?.(resetHandle);
+    resetHandle = null;
+  };
+  const reset = () => {
+    cancelPendingReset();
+    handled = false;
+  };
+  const beforeUnload = () => {
+    if (handled) return;
+    handled = true;
+    onUnload();
+    resetHandle = scheduleReset(reset);
+  };
+  const pageHide = () => {
+    cancelPendingReset();
+    if (handled) return;
+    handled = true;
+    onUnload();
+  };
+  const pageShow = () => reset();
+
+  target.addEventListener('beforeunload', beforeUnload);
+  target.addEventListener('pagehide', pageHide);
+  target.addEventListener('pageshow', pageShow);
+
+  return {
+    beforeUnload,
+    pageHide,
+    dispose() {
+      cancelPendingReset();
+      target.removeEventListener('beforeunload', beforeUnload);
+      target.removeEventListener('pagehide', pageHide);
+      target.removeEventListener('pageshow', pageShow);
+    },
+  };
+}
 
 /**
  * Create the VoidrCollector public API object.
  */
 export function createCollector() {
+  let unloadLifecycle = null;
+
   function startSendInterval() {
     if (state.eventsInterval) {
       clearInterval(state.eventsInterval);
     }
     state.eventsInterval = setInterval(() => {
-      sendEvents();
       sendNetworkEvents();
+      sendEvents();
     }, 7000);
   }
 
   function unregisterLifecycleHandlers() {
     if (typeof window === 'undefined') return;
-
-    if (state.beforeUnloadHandler) {
-      window.removeEventListener('beforeunload', state.beforeUnloadHandler);
-      state.beforeUnloadHandler = null;
-    }
-
-    if (state.pageHideHandler) {
-      window.removeEventListener('pagehide', state.pageHideHandler);
-      state.pageHideHandler = null;
-    }
+    unloadLifecycle?.dispose();
+    unloadLifecycle = null;
+    state.beforeUnloadHandler = null;
+    state.pageHideHandler = null;
   }
 
   function registerLifecycleHandlers() {
     if (typeof window === 'undefined') return;
 
     unregisterLifecycleHandlers();
+    unloadLifecycle = attachUnloadLifecycleHandlers({
+      target: window,
+      onUnload: () => {
+        handleUnload();
+        syncScreenMapBeacon();
+        finalizeSessionBeacon();
+      },
+    });
+    state.beforeUnloadHandler = unloadLifecycle.beforeUnload;
+    state.pageHideHandler = unloadLifecycle.pageHide;
+  }
 
-    state.beforeUnloadHandler = () => {
-      handleUnload();
-      syncScreenMapBeacon();
-      finalizeSessionBeacon();
-    };
-    state.pageHideHandler = () => {
-      handleUnload();
-      syncScreenMapBeacon();
-      finalizeSessionBeacon();
-    };
+  function stopCaptureInfrastructure() {
+    state.lifecycleAbortController?.abort();
+    state.lifecycleAbortController = null;
+    if (typeof state.stopRecording === 'function') state.stopRecording();
+    state.stopRecording = null;
+    stopRoutingCapture();
+    stopEventListeners();
+    stopTracking();
+    stopClickEffect();
+    stopLongTasks();
+    stopWhiteScreenDetection();
+    state.elementMapper?.stop();
+    state.elementMapper = null;
+    state.resourceObserver?.disconnect();
+    state.resourceObserver = null;
+    for (const node of state.inlinedAssetNodes) node.remove();
+    for (const owner of state.inlinedStylesheetOwners) {
+      owner.removeAttribute?.('data-voidr-css-inlined');
+    }
+    state.inlinedAssetNodes = [];
+    state.inlinedStylesheetOwners = [];
+    state.deactivateFetchInterceptor?.();
+    state.deactivateXhrInterceptor?.();
+    if (
+      state.originalFetch &&
+      typeof window !== 'undefined' &&
+      window.fetch === state.interceptedFetch
+    ) {
+      window.fetch = state.originalFetch;
+    }
+    if (
+      state.originalXHR &&
+      typeof window !== 'undefined' &&
+      window.XMLHttpRequest === state.interceptedXHR
+    ) {
+      window.XMLHttpRequest = state.originalXHR;
+    }
+    state.originalFetch = null;
+    state.interceptedFetch = null;
+    state.deactivateFetchInterceptor = null;
+    state.originalXHR = null;
+    state.interceptedXHR = null;
+    state.deactivateXhrInterceptor = null;
+  }
 
-    window.addEventListener('beforeunload', state.beforeUnloadHandler);
-    window.addEventListener('pagehide', state.pageHideHandler);
+  function discardBufferedSession() {
+    state.forceStop = true;
+    stopCaptureInfrastructure();
+    stopIdleWatch();
+    disarmBufferMode();
+    state.events.length = 0;
+    state.networkBuffer.length = 0;
+    state.networkBufferBytes = 0;
+    try {
+      sessionStorage.removeItem('voidr_jwt');
+      sessionStorage.removeItem('voidr_session_id');
+      sessionStorage.removeItem('voidr_last_activity');
+    } catch (_) {}
+    resetState();
   }
 
   function armSessionCap() {
     const mins = state.config.maxSessionDurationMinutes;
     if (!mins || mins <= 0) return;
     if (state.sessionCapTimer) clearTimeout(state.sessionCapTimer);
-    state.sessionCapTimer = setTimeout(() => {
-      rotateSession().catch(() => {});
-    }, mins * 60 * 1000);
+    state.sessionCapTimer = setTimeout(
+      () => {
+        rotateSession().catch(() => {});
+      },
+      mins * 60 * 1000,
+    );
+  }
+
+  function finishPausedInitialization() {
+    if (state.stopRecording) {
+      state.stopRecording();
+      state.stopRecording = null;
+    }
+    state.elementMapper?.stop();
+    stopWhiteScreenDetection();
+    registerLifecycleHandlers();
+    if (!state.idleInterval) initIdleWatch(api);
+    armSessionCap();
+    sendEnvironmentBundle();
+    console.log(`VoidrCollector v${VOIDR_VERSION} - Initialized (paused)`);
+  }
+
+  function startSessionServices() {
+    startSendInterval();
+    if (!state.screenMapInterval) {
+      state.screenMapInterval = setInterval(() => syncScreenMap(), 7000);
+    }
+    registerLifecycleHandlers();
+    if (!state.idleInterval) initIdleWatch(api);
+    armSessionCap();
+    sendEnvironmentBundle();
   }
 
   // Max-duration handling: finalize the current session and, when rotation is
@@ -89,15 +226,17 @@ export function createCollector() {
   // - 'max-duration' — client-side cap timer fired; flush remaining events first
   // - 'server-expired' — collector returned 409 SESSION_EXPIRED; skip flush
   //   (the old sessionId is already rejected server-side)
-  let rotationPromise = null;
+  let rotationTask = null;
 
   function rotateSession(reason = 'max-duration') {
     if (!state.isInitialized || state.forceStop) return Promise.resolve();
-    if (rotationPromise) return rotationPromise;
+    const lifecycleId = state.lifecycleId;
+    if (rotationTask?.lifecycleId === lifecycleId) return rotationTask.promise;
 
-    // Set synchronously so concurrent sendEvents/sync calls stop immediately.
     state.sessionRotationInFlight = true;
-    rotationPromise = (async () => {
+    const task = { lifecycleId, promise: null };
+    rotationTask = task;
+    task.promise = (async () => {
       try {
         const previousSessionId = state.sessionId;
 
@@ -106,9 +245,20 @@ export function createCollector() {
         if (reason === 'server-expired') {
           state.events.length = 0;
           state.networkBuffer.length = 0;
+          state.networkBufferBytes = 0;
+          state.isSending = false;
+          state.sendingToken = null;
         } else {
-          await flushEvents();
+          const drained = await flushEvents({ allowRotation: true });
+          if (!isLifecycleActive(lifecycleId)) return;
+          if (!drained) {
+            state.sessionCapTimer = setTimeout(() => {
+              rotateSession(reason).catch(() => {});
+            }, 7000);
+            return;
+          }
         }
+        if (!isLifecycleActive(lifecycleId)) return;
         finalizeSessionBeacon();
 
         if (!state.config.sessionRotation) {
@@ -127,17 +277,20 @@ export function createCollector() {
         }
 
         try {
-          const authenticated = await authenticateSession();
+          const authenticated = await authenticateSession(lifecycleId);
+          if (!isLifecycleActive(lifecycleId)) return;
           if (!authenticated) {
             api.endSession();
             return;
           }
           scheduleTokenRefresh();
         } catch (_) {
-          api.endSession();
+          if (isLifecycleActive(lifecycleId)) api.endSession();
           return;
         }
 
+        if (!isLifecycleActive(lifecycleId)) return;
+        state.elementMapper?.markDirty();
         state.events.push({
           type: 5,
           timestamp: Date.now(),
@@ -157,15 +310,14 @@ export function createCollector() {
         armSessionCap();
         console.log(`VoidrCollector: Session rotated (${reason})`);
       } finally {
-        rotationPromise = null;
-        // endSession() clears this via resetState; only clear when still alive.
-        if (state.isInitialized) {
+        if (rotationTask === task) rotationTask = null;
+        if (state.lifecycleId === lifecycleId && state.isInitialized) {
           state.sessionRotationInFlight = false;
         }
       }
     })();
 
-    return rotationPromise;
+    return task.promise;
   }
 
   // Wire transport 409 SESSION_EXPIRED → rotate (single-flight via rotationPromise).
@@ -177,7 +329,10 @@ export function createCollector() {
   // onErrorSampleRate dice roll passed — authenticate and start shipping the
   // buffered events plus everything after.
   async function upgradeBufferedSession(reason) {
+    const lifecycleId = state.lifecycleId;
     disarmBufferMode();
+
+    if (!isLifecycleActive(lifecycleId)) return;
 
     state.config.meta = {
       ...(state.config.meta || {}),
@@ -186,26 +341,26 @@ export function createCollector() {
     };
 
     try {
-      const authenticated = await authenticateSession();
+      const authenticated = await authenticateSession(lifecycleId);
+      if (!isLifecycleActive(lifecycleId)) return;
       if (!authenticated) {
-        state.isInitialized = false;
+        discardBufferedSession();
         return;
       }
       scheduleTokenRefresh();
     } catch (_) {
-      state.isInitialized = false;
+      if (isLifecycleActive(lifecycleId)) discardBufferedSession();
       return;
     }
 
+    sendNetworkEvents();
     await sendEvents();
-    startSendInterval();
-    if (!state.screenMapInterval) {
-      state.screenMapInterval = setInterval(() => syncScreenMap(), 7000);
+    if (!isLifecycleActive(lifecycleId)) return;
+    if (state.isPaused) {
+      finishPausedInitialization();
+      return;
     }
-    registerLifecycleHandlers();
-    initIdleWatch(api);
-    armSessionCap();
-    sendEnvironmentBundle();
+    startSessionServices();
 
     console.log(`VoidrCollector v${VOIDR_VERSION} - Buffered session upgraded (${reason})`);
   }
@@ -237,136 +392,142 @@ export function createCollector() {
         return;
       }
 
-      state.isInitialized = true;
-
-      console.log(`VoidrCollector v${VOIDR_VERSION} - Initializing...`);
-
-      // Basic validation
       if (!options || !options.apiKey) {
         throw new Error('VoidrCollector: API Key is required');
       }
 
-      // Merge configuration
-      state.config = { ...state.config, ...options };
+      state.forceStop = false;
+      state.isInitialized = true;
+      state.lifecycleId += 1;
+      const lifecycleId = state.lifecycleId;
+      state.initializationInFlight = true;
 
-      // ========== Skip recording checks ==========
-
-      // 1. Check manual skipRecording override
-      if (state.config.skipRecording === true) {
-        console.log('VoidrCollector: Recording skipped (manual override via skipRecording)');
-        state.isInitialized = false;
-        return;
-      }
-
-      // 2. Detect automation environment (skip check when system: true)
-      if (!state.config.system && isAutomationEnvironment()) {
-        console.log('VoidrCollector: Recording skipped (automation environment detected)');
-        state.isInitialized = false;
-        return;
-      }
-
-      // 3. Check sampling rate
-      let sampled = true;
-      if (state.config.samplingRate < 1) {
-        sampled = Math.random() <= state.config.samplingRate;
-      }
-
-      if (!sampled) {
-        // Buffer mode: keep recording in memory and upgrade on error.
-        if (state.config.onErrorSampleRate > 0) {
-          state.sessionStartedAt = Date.now();
-          initUser();
-          initSession();
-          armBufferMode(upgradeBufferedSession);
-          startRecording();
-          state.elementMapper = new ElementMapper();
-          state.elementMapper.start();
-          console.log(`VoidrCollector v${VOIDR_VERSION} - Initialized (buffer mode)`);
-          return;
-        }
-        state.isInitialized = false;
-        return;
-      }
-
-      // ===========================================
-
-      // Initialize IDs
-      state.sessionStartedAt = Date.now();
-      initUser();
-      initSession();
-
-      // Validate API key and obtain JWT before starting recording
       try {
-        const authenticated = await authenticateSession();
-        if (!authenticated) {
+        console.log(`VoidrCollector v${VOIDR_VERSION} - Initializing...`);
+
+        // Merge configuration
+        state.config = { ...state.config, ...options };
+
+        // ========== Skip recording checks ==========
+
+        // 1. Check manual skipRecording override
+        if (state.config.skipRecording === true) {
+          console.log('VoidrCollector: Recording skipped (manual override via skipRecording)');
           state.isInitialized = false;
           return;
         }
-        // Renew the ingest token before it expires so long-lived tabs don't hit
-        // a 401 on the chunk-send path (which surfaces as a scary console error).
-        scheduleTokenRefresh();
-      } catch (err) {
-        console.error('VoidrCollector: Failed to validate API Key', err);
-        state.isInitialized = false;
-        return;
-      }
 
-      // Inline replay-critical assets BEFORE the first snapshot so the replay
-      // (different origin, strict CSP) renders faithfully: unreadable
-      // cross-origin stylesheets as <style> text, and @font-face binaries as
-      // data: URIs (instead of tofu □). Both run in parallel, time-boxed and
-      // best-effort — never block recording. Stylesheets must land first-ish
-      // so newly readable @font-face rules are visible to the font pass, hence
-      // the sequential await inside the same guard.
-      try {
-        await inlineUnreadableStylesheets();
-        await inlineIconFonts();
-      } catch {
-        /* best-effort: recording proceeds regardless */
-      }
-
-      // Start recording
-      startRecording();
-
-      // Start element mapper (client-side screen map builder)
-      state.elementMapper = new ElementMapper();
-      state.elementMapper.start();
-
-      await sleep(2000);
-
-      // If paused during the sleep (SSE arrived), don't start sending
-      if (state.isPaused) {
-        // Stop rrweb that startRecording() just started
-        if (state.stopRecording) {
-          state.stopRecording();
-          state.stopRecording = null;
+        // 2. Detect automation environment (skip check when system: true)
+        if (!state.config.system && isAutomationEnvironment()) {
+          console.log('VoidrCollector: Recording skipped (automation environment detected)');
+          state.isInitialized = false;
+          return;
         }
-        console.log(`VoidrCollector v${VOIDR_VERSION} - Initialized (paused)`);
-        registerLifecycleHandlers();
-        return;
+
+        // 3. Check sampling rate
+        let sampled = true;
+        if (state.config.samplingRate < 1) {
+          sampled = Math.random() <= state.config.samplingRate;
+        }
+
+        if (!sampled) {
+          // Buffer mode: keep recording in memory and upgrade on error.
+          if (state.config.onErrorSampleRate > 0) {
+            state.sessionStartedAt = Date.now();
+            initUser();
+            initSession();
+            armBufferMode(upgradeBufferedSession, discardBufferedSession);
+            startRecording();
+            state.elementMapper = new ElementMapper();
+            state.elementMapper.start();
+            state.captureReady = true;
+            console.log(`VoidrCollector v${VOIDR_VERSION} - Initialized (buffer mode)`);
+            return;
+          }
+          state.isInitialized = false;
+          return;
+        }
+
+        // ===========================================
+
+        // Initialize IDs
+        state.sessionStartedAt = Date.now();
+        initUser();
+        initSession();
+
+        // Validate API key and obtain JWT before starting recording
+        try {
+          const authenticated = await authenticateSession(lifecycleId);
+          if (!isLifecycleActive(lifecycleId)) return;
+          if (!authenticated) {
+            state.isInitialized = false;
+            return;
+          }
+          // Renew the ingest token before it expires so long-lived tabs don't hit
+          // a 401 on the chunk-send path (which surfaces as a scary console error).
+          scheduleTokenRefresh();
+        } catch (err) {
+          if (!isLifecycleActive(lifecycleId)) return;
+          console.error('VoidrCollector: Failed to validate API Key', err);
+          state.isInitialized = false;
+          return;
+        }
+
+        // Inline replay-critical assets BEFORE the first snapshot so the replay
+        // (different origin, strict CSP) renders faithfully: unreadable
+        // cross-origin stylesheets as <style> text, and @font-face binaries as
+        // data: URIs (instead of tofu □). Both share one time budget and are
+        // best-effort. Stylesheets run first so their @font-face rules are visible.
+        try {
+          const assetController = new AbortController();
+          state.lifecycleAbortController = assetController;
+          const assetDeadline = Date.now() + 1500;
+          await inlineUnreadableStylesheets(lifecycleId, assetController.signal, assetDeadline);
+          await inlineIconFonts(lifecycleId, assetController.signal, assetDeadline);
+        } catch {}
+
+        if (!isLifecycleActive(lifecycleId)) return;
+
+        if (state.isPaused) {
+          initCaptureInfrastructure();
+          state.elementMapper = new ElementMapper();
+          state.captureReady = true;
+          finishPausedInitialization();
+          return;
+        }
+
+        // Start recording
+        startRecording();
+
+        // Start element mapper (client-side screen map builder)
+        state.elementMapper = new ElementMapper();
+        state.elementMapper.start();
+        state.captureReady = true;
+
+        await sleep(2000);
+
+        if (!isLifecycleActive(lifecycleId)) return;
+
+        // If paused during the sleep (SSE arrived), don't start sending
+        if (state.isPaused) {
+          finishPausedInitialization();
+          return;
+        }
+
+        sendNetworkEvents();
+        await sendEvents();
+        if (!isLifecycleActive(lifecycleId)) return;
+        if (state.isPaused) {
+          finishPausedInitialization();
+          return;
+        }
+
+        startSessionServices();
+
+        console.log(`VoidrCollector v${VOIDR_VERSION} - Initialized successfully`);
+      } finally {
+        if (state.lifecycleId === lifecycleId) state.initializationInFlight = false;
       }
-
-      await sendEvents();
-
-      // Set up periodic sending
-      startSendInterval();
-
-      // Set up periodic screen map sync (dedicated endpoint, aligned with chunk send interval)
-      state.screenMapInterval = setInterval(() => syncScreenMap(), 7000);
-
-      registerLifecycleHandlers();
-
-      // Auto-pause recording on prolonged inactivity (idle/forgotten tabs)
-      initIdleWatch(api);
-
-      // Hard cap on session duration (finalize + rotate)
-      armSessionCap();
-
-      // Snapshot the environment bundle (storage + cookies + viewport/UA) for
-      // future local replay. Best-effort, non-blocking — never gates recording.
-      sendEnvironmentBundle();
-
-      console.log(`VoidrCollector v${VOIDR_VERSION} - Initialized successfully`);
     },
 
     /**
@@ -378,6 +539,16 @@ export function createCollector() {
      */
     async identify(id, traits = {}) {
       if (!id || !state.isInitialized || !state.sessionId) return;
+      const context = {
+        lifecycleId: state.lifecycleId,
+        sessionId: state.sessionId,
+        collectorUrl: state.config.collectorUrl,
+        authToken: state.authToken,
+      };
+      const isCurrent = () =>
+        state.lifecycleId === context.lifecycleId &&
+        state.sessionId === context.sessionId &&
+        !state.forceStop;
 
       state.userId = id;
       sessionStorage.setItem('voidr_user_id', id);
@@ -405,14 +576,15 @@ export function createCollector() {
 
       for (let attempt = 0; attempt < maxAttempts; attempt++) {
         try {
-          const res = await fetch(`${state.config.collectorUrl}/sessions/identify`, {
+          const res = await fetch(`${context.collectorUrl}/sessions/identify`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              ...(state.authToken ? { Authorization: `Bearer ${state.authToken}` } : {}),
+              ...(context.authToken ? { Authorization: `Bearer ${context.authToken}` } : {}),
             },
             body: safeStringify(identifyPayload),
           });
+          if (!isCurrent()) return;
 
           if (res.ok || (res.status >= 400 && res.status < 500 && res.status !== 429)) {
             break;
@@ -421,11 +593,14 @@ export function createCollector() {
           if (attempt < maxAttempts - 1) {
             const jitter = 1 + (Math.random() * 0.4 - 0.2);
             await sleep(baseDelays[attempt] * jitter);
+            if (!isCurrent()) return;
           }
         } catch (err) {
+          if (!isCurrent()) return;
           if (attempt < maxAttempts - 1) {
             const jitter = 1 + (Math.random() * 0.4 - 0.2);
             await sleep(baseDelays[attempt] * jitter);
+            if (!isCurrent()) return;
           } else {
             state.events.push({
               type: 5,
@@ -454,12 +629,6 @@ export function createCollector() {
      * and restores intercepted originals.
      */
     endSession() {
-      // Stop rrweb recording
-      if (state.stopRecording && typeof state.stopRecording === 'function') {
-        state.stopRecording();
-        state.stopRecording = null;
-      }
-
       // Clear main interval
       if (state.eventsInterval) {
         clearInterval(state.eventsInterval);
@@ -477,47 +646,11 @@ export function createCollector() {
       // Stop idle detection
       stopIdleWatch();
 
-      // Stop click-effect observation, long task observer, buffer mode, cap timer
-      stopClickEffect();
-      stopLongTasks();
+      stopCaptureInfrastructure();
       disarmBufferMode();
       if (state.sessionCapTimer) {
         clearTimeout(state.sessionCapTimer);
         state.sessionCapTimer = null;
-      }
-
-      // Stop element mapper
-      if (state.elementMapper) {
-        state.elementMapper.stop();
-        state.elementMapper = null;
-      }
-
-      // Stop MutationObserver if active
-      if (state.observer && typeof state.observer.disconnect === 'function') {
-        state.observer.disconnect();
-        state.observer = null;
-      }
-
-      // Restore original fetch
-      if (state.originalFetch && typeof window !== 'undefined') {
-        window.fetch = state.originalFetch;
-        state.originalFetch = null;
-      }
-
-      // Restore original XMLHttpRequest
-      if (state.originalXHR && typeof window !== 'undefined') {
-        window.XMLHttpRequest = state.originalXHR;
-        state.originalXHR = null;
-      }
-
-      // Disconnect the static-resource PerformanceObserver
-      if (state.resourceObserver && typeof state.resourceObserver.disconnect === 'function') {
-        try {
-          state.resourceObserver.disconnect();
-        } catch (e) {
-          // Ignore disconnect errors
-        }
-        state.resourceObserver = null;
       }
 
       // Flush any trailing buffered events, then signal session completion so the
@@ -580,6 +713,7 @@ export function createCollector() {
     pause() {
       if (!state.isInitialized || state.isPaused) return;
       state.isPaused = true;
+      state.lifecycleAbortController?.abort();
 
       if (state.stopRecording && typeof state.stopRecording === 'function') {
         state.stopRecording();
@@ -597,6 +731,15 @@ export function createCollector() {
         state.screenMapInterval = null;
       }
 
+      if (state.screenMapSyncTimer) {
+        clearTimeout(state.screenMapSyncTimer);
+        state.screenMapSyncTimer = null;
+      }
+      state.screenMapSyncQueued = false;
+
+      state.elementMapper?.stop();
+      stopWhiteScreenDetection();
+
       console.log('VoidrCollector: Recording paused');
     },
 
@@ -608,15 +751,19 @@ export function createCollector() {
     resume() {
       if (!state.isInitialized || !state.isPaused) return;
       state.isPaused = false;
+      if (state.initializationInFlight && !state.captureReady) return;
 
       startRrwebOnly();
+      state.elementMapper?.start();
+      captureRouteOnResume();
+      initWhiteScreenDetection();
       startSendInterval();
       if (!state.screenMapInterval) {
         state.screenMapInterval = setInterval(() => syncScreenMap(), 7000);
       }
       registerLifecycleHandlers();
-      sendEvents();
       sendNetworkEvents();
+      sendEvents();
 
       console.log('VoidrCollector: Recording resumed');
     },

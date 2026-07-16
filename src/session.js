@@ -1,6 +1,7 @@
 import { state } from './state.js';
 import { safeStringify } from './utils/helpers.js';
 import { TOKEN_REFRESH_MARGIN_MS, decodeJwtExp } from './utils/jwt.js';
+import { targetChunkBytes } from './chunk-planner.js';
 
 /**
  * Initialize the user ID from config or sessionStorage.
@@ -41,7 +42,12 @@ export function initSession() {
  * If no valid cached token, POSTs to /init to get a new one.
  * Returns true on success, false on failure.
  */
-export async function authenticateSession() {
+const isLifecycleCurrent = (lifecycleId) => state.lifecycleId === lifecycleId && !state.forceStop;
+
+export async function authenticateSession(lifecycleId = state.lifecycleId) {
+  const config = state.config;
+  const sessionId = state.sessionId;
+  const userId = state.userId;
   const storedJwt = sessionStorage.getItem('voidr_jwt');
   const storedSession = sessionStorage.getItem('voidr_session_id');
 
@@ -50,13 +56,14 @@ export async function authenticateSession() {
   // collector would otherwise short-circuit init and the forced session would
   // never exist server-side.
   const isForced =
-    typeof state.config.forcedSessionId === 'string' && !!state.config.forcedSessionId.trim();
+    typeof config.forcedSessionId === 'string' && Boolean(config.forcedSessionId.trim());
 
-  if (!isForced && storedJwt && storedSession && storedSession === state.sessionId) {
+  if (!isForced && storedJwt && storedSession && storedSession === sessionId) {
     // Only reuse the cached JWT while it's outside the refresh margin — a
     // restored tab shouldn't start on a token about to expire.
     const exp = decodeJwtExp(storedJwt);
     if (exp != null && exp * 1000 - Date.now() > TOKEN_REFRESH_MARGIN_MS) {
+      if (!isLifecycleCurrent(lifecycleId)) return false;
       state.authToken = storedJwt;
       return true;
     }
@@ -65,23 +72,19 @@ export async function authenticateSession() {
   sessionStorage.removeItem('voidr_jwt');
 
   const initPayload = {
-    apiKey: state.config.apiKey,
-    userId: state.userId || null,
-    userTraits: state.config.user,
-    meta: state.config.meta,
-    system: Boolean(state.config.system),
-    sessionId: state.sessionId,
+    apiKey: config.apiKey,
+    userId: userId || null,
+    userTraits: config.user,
+    meta: config.meta,
+    system: Boolean(config.system),
+    sessionId,
   };
 
-  if (
-    state.config.user &&
-    typeof state.config.user.name === 'string' &&
-    state.config.user.name.length > 0
-  ) {
-    initPayload.userName = state.config.user.name;
+  if (config.user && typeof config.user.name === 'string' && config.user.name.length > 0) {
+    initPayload.userName = config.user.name;
   }
-  if (state.config.applicationId) initPayload.applicationId = state.config.applicationId;
-  if (state.config.environment) initPayload.environment = state.config.environment;
+  if (config.applicationId) initPayload.applicationId = config.applicationId;
+  if (config.environment) initPayload.environment = config.environment;
 
   // Initial page URL
   try {
@@ -91,41 +94,46 @@ export async function authenticateSession() {
     initPayload.initialUrl = null;
   }
 
-  const response = await fetch(`${state.config.collectorUrl}/init`, {
+  const response = await fetch(`${config.collectorUrl}/init`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: safeStringify(initPayload),
   });
 
   if (!response.ok) {
-    console.error('VoidrCollector: init failed with status', response.status);
+    if (isLifecycleCurrent(lifecycleId)) {
+      console.error('VoidrCollector: init failed with status', response.status);
+    }
     return false;
   }
 
   const data = await response.json().catch(() => ({}));
-  state.authToken = data.token || null;
-  if (typeof data.sessionId === 'string' && data.sessionId.trim()) {
-    state.sessionId = data.sessionId.trim();
-  }
+  if (!isLifecycleCurrent(lifecycleId)) return false;
+  const authToken = data.token || null;
+  const authenticatedSessionId =
+    typeof data.sessionId === 'string' && data.sessionId.trim() ? data.sessionId.trim() : sessionId;
   // Server-driven recording config: authoritative over local options when
   // present, so ops can tune sampling / ignorelists / privacyLevel without a
   // client redeploy.
   if (data.recording && typeof data.recording === 'object') {
     state.config = { ...state.config, ...data.recording };
   }
-  if (!state.authToken) {
+  if (!authToken) {
     console.error('VoidrCollector: Failed to get authentication token');
     return false;
   }
+  state.authToken = authToken;
+  state.sessionId = authenticatedSessionId;
+  state.chunkTargetBytes = targetChunkBytes(data.ingest?.maxChunkPayloadBytes);
 
   // Persist JWT and session ID for reuse on re-init (e.g. page reload)
   try {
     sessionStorage.setItem('voidr_jwt', state.authToken);
     sessionStorage.setItem('voidr_session_id', state.sessionId);
-    if (state.userId) {
-      sessionStorage.setItem('voidr_user_id', state.userId);
+    if (userId) {
+      sessionStorage.setItem('voidr_user_id', userId);
     }
-  } catch (_) { }
+  } catch (_) {}
 
   return true;
 }

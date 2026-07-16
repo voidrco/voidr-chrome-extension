@@ -46,10 +46,7 @@ test('resolveInteractiveTarget: stops at body and respects maxDepth', () => {
   const deep = [el('svg'), el('span'), el('body'), el('a', { attrs: { href: '/after-body' } })];
   assert.equal(resolveInteractiveTarget(deep), null);
 
-  const path = [
-    el('i'), el('i'), el('i'),
-    el('a', { attrs: { href: '/deep' } }),
-  ];
+  const path = [el('i'), el('i'), el('i'), el('a', { attrs: { href: '/deep' } })];
   assert.equal(resolveInteractiveTarget(path, 3), null);
   assert.equal(resolveInteractiveTarget(path, 4)?.getAttribute('href'), '/deep');
 });
@@ -65,7 +62,10 @@ test('getAccessibleLabel: priority chain', () => {
     getAccessibleLabel(el('a', { attrs: { 'aria-label': 'Monitor' }, text: 'ignored' })),
     'Monitor',
   );
-  assert.equal(getAccessibleLabel(el('a', { text: '  Templates  de \n Notificação ' })), 'Templates de Notificação');
+  assert.equal(
+    getAccessibleLabel(el('a', { text: '  Templates  de \n Notificação ' })),
+    'Templates de Notificação',
+  );
   assert.equal(getAccessibleLabel(el('a', { attrs: { title: 'Dica' } })), 'Dica');
   assert.equal(
     getAccessibleLabel(el('a', { attrs: { href: '/notification-templates/' } })),

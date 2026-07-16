@@ -132,10 +132,12 @@ export async function sendEnvironmentBundle() {
   // immediately resets state, so we must not read `state.*` after the first
   // await (sessionId/authToken/config would already be cleared).
   const bundle = buildEnvironmentBundle();
+  const lifecycleId = state.lifecycleId;
+  const sessionId = state.sessionId;
   const collectorUrl = state.config.collectorUrl;
   const apiKey = state.config.apiKey;
   const initialToken = state.authToken;
-  const url = `${collectorUrl}/sessions/${encodeURIComponent(state.sessionId)}/environment-bundle`;
+  const url = `${collectorUrl}/sessions/${encodeURIComponent(sessionId)}/environment-bundle`;
   const body = safeStringify(bundle);
 
   const post = (token) =>
@@ -151,7 +153,12 @@ export async function sendEnvironmentBundle() {
   try {
     let res = await post(initialToken);
 
-    if (res.status === 401) {
+    if (
+      res.status === 401 &&
+      state.lifecycleId === lifecycleId &&
+      state.sessionId === sessionId &&
+      !state.forceStop
+    ) {
       const refreshResponse = await fetch(`${collectorUrl}/refresh-token`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -159,12 +166,18 @@ export async function sendEnvironmentBundle() {
       });
       if (refreshResponse.ok) {
         const data = await refreshResponse.json().catch(() => ({}));
-        state.authToken = data.token || null;
-        if (state.authToken) {
+        const token = data.token || null;
+        if (
+          token &&
+          state.lifecycleId === lifecycleId &&
+          state.sessionId === sessionId &&
+          !state.forceStop
+        ) {
+          state.authToken = token;
           try {
-            sessionStorage.setItem('voidr_jwt', state.authToken);
+            sessionStorage.setItem('voidr_jwt', token);
           } catch (_) {}
-          res = await post(state.authToken);
+          res = await post(token);
         }
       }
     }

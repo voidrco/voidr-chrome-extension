@@ -8,6 +8,7 @@ const TRIM_INTERVAL_MS = 10000;
 const MAX_BUFFER_EVENTS = 5000;
 
 let upgradeFn = null;
+let discardFn = null;
 let trimInterval = null;
 let decision = null; // null = undecided, true = upgraded, false = discarded
 
@@ -38,9 +39,10 @@ function trimBuffer() {
   }
 }
 
-export function armBufferMode(onUpgrade) {
+export function armBufferMode(onUpgrade, onDiscard) {
   state.bufferMode = true;
   upgradeFn = onUpgrade;
+  discardFn = onDiscard;
   decision = null;
   trimInterval = setInterval(trimBuffer, TRIM_INTERVAL_MS);
 }
@@ -48,6 +50,7 @@ export function armBufferMode(onUpgrade) {
 export function disarmBufferMode() {
   state.bufferMode = false;
   upgradeFn = null;
+  discardFn = null;
   decision = null;
   if (trimInterval) {
     clearInterval(trimInterval);
@@ -77,18 +80,25 @@ export function notifyBufferTrigger(reason) {
       }
       state.events.length = 0;
       state.networkBuffer.length = 0;
+      state.networkBufferBytes = 0;
+      const discard = discardFn;
       disarmBufferMode();
       decision = false;
+      discard?.();
       return;
     }
   }
 
   if (upgradeFn) {
+    const upgradeToken = {};
     state.bufferUpgradeInFlight = true;
+    state.bufferUpgradeToken = upgradeToken;
     const fn = upgradeFn;
     upgradeFn = null;
     Promise.resolve(fn(reason)).finally(() => {
+      if (state.bufferUpgradeToken !== upgradeToken) return;
       state.bufferUpgradeInFlight = false;
+      state.bufferUpgradeToken = null;
     });
   }
 }

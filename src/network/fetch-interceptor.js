@@ -1,139 +1,176 @@
 import { state } from '../state.js';
 import {
-  extractRequestHeaders,
-  extractRequestBody,
+  byteLength,
+  extractFetchHeaders,
+  extractGraphQL,
   extractPerformanceTiming,
+  extractRequestBody,
+  extractRequestHeaders,
+  extractTraceId,
+  getContentType,
+  isThirdParty,
   processResponseBody,
   sanitizeHeaders,
-  extractFetchHeaders,
-  isThirdParty,
-  getContentType,
-  byteLength,
-  extractTraceId,
 } from './extractors.js';
 import { logNetworkEvent, nextRequestId } from '../transport.js';
 import { markNetworkActivity } from '../listeners/click-effect.js';
-import { extractGraphQL } from './extractors.js';
 
-/**
- * Intercept the global fetch() to capture network requests.
- * Saves the original fetch to state.originalFetch for restoration.
- */
+function normalizeUrl(input) {
+  let url = typeof input === 'string' ? input : input?.url;
+  if (!url || url.startsWith('http')) return url;
+  try {
+    return new URL(url, window.location.origin).toString();
+  } catch {
+    return `${window.location.origin}${url}`;
+  }
+}
+
+function isCollectorRequest(url) {
+  const collectorUrl =
+    typeof state.config.collectorUrl === 'string'
+      ? state.config.collectorUrl.replace(/\/+$/, '')
+      : '';
+  return Boolean(url && collectorUrl && url.startsWith(collectorUrl));
+}
+
+function getMethod(input, init) {
+  return (init?.method || (input instanceof Request ? input.method : 'GET')).toUpperCase();
+}
+
+function addOptionalMetadata(event, requestHeaders, requestBody) {
+  if (state.config.captureTraceId) {
+    const traceId = extractTraceId(requestHeaders);
+    if (traceId) event.traceId = traceId;
+  }
+  const graphql = extractGraphQL(event.url, event.method, requestBody);
+  if (graphql) event.graphql = graphql;
+  return event;
+}
+
+function captureRequestBody(input, init, method) {
+  if (!['POST', 'PUT', 'PATCH'].includes(method)) return Promise.resolve(null);
+  if (!(input instanceof Request) || init?.body) {
+    return Promise.resolve().then(() => extractRequestBody(input, init));
+  }
+  try {
+    const request = input.clone();
+    return Promise.resolve().then(() => extractRequestBody(request, init, true));
+  } catch {
+    return Promise.resolve(null);
+  }
+}
+
+function buildResponseEvent(context, response, responseBody) {
+  const responseHeaders = sanitizeHeaders(extractFetchHeaders(response.headers));
+  const event = {
+    type: 'fetch',
+    requestId: context.requestId,
+    timestamp: context.startedAt,
+    url: context.url,
+    method: context.method,
+    status: response.status,
+    statusText: response.statusText,
+    duration: Date.now() - context.startedAt,
+    thirdParty: isThirdParty(context.url),
+    origin: window.location.origin,
+    requestHeaders: context.requestHeaders,
+    responseHeaders,
+    requestBody: context.requestBody,
+    responseBody,
+    timing: extractPerformanceTiming(context.url),
+    contentType: getContentType(responseHeaders),
+    responseSize: responseBody ? responseBody.length : 0,
+    requestSize: byteLength(context.requestBody),
+  };
+  return addOptionalMetadata(event, context.requestHeaders, context.requestBody);
+}
+
+const isCurrentCapture = (context) =>
+  !state.forceStop &&
+  !state.isPaused &&
+  !state.sessionRotationInFlight &&
+  state.lifecycleId === context.lifecycleId &&
+  state.sessionId === context.sessionId;
+
+async function captureResponse(context, response) {
+  try {
+    if (!isCurrentCapture(context)) return;
+    const cloned = response.clone();
+    const [requestBody, responseBody] = await Promise.all([
+      context.requestBodyPromise,
+      processResponseBody(response, cloned),
+    ]);
+    if (!isCurrentCapture(context)) return;
+    setTimeout(() => {
+      if (!isCurrentCapture(context)) return;
+      logNetworkEvent(buildResponseEvent({ ...context, requestBody }, response, responseBody));
+    }, 50);
+  } catch {}
+}
+
+async function captureError(context, error) {
+  const requestBody = await context.requestBodyPromise;
+  if (!isCurrentCapture(context)) return;
+  logNetworkEvent({
+    type: 'fetchError',
+    requestId: context.requestId,
+    timestamp: context.startedAt,
+    url: context.url,
+    method: context.method,
+    error: error.message,
+    thirdParty: isThirdParty(context.url),
+    origin: window.location.origin,
+    requestHeaders: context.requestHeaders,
+    requestBody,
+  });
+}
+
 export function initFetchInterceptor() {
   if (!state.config.networkCapture) return;
+  const originalFetch = window.fetch;
+  let active = true;
+  state.originalFetch = originalFetch;
 
-  state.originalFetch = window.fetch.bind(window);
-
-  window.fetch = async function (...args) {
+  const interceptedFetch = async function (...args) {
+    const callOriginal = () => originalFetch.apply(window, args);
+    if (
+      !active ||
+      state.forceStop ||
+      !state.isInitialized ||
+      state.isPaused ||
+      state.sessionRotationInFlight
+    ) {
+      return callOriginal();
+    }
     const [input, init] = args;
-    let requestUrl = typeof input === 'string' ? input : input.url;
-    if (!requestUrl) {
-      return state.originalFetch(...args);
-    }
+    const url = normalizeUrl(input);
+    if (!url || isCollectorRequest(url)) return callOriginal();
 
-    if (!requestUrl.startsWith('http')) {
-      try {
-        requestUrl = new URL(requestUrl, window.location.origin).toString();
-      } catch (_) {
-        requestUrl = `${window.location.origin}${requestUrl}`;
-      }
-    }
-
-    // Normalize collector base URL from config
-    const normalizedCollectorBase =
-      state.config && typeof state.config.collectorUrl === 'string'
-        ? state.config.collectorUrl.replace(/\/+$/, '')
-        : '';
-    const isCollectorRequest = (() => {
-      try {
-        return (
-          requestUrl && normalizedCollectorBase && requestUrl.startsWith(normalizedCollectorBase)
-        );
-      } catch (_) {
-        return Boolean(
-          requestUrl && normalizedCollectorBase && requestUrl.includes(normalizedCollectorBase),
-        );
-      }
-    })();
-
-    // Skip intercepting collector's own requests
-    if (isCollectorRequest) {
-      return state.originalFetch(...args);
-    }
-
-    const start = Date.now();
-    const requestId = nextRequestId();
-    const method = init?.method || (input instanceof Request ? input.method : 'GET');
+    const method = getMethod(input, init);
+    const context = {
+      url,
+      method,
+      requestId: nextRequestId(),
+      startedAt: Date.now(),
+      lifecycleId: state.lifecycleId,
+      sessionId: state.sessionId,
+      requestHeaders: extractRequestHeaders(input, init),
+      requestBodyPromise: captureRequestBody(input, init, method),
+    };
     markNetworkActivity();
 
-    // Capture request headers and body BEFORE making the request
-    const requestHeaders = extractRequestHeaders(input, init);
-    let requestBody = null;
-    if (['POST', 'PUT', 'PATCH'].includes(method.toUpperCase())) {
-      requestBody = await extractRequestBody(input, init);
-    }
-
     try {
-      const response = await state.originalFetch(...args);
-      const cloned = response.clone();
-
-      // Process response asynchronously
-      processResponseBody(response, cloned).then((responseBody) => {
-        // Extract response headers
-        const responseHeaders = sanitizeHeaders(extractFetchHeaders(response.headers));
-
-        // Delay slightly so the Performance API entry is available
-        setTimeout(() => {
-          const timing = extractPerformanceTiming(requestUrl);
-
-          const event = {
-            type: 'fetch',
-            requestId,
-            timestamp: start,
-            url: requestUrl,
-            method: method.toUpperCase(),
-            status: response.status,
-            statusText: response.statusText,
-            duration: Date.now() - start,
-            thirdParty: isThirdParty(requestUrl),
-            origin: window.location.origin,
-            requestHeaders,
-            responseHeaders,
-            requestBody,
-            responseBody,
-            timing,
-            contentType: getContentType(responseHeaders),
-            responseSize: responseBody ? responseBody.length : 0,
-            requestSize: byteLength(requestBody),
-          };
-
-          if (state.config.captureTraceId) {
-            const traceId = extractTraceId(requestHeaders);
-            if (traceId) event.traceId = traceId;
-          }
-
-          const gql = extractGraphQL(requestUrl, method, requestBody);
-          if (gql) event.graphql = gql;
-
-          logNetworkEvent(event);
-        }, 50);
-      });
-
+      const response = await callOriginal();
+      void captureResponse(context, response);
       return response;
     } catch (error) {
-      logNetworkEvent({
-        type: 'fetchError',
-        requestId,
-        timestamp: start,
-        url: requestUrl,
-        method: method.toUpperCase(),
-        error: error.message,
-        thirdParty: isThirdParty(requestUrl),
-        origin: window.location.origin,
-        requestHeaders,
-        requestBody,
-      });
+      void captureError(context, error);
       throw error;
     }
   };
+  state.interceptedFetch = interceptedFetch;
+  state.deactivateFetchInterceptor = () => {
+    active = false;
+  };
+  window.fetch = interceptedFetch;
 }

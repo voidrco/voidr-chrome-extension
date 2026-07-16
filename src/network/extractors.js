@@ -100,17 +100,46 @@ export function extractRequestHeaders(input, init) {
   return sanitizeHeaders(headers);
 }
 
+async function readTextLimited(body) {
+  if (!body?.body?.getReader) {
+    const text = await body.text();
+    return text.length > MAX_BODY_SIZE ? `${text.slice(0, MAX_BODY_SIZE)}...[TRUNCATED]` : text;
+  }
+
+  const reader = body.body.getReader();
+  const decoder = new TextDecoder();
+  let bytes = 0;
+  let text = '';
+
+  while (bytes <= MAX_BODY_SIZE) {
+    const { value, done } = await reader.read();
+    if (done) return text + decoder.decode();
+    const chunk = value instanceof Uint8Array ? value : new Uint8Array(value);
+    const remaining = MAX_BODY_SIZE - bytes;
+    if (chunk.byteLength > remaining) {
+      text += decoder.decode(chunk.subarray(0, remaining), { stream: true });
+      reader.cancel().catch(() => {});
+      return `${text}${decoder.decode()}...[TRUNCATED]`;
+    }
+    text += decoder.decode(chunk, { stream: true });
+    bytes += chunk.byteLength;
+  }
+
+  reader.cancel().catch(() => {});
+  return `${text}${decoder.decode()}...[TRUNCATED]`;
+}
+
 /**
  * Extract the request body (for POST, PUT, PATCH methods).
  * Handles string, FormData, URLSearchParams, Blob, ArrayBuffer.
  */
-export async function extractRequestBody(input, init) {
+export async function extractRequestBody(input, init, requestIsClone = false) {
   try {
     let body = init?.body;
     // If input is Request and no body in init
     if (!body && input instanceof Request) {
       try {
-        body = await input.clone().text();
+        return await readTextLimited(requestIsClone ? input : input.clone());
       } catch (e) {
         return null;
       }
@@ -337,11 +366,7 @@ export async function processResponseBody(response, clonedResponse) {
     if (contentLength && parseInt(contentLength) > MAX_BODY_SIZE) {
       return `[Response too large: ${contentLength} bytes]`;
     }
-    const text = await clonedResponse.text();
-    if (text.length > MAX_BODY_SIZE) {
-      return text.substring(0, MAX_BODY_SIZE) + '...[TRUNCATED]';
-    }
-    return text;
+    return await readTextLimited(clonedResponse);
   } catch (e) {
     return '[Failed to read response]';
   }

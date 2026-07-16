@@ -17,7 +17,12 @@ let signals = null;
 let pending = [];
 let observer = null;
 let listeners = [];
+let timers = new Set();
 let installed = false;
+let originalPushState = null;
+let originalReplaceState = null;
+let patchedPushState = null;
+let patchedReplaceState = null;
 
 function now() {
   return Date.now();
@@ -60,6 +65,7 @@ function deltaAfter(ts, signalTs) {
 
 function settle(click) {
   pending = pending.filter((c) => c !== click);
+  if (!signals || state.isPaused) return;
 
   const payload = {
     clickId: click.clickId,
@@ -106,10 +112,14 @@ function onClick(e) {
   if (pending.length >= MAX_PENDING_CLICKS) return;
 
   const target = e.composedPath ? e.composedPath()[0] : e.target;
+  const selector = target ? generateSelector(target) : '';
+  try {
+    e.__voidrSelector = selector;
+  } catch {}
   const click = {
     clickId,
     ts: now(),
-    selector: target ? generateSelector(target) : '',
+    selector,
     tag: target?.tagName || '',
     interactive: isInteractive(target),
     anchorAncestor: hasAnchorAncestor(target),
@@ -117,14 +127,16 @@ function onClick(e) {
   };
   pending.push(click);
 
-  setTimeout(() => {
+  const timer = setTimeout(() => {
+    timers.delete(timer);
     // href change without a history event (full reload lost anyway) still
     // counts as navigation for SPA flows that bypass pushState hooks.
-    if (window.location.href !== click.href) {
+    if (!state.isPaused && window.location.href !== click.href) {
       signals.nav = Math.max(signals.nav ?? 0, click.ts + 1);
     }
     settle(click);
   }, EFFECT_WINDOW_MS + 50);
+  timers.add(timer);
 }
 
 export function initClickEffect() {
@@ -168,16 +180,20 @@ export function initClickEffect() {
   add(window, 'popstate', () => (signals.nav = now()));
   add(window, 'hashchange', () => (signals.nav = now()));
 
-  const origPushState = history.pushState;
-  const origReplaceState = history.replaceState;
-  history.pushState = function () {
-    signals.nav = now();
-    return origPushState.apply(this, arguments);
+  const pushState = history.pushState;
+  const replaceState = history.replaceState;
+  originalPushState = pushState;
+  originalReplaceState = replaceState;
+  patchedPushState = function () {
+    if (signals) signals.nav = now();
+    return pushState.apply(this, arguments);
   };
-  history.replaceState = function () {
-    signals.nav = now();
-    return origReplaceState.apply(this, arguments);
+  patchedReplaceState = function () {
+    if (signals) signals.nav = now();
+    return replaceState.apply(this, arguments);
   };
+  history.pushState = patchedPushState;
+  history.replaceState = patchedReplaceState;
 }
 
 export function stopClickEffect() {
@@ -200,6 +216,14 @@ export function stopClickEffect() {
     }
   }
   listeners = [];
+  for (const timer of timers) clearTimeout(timer);
+  timers = new Set();
   pending = [];
   signals = null;
+  if (history.pushState === patchedPushState) history.pushState = originalPushState;
+  if (history.replaceState === patchedReplaceState) history.replaceState = originalReplaceState;
+  originalPushState = null;
+  originalReplaceState = null;
+  patchedPushState = null;
+  patchedReplaceState = null;
 }

@@ -15,6 +15,7 @@ export function initLongTasks() {
   let count = 0;
 
   const push = (payload) => {
+    if (state.forceStop || state.isPaused || !state.isInitialized) return;
     if (count >= MAX_LONG_TASKS_PER_SESSION) return;
     count += 1;
     state.events.push({
