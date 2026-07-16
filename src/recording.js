@@ -33,7 +33,9 @@ export function startRrwebOnly() {
   const privacyLevel = state.config.privacyLevel;
   const maskAllText = privacyLevel === 'mask' || state.config.dataMasking.text;
   const maskInputs =
-    privacyLevel === 'mask' || privacyLevel === 'mask-user-input' || state.config.dataMasking.inputs;
+    privacyLevel === 'mask' ||
+    privacyLevel === 'mask-user-input' ||
+    state.config.dataMasking.inputs;
 
   // Build maskTextSelector: global mask > TASY hotfix > null
   const maskTextSelector = maskAllText ? '*' : isTasy ? TASY_MASK_SELECTORS.join(', ') : null;
@@ -82,6 +84,10 @@ export function startRrwebOnly() {
  */
 export function startRecording() {
   startRrwebOnly();
+  initCaptureInfrastructure();
+}
+
+export function initCaptureInfrastructure() {
   initClickEffect();
   initEventListeners();
   initFetchInterceptor();

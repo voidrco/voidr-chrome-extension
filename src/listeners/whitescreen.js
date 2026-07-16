@@ -10,6 +10,16 @@ const MAX_POLLS = 10;
 
 const DEFAULT_CONTAINERS = ['html', 'body', '#app', '#root'];
 
+let timers = new Set();
+
+function schedule(action, delay) {
+  const timer = setTimeout(() => {
+    timers.delete(timer);
+    action();
+  }, delay);
+  timers.add(timer);
+}
+
 function isContainer(el, containers, skeleton, initialSkeletonMarkup) {
   if (!el) return true;
   const selector = containers.join(',');
@@ -84,7 +94,7 @@ export function initWhiteScreenDetection() {
   let polls = 0;
 
   const check = () => {
-    if (state.forceStop) return;
+    if (state.forceStop || state.isPaused) return;
     if (!isWhite()) {
       if (polls > 0) {
         emit('recovered', { durationMs: Date.now() - startedAt, attempts: polls });
@@ -96,11 +106,16 @@ export function initWhiteScreenDetection() {
       emit('white', { durationMs: Date.now() - startedAt, attempts: polls });
     }
     if (polls < MAX_POLLS) {
-      setTimeout(check, POLL_INTERVAL_MS);
+      schedule(check, POLL_INTERVAL_MS);
     } else {
       emit('persistent', { durationMs: Date.now() - startedAt, attempts: polls });
     }
   };
 
-  setTimeout(check, INITIAL_DELAY_MS);
+  schedule(check, INITIAL_DELAY_MS);
+}
+
+export function stopWhiteScreenDetection() {
+  for (const timer of timers) clearTimeout(timer);
+  timers = new Set();
 }

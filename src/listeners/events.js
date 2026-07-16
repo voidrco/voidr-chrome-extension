@@ -1,126 +1,107 @@
 import { state } from '../state.js';
 import { isTasy, TASY_MASK_SELECTORS } from '../constants.js';
-import {
-  generateSelector,
-  getTextContent,
-  throttle,
-  truncate,
-} from '../utils/helpers.js';
+import { generateSelector, getTextContent, throttle, truncate } from '../utils/helpers.js';
 
-/**
- * Check if an element matches any block selector (should be ignored for capture).
- */
-function shouldIgnore(el) {
-  if (!el.closest) return false;
+const TASY_MASK_SELECTOR = TASY_MASK_SELECTORS.join(', ');
+
+let installed = false;
+let listeners = [];
+
+function shouldIgnore(element) {
+  if (!element?.closest) return false;
   const selectors = [
     '[data-sensitivity="block"]',
     ...(state.config.dataMasking.blockSelectors || []),
   ].join(',');
-  return el.closest(selectors);
+  return Boolean(element.closest(selectors));
 }
 
-/**
- * Initialize DOM event listeners for input, change, click, and scroll events.
- */
+function isTasyMasked(element) {
+  if (!isTasy || !element) return false;
+  try {
+    return element.matches(TASY_MASK_SELECTOR) || Boolean(element.closest(TASY_MASK_SELECTOR));
+  } catch {
+    return false;
+  }
+}
+
+const isMaskedInput = (element) =>
+  isTasyMasked(element) ||
+  state.config.dataMasking.inputs === true ||
+  element?.type === 'password' ||
+  element?.autocomplete === 'current-password' ||
+  element?.autocomplete === 'new-password';
+
+function addListener(target, type, handler, options) {
+  target.addEventListener(type, handler, options);
+  listeners.push({ target, type, handler, options });
+}
+
+function pushInputEvent(event, plugin) {
+  if (state.isPaused || shouldIgnore(event.target)) return;
+  const target = event.target;
+  state.events.push({
+    type: 5,
+    timestamp: Date.now(),
+    data: {
+      plugin,
+      payload: {
+        selector: generateSelector(target),
+        tag: target.tagName,
+        value: isMaskedInput(target) ? '***' : truncate(target.value, 100),
+        type: target.type,
+      },
+    },
+  });
+  state.elementMapper?.onInteraction(target, plugin === 'user.input' ? 'input' : 'change');
+}
+
+function pushClickEvent(event) {
+  if (state.isPaused) return;
+  const target = event.composedPath?.()[0] || event.target;
+  if (shouldIgnore(target)) return;
+  state.events.push({
+    type: 5,
+    timestamp: Date.now(),
+    data: {
+      plugin: 'user.click',
+      payload: {
+        selector: event.__voidrSelector || generateSelector(target),
+        tag: target.tagName,
+        text: isTasyMasked(target) ? '***' : getTextContent(target),
+        clickId: event.__voidrClickId || null,
+        position: { x: event.clientX, y: event.clientY },
+      },
+    },
+  });
+  state.elementMapper?.onInteraction(target, 'click');
+}
+
 export function initEventListeners() {
-  // HOTFIX: helper to check if element matches TASY mask selectors (remove with hotfix)
-  const isTasyMasked = (el) => {
-    if (!isTasy || !el) return false;
-    const sel = TASY_MASK_SELECTORS.join(', ');
-    try { return el.matches(sel) || !!el.closest(sel); } catch { return false; }
-  };
+  if (installed) return;
+  installed = true;
+  addListener(document, 'input', (event) => pushInputEvent(event, 'user.input'));
+  addListener(document, 'change', (event) => pushInputEvent(event, 'user.change'));
+  addListener(document, 'click', pushClickEvent);
+  addListener(
+    window,
+    'scroll',
+    throttle(() => {
+      if (state.isPaused) return;
+      state.events.push({
+        type: 5,
+        timestamp: Date.now(),
+        data: { plugin: 'user.scroll', payload: { x: window.scrollX, y: window.scrollY } },
+      });
+    }, 200),
+  );
+}
 
-  const isMaskedInput = (el) =>
-    isTasyMasked(el) ||
-    state.config.dataMasking.inputs === true ||
-    el?.type === 'password' ||
-    el?.autocomplete === 'current-password' ||
-    el?.autocomplete === 'new-password';
-
-  // Input events
-  document.addEventListener('input', (e) => {
-    const target = e.target;
-    if (shouldIgnore(target)) return;
-
-    state.events.push({
-      type: 5,
-      timestamp: Date.now(),
-      data: {
-        plugin: 'user.input',
-        payload: {
-          selector: generateSelector(target),
-          tag: target.tagName,
-          value: isMaskedInput(target) ? '***' : truncate(target.value, 100),
-          type: target.type,
-        },
-      },
-    });
-
-    if (state.elementMapper) state.elementMapper.onInteraction(target, 'input');
-  });
-
-  // Change events
-  document.addEventListener('change', (e) => {
-    const target = e.target;
-    if (shouldIgnore(target)) return;
-
-    state.events.push({
-      type: 5,
-      timestamp: Date.now(),
-      data: {
-        plugin: 'user.change',
-        payload: {
-          selector: generateSelector(target),
-          tag: target.tagName,
-          value: isMaskedInput(target) ? '***' : truncate(target.value, 100),
-          type: target.type,
-        },
-      },
-    });
-
-    if (state.elementMapper) state.elementMapper.onInteraction(target, 'change');
-  });
-
-  // Click events
-  document.addEventListener('click', (e) => {
-    const target = e.composedPath()[0];
-    if (shouldIgnore(target)) return;
-
-    state.events.push({
-      type: 5,
-      timestamp: Date.now(),
-      data: {
-        plugin: 'user.click',
-        payload: {
-          selector: generateSelector(target),
-          tag: target.tagName,
-          text: isTasyMasked(target) ? '***' : getTextContent(target),
-          clickId: e.__voidrClickId || null,
-          position: {
-            x: e.clientX,
-            y: e.clientY,
-          },
-        },
-      },
-    });
-
-    if (state.elementMapper) state.elementMapper.onInteraction(target, 'click');
-  });
-
-  // Scroll events (throttled)
-  const scrollHandler = throttle(() => {
-    state.events.push({
-      type: 5,
-      timestamp: Date.now(),
-      data: {
-        plugin: 'user.scroll',
-        payload: {
-          x: window.scrollX,
-          y: window.scrollY,
-        },
-      },
-    });
-  }, 200);
-
-  window.addEventListener('scroll', scrollHandler);
+export function stopEventListeners() {
+  if (!installed) return;
+  for (const { target, type, handler, options } of listeners) {
+    target.removeEventListener(type, handler, options);
+  }
+  installed = false;
+  listeners = [];
 }

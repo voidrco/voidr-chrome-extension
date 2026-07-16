@@ -1,6 +1,8 @@
 import { onLCP, onCLS, onINP, onTTFB, onFCP } from 'web-vitals';
 import { state } from '../state.js';
 
+let installed = false;
+
 /**
  * Capture Core Web Vitals (LCP, CLS, INP, TTFB, FCP) via the web-vitals
  * library. Each metric is pushed as a `web.vital` plugin event when finalized
@@ -8,10 +10,19 @@ import { state } from '../state.js';
  * path carries them out).
  */
 export function initVitals() {
+  if (installed) return;
   if (state.config.captureWebVitals === false) return;
   if (typeof window === 'undefined' || typeof PerformanceObserver === 'undefined') return;
+  installed = true;
 
   const report = (metric) => {
+    if (
+      state.forceStop ||
+      state.isPaused ||
+      !state.isInitialized ||
+      state.config.captureWebVitals === false
+    )
+      return;
     try {
       state.events.push({
         type: 5,

@@ -38,10 +38,11 @@ const FONT_MIME = {
   eot: 'application/vnd.ms-fontobject',
 };
 
-const MAX_FONTS = 16; // cap distinct fonts inlined per session
-const MAX_FONT_BYTES = 512 * 1024; // skip anything larger than 512KB
-const TOTAL_BUDGET_MS = 3000; // overall wall-clock budget
-const PER_FETCH_MS = 1500; // per-font fetch timeout
+const MAX_FONTS = 4;
+const MAX_FONT_BYTES = 256 * 1024;
+const MAX_TOTAL_FONT_BYTES = 1024 * 1024;
+const TOTAL_BUDGET_MS = 1500;
+const PER_FETCH_MS = 1000;
 
 function extensionOf(url) {
   const clean = url.split('?')[0].split('#')[0];
@@ -82,6 +83,7 @@ function collectFontFaceRules() {
       // 5 === CSSRule.FONT_FACE_RULE
       if (rule.type === 5 && rule.style) {
         out.push({ rule, baseHref: sheet.href || document.baseURI || window.location.href });
+        if (out.length >= 64) return out;
       }
     }
   }
@@ -109,9 +111,49 @@ function bufferToBase64(buffer) {
   return btoa(binary);
 }
 
-async function fetchFontAsDataUri(absUrl, crossOrigin) {
+async function readFontBuffer(response) {
+  const contentLength = Number(response.headers.get('content-length'));
+  if (contentLength > MAX_FONT_BYTES) return null;
+  if (!response.body?.getReader) {
+    const buffer = await response.arrayBuffer();
+    return buffer.byteLength <= MAX_FONT_BYTES ? buffer : null;
+  }
+
+  const reader = response.body.getReader();
+  const chunks = [];
+  let total = 0;
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    const chunk = value instanceof Uint8Array ? value : new Uint8Array(value);
+    total += chunk.byteLength;
+    if (total > MAX_FONT_BYTES) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(chunk);
+  }
+
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes.buffer;
+}
+
+async function fetchFontAsDataUri(
+  absUrl,
+  crossOrigin,
+  { signal, deadline = Date.now() + TOTAL_BUDGET_MS } = {},
+) {
+  const remainingMs = Math.max(0, deadline - Date.now());
+  if (remainingMs === 0 || signal?.aborted) return null;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), PER_FETCH_MS);
+  const abort = () => controller.abort();
+  signal?.addEventListener('abort', abort, { once: true });
+  const timer = setTimeout(abort, Math.min(PER_FETCH_MS, remainingMs));
   try {
     // Cross-origin fonts must be CORS-readable to render at all (per CSS spec),
     // so an anonymous CORS fetch normally hits the browser cache and succeeds.
@@ -122,15 +164,20 @@ async function fetchFontAsDataUri(absUrl, crossOrigin) {
         : { credentials: 'same-origin', signal: controller.signal },
     );
     if (!res.ok) return null;
-    const buffer = await res.arrayBuffer();
-    if (buffer.byteLength > MAX_FONT_BYTES) return null;
+    const buffer = await readFontBuffer(res);
+    if (!buffer) return null;
     const ext = extensionOf(absUrl);
     const mime = FONT_MIME[ext] || 'application/octet-stream';
-    return { dataUri: `data:${mime};base64,${bufferToBase64(buffer)}`, ext };
+    return {
+      dataUri: `data:${mime};base64,${bufferToBase64(buffer)}`,
+      ext,
+      bytes: buffer.byteLength,
+    };
   } catch {
     return null;
   } finally {
     clearTimeout(timer);
+    signal?.removeEventListener('abort', abort);
   }
 }
 
@@ -138,21 +185,28 @@ async function fetchFontAsDataUri(absUrl, crossOrigin) {
  * Fetch same-origin @font-face sources and inject a <style> with data: URIs so
  * they survive the replay CSP. Best-effort; returns the number of fonts inlined.
  */
-export async function inlineIconFonts() {
+export async function inlineIconFonts(
+  lifecycleId = state.lifecycleId,
+  signal = null,
+  deadline = Date.now() + TOTAL_BUDGET_MS,
+) {
   try {
     if (typeof document === 'undefined' || typeof fetch !== 'function') return 0;
-    if (state.config?.inlineFonts === false) return 0;
+    if (state.config?.inlineFonts !== true) return 0;
+    if (document.querySelector('[data-voidr-inlined-fonts]')) return 0;
 
-    const startedAt = Date.now();
+    const isCurrent = () =>
+      state.lifecycleId === lifecycleId && !state.forceStop && !state.isPaused && !signal?.aborted;
     const faceRules = collectFontFaceRules();
     if (faceRules.length === 0) return 0;
 
-    const seen = new Set();
+    const cache = new Map();
     const generated = [];
+    let totalBytes = 0;
 
     for (const { rule, baseHref } of faceRules) {
       if (generated.length >= MAX_FONTS) break;
-      if (Date.now() - startedAt > TOTAL_BUDGET_MS) break;
+      if (!isCurrent() || Date.now() >= deadline) break;
 
       const style = rule.style;
       const src = style.getPropertyValue('src');
@@ -185,11 +239,17 @@ export async function inlineIconFonts() {
         }
       }
       const chosen = chosenSameOrigin || chosenCrossOrigin;
-      if (alreadyInline || !chosen || seen.has(chosen)) continue;
-      seen.add(chosen);
-
-      const fetched = await fetchFontAsDataUri(chosen, !chosenSameOrigin);
-      if (!fetched) continue;
+      if (alreadyInline || !chosen) continue;
+      let fetched = cache.get(chosen);
+      if (fetched === undefined) {
+        fetched = await fetchFontAsDataUri(chosen, !chosenSameOrigin, { signal, deadline });
+        cache.set(chosen, fetched || null);
+        if (fetched) {
+          if (totalBytes + fetched.bytes > MAX_TOTAL_FONT_BYTES) break;
+          totalBytes += fetched.bytes;
+        }
+      }
+      if (!fetched || !isCurrent()) continue;
 
       const family = style.getPropertyValue('font-family');
       const weight = style.getPropertyValue('font-weight');
@@ -210,11 +270,13 @@ export async function inlineIconFonts() {
     }
 
     if (generated.length === 0) return 0;
+    if (!isCurrent() || document.querySelector('[data-voidr-inlined-fonts]')) return 0;
 
     const styleEl = document.createElement('style');
     styleEl.setAttribute('data-voidr-inlined-fonts', String(generated.length));
     styleEl.textContent = generated.join('\n');
     (document.head || document.documentElement).appendChild(styleEl);
+    state.inlinedAssetNodes.push(styleEl);
     return generated.length;
   } catch {
     return 0; // never block/break recording

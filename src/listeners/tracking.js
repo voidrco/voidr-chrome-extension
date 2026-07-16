@@ -1,6 +1,6 @@
 import { record } from 'rrweb';
 import { state } from '../state.js';
-import { debounce, truncate } from '../utils/helpers.js';
+import { truncate } from '../utils/helpers.js';
 import { notifyBufferTrigger } from '../buffer-mode.js';
 
 const MAX_ERRORS_PER_SESSION = 500;
@@ -10,6 +10,14 @@ const REPEAT_REPORT_EVERY = 10;
 // counted (web-see-style dedup) instead of flooding the payload.
 const seenErrors = new Map();
 let errorCount = 0;
+let installed = false;
+let listeners = [];
+let snapshotTimer = null;
+
+function addListener(target, type, handler, options) {
+  target.addEventListener(type, handler, options);
+  listeners.push({ target, type, handler, options });
+}
 
 function hashError(str) {
   let h = 5381;
@@ -109,11 +117,15 @@ function resourceDescriptor(target) {
  * mutations.
  */
 export function initTracking() {
+  if (installed) return;
+  installed = true;
   // Global errors + resource load errors (capture phase: resource error
   // events don't bubble)
-  window.addEventListener(
+  addListener(
+    window,
     'error',
     (e) => {
+      if (state.isPaused) return;
       const target = e.target;
       const isResourceError =
         target &&
@@ -138,7 +150,8 @@ export function initTracking() {
         'window.error',
         {
           message: e.message,
-          stack: e.error && typeof e.error.stack === 'string' ? truncate(e.error.stack, 8000) : null,
+          stack:
+            e.error && typeof e.error.stack === 'string' ? truncate(e.error.stack, 8000) : null,
           filename: e.filename,
           position: `${e.lineno}:${e.colno}`,
         },
@@ -150,7 +163,8 @@ export function initTracking() {
   );
 
   // Unhandled promise rejections — full serialization (message/name/stack)
-  window.addEventListener('unhandledrejection', (e) => {
+  addListener(window, 'unhandledrejection', (e) => {
+    if (state.isPaused) return;
     const serialized = serializeReason(e.reason);
     pushError(
       'promise.rejection',
@@ -162,7 +176,8 @@ export function initTracking() {
 
   // CSP violations
   if (state.config.captureCspViolations !== false) {
-    document.addEventListener('securitypolicyviolation', (e) => {
+    addListener(document, 'securitypolicyviolation', (e) => {
+      if (state.isPaused) return;
       pushError(
         'csp.violation',
         {
@@ -179,13 +194,25 @@ export function initTracking() {
 
   // UI snapshot heuristics — trigger full snapshots on large DOM changes
   try {
-    const mutationThreshold = state.config?.uiHeuristics?.mutationThreshold || 50;
+    const config = state.config.uiHeuristics || {};
+    if (config.enabled === false) return;
+    const mutationThreshold = config.mutationThreshold || 250;
+    const debounceMs = config.debounceMs || 800;
+    const minSnapshotIntervalMs = config.minSnapshotIntervalMs || 15000;
+    let lastSnapshotAt = Date.now();
 
-    const scheduleSnapshot = debounce(() => {
-      record.takeFullSnapshot();
-    }, 400);
+    const scheduleSnapshot = () => {
+      if (snapshotTimer) clearTimeout(snapshotTimer);
+      snapshotTimer = setTimeout(() => {
+        snapshotTimer = null;
+        if (state.isPaused || Date.now() - lastSnapshotAt < minSnapshotIntervalMs) return;
+        record.takeFullSnapshot();
+        lastSnapshotAt = Date.now();
+      }, debounceMs);
+    };
 
     const mo = new MutationObserver((mutationList) => {
+      if (state.isPaused) return;
       let score = 0;
       for (const m of mutationList) {
         score += (m.addedNodes?.length || 0) + (m.removedNodes?.length || 0);
@@ -206,4 +233,19 @@ export function initTracking() {
   } catch (_) {
     // noop
   }
+}
+
+export function stopTracking() {
+  if (!installed) return;
+  for (const { target, type, handler, options } of listeners) {
+    target.removeEventListener(type, handler, options);
+  }
+  if (state.observer) state.observer.disconnect();
+  state.observer = null;
+  if (snapshotTimer) clearTimeout(snapshotTimer);
+  snapshotTimer = null;
+  seenErrors.clear();
+  errorCount = 0;
+  installed = false;
+  listeners = [];
 }

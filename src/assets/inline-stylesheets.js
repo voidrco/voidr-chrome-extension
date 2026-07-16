@@ -26,10 +26,12 @@ import { state } from '../state.js';
  * path). Disable via config `inlineStylesheets: false`.
  */
 
-const MAX_SHEETS = 12; // cap distinct stylesheets inlined per session
-const MAX_CSS_BYTES = 1024 * 1024; // skip anything larger than 1MB
-const TOTAL_BUDGET_MS = 3000; // overall wall-clock budget
-const PER_FETCH_MS = 2000; // per-sheet fetch timeout
+const MAX_SHEETS = 4;
+const MAX_IMPORTS = 8;
+const MAX_CSS_BYTES = 256 * 1024;
+const MAX_TOTAL_CSS_BYTES = 512 * 1024;
+const TOTAL_BUDGET_MS = 1500;
+const PER_FETCH_MS = 1000;
 const IMPORT_DEPTH = 2; // max @import nesting inlined recursively
 
 /** True when the sheet's rules can be read by rrweb (same-origin or CORS-ok). */
@@ -78,9 +80,39 @@ export function absolutizeCssUrls(cssText, baseHref) {
  * the original href would break when the request was redirected (e.g.
  * `/styles.css` → CDN).
  */
-async function fetchCssText(href) {
+async function readCssText(response) {
+  const contentLength = Number(response.headers.get('content-length'));
+  if (contentLength > MAX_CSS_BYTES) return null;
+  if (!response.body?.getReader) {
+    const text = await response.text();
+    const bytes = new TextEncoder().encode(text).byteLength;
+    return bytes <= MAX_CSS_BYTES ? { text, bytes } : null;
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let bytes = 0;
+  let text = '';
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) return { text: text + decoder.decode(), bytes };
+    const chunk = value instanceof Uint8Array ? value : new Uint8Array(value);
+    bytes += chunk.byteLength;
+    if (bytes > MAX_CSS_BYTES) {
+      await reader.cancel();
+      return null;
+    }
+    text += decoder.decode(chunk, { stream: true });
+  }
+}
+
+async function fetchCssText(href, { signal, deadline = Date.now() + TOTAL_BUDGET_MS } = {}) {
+  const remainingMs = Math.max(0, deadline - Date.now());
+  if (remainingMs === 0 || signal?.aborted) return null;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), PER_FETCH_MS);
+  const abort = () => controller.abort();
+  signal?.addEventListener('abort', abort, { once: true });
+  const timer = setTimeout(abort, Math.min(PER_FETCH_MS, remainingMs));
   try {
     const res = await fetch(href, {
       mode: 'cors',
@@ -88,13 +120,14 @@ async function fetchCssText(href) {
       signal: controller.signal,
     });
     if (!res.ok) return null;
-    const text = await res.text();
-    if (!text || text.length > MAX_CSS_BYTES) return null;
-    return { text, baseUrl: res.url || href };
+    const content = await readCssText(res);
+    if (!content) return null;
+    return { ...content, baseUrl: res.url || href };
   } catch {
     return null;
   } finally {
     clearTimeout(timer);
+    signal?.removeEventListener('abort', abort);
   }
 }
 
@@ -109,7 +142,13 @@ async function fetchCssText(href) {
  * documented graceful degradation (external URL, blocked by the replay CSP,
  * same as before this fix).
  */
-export async function inlineCssImports(cssText, baseHref, deadline, depth = 0, fetchImpl = fetchCssText) {
+export async function inlineCssImports(
+  cssText,
+  baseHref,
+  deadline,
+  depth = 0,
+  fetchImpl = fetchCssText,
+) {
   if (depth >= IMPORT_DEPTH) return cssText;
   const importRe = /@import\s+(?:url\(\s*(['"]?)([^'")]+)\1\s*\)|(['"])([^'"]+)\3)\s*([^;]*);/gi;
   let out = cssText;
@@ -126,7 +165,13 @@ export async function inlineCssImports(cssText, baseHref, deadline, depth = 0, f
     }
     const fetched = await fetchImpl(abs);
     if (!fetched) continue;
-    const nested = await inlineCssImports(fetched.text, fetched.baseUrl, deadline, depth + 1, fetchImpl);
+    const nested = await inlineCssImports(
+      fetched.text,
+      fetched.baseUrl,
+      deadline,
+      depth + 1,
+      fetchImpl,
+    );
     const body = absolutizeCssUrls(nested, fetched.baseUrl);
     const media = (m[5] || '').trim();
     out = out.replace(m[0], media ? `@media ${media} { ${body} }` : body);
@@ -138,25 +183,45 @@ export async function inlineCssImports(cssText, baseHref, deadline, depth = 0, f
  * Inline unreadable cross-origin stylesheets as <style> tags BEFORE recording
  * starts. Best-effort; returns the number of stylesheets inlined.
  */
-export async function inlineUnreadableStylesheets() {
+export async function inlineUnreadableStylesheets(
+  lifecycleId = state.lifecycleId,
+  signal = null,
+  deadline = Date.now() + TOTAL_BUDGET_MS,
+) {
   try {
     if (typeof document === 'undefined' || typeof fetch !== 'function') return 0;
-    if (state.config?.inlineStylesheets === false) return 0;
+    if (state.config?.inlineStylesheets !== true) return 0;
 
-    const startedAt = Date.now();
+    const isCurrent = () =>
+      state.lifecycleId === lifecycleId && !state.forceStop && !state.isPaused && !signal?.aborted;
     const sheets = Array.from(document.styleSheets || []);
     let inlined = 0;
+    let imports = 0;
+    let totalBytes = 0;
+    const seen = new Set();
+    const fetchWithinBudget = async (href, isImport = false) => {
+      if (!isCurrent() || Date.now() >= deadline) return null;
+      if (isImport && imports >= MAX_IMPORTS) return null;
+      if (seen.has(href)) return null;
+      seen.add(href);
+      if (isImport) imports += 1;
+      const fetched = await fetchCssText(href, { signal, deadline });
+      if (!fetched || !isCurrent()) return null;
+      if (totalBytes + fetched.bytes > MAX_TOTAL_CSS_BYTES) return null;
+      totalBytes += fetched.bytes;
+      return fetched;
+    };
 
     for (const sheet of sheets) {
       if (inlined >= MAX_SHEETS) break;
-      if (Date.now() - startedAt > TOTAL_BUDGET_MS) break;
+      if (!isCurrent() || Date.now() >= deadline) break;
 
       const href = sheet.href;
       const owner = sheet.ownerNode;
       if (!href || !owner || isReadable(sheet)) continue;
       if (owner.getAttribute && owner.getAttribute('data-voidr-css-inlined')) continue;
 
-      const fetched = await fetchCssText(href);
+      const fetched = await fetchWithinBudget(href);
       if (!fetched) continue;
 
       const styleEl = document.createElement('style');
@@ -166,13 +231,24 @@ export async function inlineUnreadableStylesheets() {
       }
       // Base everything on the response's post-redirect URL, inline nested
       // @imports (replay CSP would block them), then absolutize what remains.
-      const deadline = startedAt + TOTAL_BUDGET_MS;
-      const withImports = await inlineCssImports(fetched.text, fetched.baseUrl, deadline);
+      const withImports = await inlineCssImports(
+        fetched.text,
+        fetched.baseUrl,
+        deadline,
+        0,
+        (url) => fetchWithinBudget(url, true),
+      );
+      if (!isCurrent() || new TextEncoder().encode(withImports).byteLength > MAX_TOTAL_CSS_BYTES) {
+        break;
+      }
       styleEl.textContent = absolutizeCssUrls(withImports, fetched.baseUrl);
       // Insert right after the <link> so cascade order (and thus specificity
       // ties) resolve exactly as the original sheet would.
-      owner.parentNode?.insertBefore(styleEl, owner.nextSibling);
+      if (!owner.parentNode || owner.getAttribute?.('data-voidr-css-inlined')) continue;
+      owner.parentNode.insertBefore(styleEl, owner.nextSibling);
       owner.setAttribute && owner.setAttribute('data-voidr-css-inlined', '1');
+      state.inlinedAssetNodes.push(styleEl);
+      state.inlinedStylesheetOwners.push(owner);
       inlined += 1;
     }
 
