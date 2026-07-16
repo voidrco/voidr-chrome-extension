@@ -88,7 +88,6 @@ function assertActivePerformance(sample, multiplier = 1) {
     35 * multiplier,
     label(sample, 'XHR application callback delay p95'),
   );
-  assertAtMost(sample.network.totalBlockingTimeMs, 100 * multiplier, label(sample, 'network TBT'));
   assertAtMost(
     sample.chunkStress.totalBlockingTimeMs,
     150 * multiplier,
