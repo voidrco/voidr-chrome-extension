@@ -1,6 +1,7 @@
 import { state } from '../state.js';
 import { isTasy, TASY_MASK_SELECTORS } from '../constants.js';
 import { generateSelector, getTextContent, throttle, truncate } from '../utils/helpers.js';
+import { getAccessibleLabel, resolveInteractiveTarget } from '../utils/interactive-element.js';
 
 const TASY_MASK_SELECTOR = TASY_MASK_SELECTORS.join(', ');
 
@@ -58,17 +59,27 @@ function pushInputEvent(event, plugin) {
 
 function pushClickEvent(event) {
   if (state.isPaused) return;
-  const target = event.composedPath?.()[0] || event.target;
-  if (shouldIgnore(target)) return;
+  const path = typeof event.composedPath === 'function' ? event.composedPath() : [];
+  const rawTarget = path[0] || event.target;
+  if (!rawTarget?.tagName) return;
+  const target = resolveInteractiveTarget(path) || rawTarget;
+  if (shouldIgnore(target) || shouldIgnore(rawTarget)) return;
+
+  const label = getAccessibleLabel(target) || getTextContent(target);
+  const href = typeof target.getAttribute === 'function' ? target.getAttribute('href') : null;
+  const role = typeof target.getAttribute === 'function' ? target.getAttribute('role') : null;
+
   state.events.push({
     type: 5,
     timestamp: Date.now(),
     data: {
       plugin: 'user.click',
       payload: {
-        selector: event.__voidrSelector || generateSelector(target),
+        selector: generateSelector(target),
         tag: target.tagName,
-        text: isTasyMasked(target) ? '***' : getTextContent(target),
+        text: isTasyMasked(target) ? '***' : truncate(label, 100),
+        ...(href ? { href } : {}),
+        ...(role ? { role } : {}),
         clickId: event.__voidrClickId || null,
         position: { x: event.clientX, y: event.clientY },
       },
@@ -82,7 +93,7 @@ export function initEventListeners() {
   installed = true;
   addListener(document, 'input', (event) => pushInputEvent(event, 'user.input'));
   addListener(document, 'change', (event) => pushInputEvent(event, 'user.change'));
-  addListener(document, 'click', pushClickEvent);
+  addListener(document, 'click', pushClickEvent, { capture: true });
   addListener(
     window,
     'scroll',
