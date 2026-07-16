@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Voidr performance fixture</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 0; }
+      nav { position: sticky; top: 0; background: white; padding: 8px; }
+      main { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; padding: 8px; }
+      section { contain: content; min-height: 120px; }
+      button, input { display: block; width: 100%; min-height: 24px; }
+      #churn { position: fixed; inset: auto 0 0; height: 1px; overflow: hidden; }
+    </style>
+  </head>
+  <body>
+    <nav><h1>Performance fixture</h1></nav>
+    <main id="app"></main>
+    <div id="churn"></div>
+    <script src="/fixture.js"></script>
+  </body>
+</html>
