@@ -50,16 +50,16 @@ The final three-iteration gate used the same machine and 4x CPU throttling. It c
 
 | Metric                                      |     Median or exact result |
 | ------------------------------------------- | -------------------------: |
-| Large-response capture duration             |                   164.8 ms |
+| Large-response capture duration             |                   190.4 ms |
 | Large-response capture TBT                  |                       0 ms |
-| Large-response capture maximum frame gap    |                    43.4 ms |
-| Remaining large-chunk flush duration        |                   224.3 ms |
+| Large-response capture maximum frame gap    |                    50.4 ms |
+| Remaining large-chunk flush duration        |                   263.9 ms |
 | Remaining large-chunk flush TBT             |                       0 ms |
-| Remaining large-chunk flush maximum gap     |                    18.1 ms |
-| Largest accepted uncompressed `events` body |                4,677,599 B |
-| Chunk requests                              |                         14 |
+| Remaining large-chunk flush maximum gap     |                    33.1 ms |
+| Largest accepted uncompressed `events` body |                4,678,154 B |
+| Chunk requests                              |                         13 |
 | Collector 413 responses                     |                          0 |
-| Final bundle                                | 319,785 B / 100,938 B gzip |
+| Final bundle                                | 322,073 B / 101,597 B gzip |
 
 The reactive compatibility path is independently tested against a collector that always returns 413. Delivery stops after eight responses instead of recursively expanding into an unbounded request tree.
 
@@ -84,7 +84,7 @@ npm run test:performance
 npm run performance -- --iterations 5 --output performance/results/manual.json
 ```
 
-`npm run test:performance` builds the bundle, runs three iterations in each mode, writes `performance/results/ci.json`, and fails on per-sample fidelity and lifecycle violations or median paired-delta regressions. Pull requests upload the JSON report even on failure, and both production and staging deployment pipelines publish only the exact bundle that passed this gate.
+`npm run test:performance` builds the bundle, runs three iterations in each mode, writes `performance/results/ci.json`, and fails on per-sample fidelity and lifecycle violations, a per-sample 2x safety ceiling, nominal median budgets, or median paired-delta regressions. Pull requests upload the JSON report even on failure, and both production and staging deployment pipelines publish only the exact bundle that passed this gate.
 
 For a local before/after comparison, retain the old bundle and run identical commands against both paths:
 

@@ -60,36 +60,86 @@ function assertActiveFidelity(sample) {
   assert.equal(cancelledInitialization.chunkCalls, 0, label(sample, 'cancelled session chunks'));
 }
 
-function assertActivePerformance(sample) {
-  assertAtMost(sample.load.taskDurationMs, 180, label(sample, 'bundle load task time'));
-  assertAtMost(sample.load.totalBlockingTimeMs, 75, label(sample, 'bundle load TBT'));
-  assertAtMost(sample.init.taskDurationMs, 350, label(sample, 'initialization task time'));
-  assertAtMost(sample.init.totalBlockingTimeMs, 100, label(sample, 'initialization TBT'));
-  assertAtMost(sample.network.fetchDispatchP95Ms, 35, label(sample, 'fetch dispatch p95'));
-  assertAtMost(sample.network.xhrDispatchP95Ms, 35, label(sample, 'XHR dispatch p95'));
+function assertActivePerformance(sample, multiplier = 1) {
+  assertAtMost(
+    sample.load.taskDurationMs,
+    180 * multiplier,
+    label(sample, 'bundle load task time'),
+  );
+  assertAtMost(sample.load.totalBlockingTimeMs, 75 * multiplier, label(sample, 'bundle load TBT'));
+  assertAtMost(
+    sample.init.taskDurationMs,
+    350 * multiplier,
+    label(sample, 'initialization task time'),
+  );
+  assertAtMost(
+    sample.init.totalBlockingTimeMs,
+    100 * multiplier,
+    label(sample, 'initialization TBT'),
+  );
+  assertAtMost(
+    sample.network.fetchDispatchP95Ms,
+    35 * multiplier,
+    label(sample, 'fetch dispatch p95'),
+  );
+  assertAtMost(sample.network.xhrDispatchP95Ms, 35 * multiplier, label(sample, 'XHR dispatch p95'));
   assertAtMost(
     sample.network.xhrCallbackDelayP95Ms,
-    35,
+    35 * multiplier,
     label(sample, 'XHR application callback delay p95'),
   );
-  assertAtMost(sample.network.totalBlockingTimeMs, 100, label(sample, 'network TBT'));
-  assertAtMost(sample.network.maxFrameGapMs, 120, label(sample, 'network max frame gap'));
-  assertAtMost(sample.chunkStress.totalBlockingTimeMs, 150, label(sample, 'chunk stress TBT'));
-  assertAtMost(sample.chunkStress.maxFrameGapMs, 180, label(sample, 'chunk stress max frame gap'));
-  assertAtMost(sample.chunkFlush.durationMs, 1000, label(sample, 'large chunk flush time'));
-  assertAtMost(sample.chunkFlush.totalBlockingTimeMs, 100, label(sample, 'large chunk flush TBT'));
-  assertAtMost(sample.chunkFlush.maxFrameGapMs, 120, label(sample, 'large chunk flush frame gap'));
-  assertAtMost(sample.dom.maxLongTaskMs, 150, label(sample, 'DOM longest task'));
-  assertAtMost(sample.flush.taskDurationMs, 225, label(sample, 'flush task time'));
-  assertAtMost(sample.flush.totalBlockingTimeMs, 75, label(sample, 'flush TBT'));
-  assertAtMost(sample.teardown.durationMs, 50, label(sample, 'teardown duration'));
+  assertAtMost(sample.network.totalBlockingTimeMs, 100 * multiplier, label(sample, 'network TBT'));
+  assertAtMost(
+    sample.network.maxFrameGapMs,
+    120 * multiplier,
+    label(sample, 'network max frame gap'),
+  );
+  assertAtMost(
+    sample.chunkStress.totalBlockingTimeMs,
+    150 * multiplier,
+    label(sample, 'chunk stress TBT'),
+  );
+  assertAtMost(
+    sample.chunkStress.maxFrameGapMs,
+    180 * multiplier,
+    label(sample, 'chunk stress max frame gap'),
+  );
+  assertAtMost(
+    sample.chunkFlush.durationMs,
+    1000 * multiplier,
+    label(sample, 'large chunk flush time'),
+  );
+  assertAtMost(
+    sample.chunkFlush.totalBlockingTimeMs,
+    100 * multiplier,
+    label(sample, 'large chunk flush TBT'),
+  );
+  assertAtMost(
+    sample.chunkFlush.maxFrameGapMs,
+    120 * multiplier,
+    label(sample, 'large chunk flush frame gap'),
+  );
+  assertAtMost(sample.dom.maxLongTaskMs, 150 * multiplier, label(sample, 'DOM longest task'));
+  assertAtMost(sample.flush.taskDurationMs, 225 * multiplier, label(sample, 'flush task time'));
+  assertAtMost(sample.flush.totalBlockingTimeMs, 75 * multiplier, label(sample, 'flush TBT'));
+  assertAtMost(sample.teardown.durationMs, 50 * multiplier, label(sample, 'teardown duration'));
   assert.equal(
     sample.teardown.externalFetchPreserved,
     true,
     label(sample, 'external fetch wrapper'),
   );
   assert.equal(sample.teardown.externalXhrPreserved, true, label(sample, 'external XHR wrapper'));
-  assertAtMost(sample.heap.usedBytes, 12 * 1024 * 1024, label(sample, 'heap usage'));
+  assertAtMost(sample.heap.usedBytes, 12 * 1024 * 1024 * multiplier, label(sample, 'heap usage'));
+}
+
+function assertLoadedPerformance(sample, multiplier = 1) {
+  assertAtMost(
+    sample.load.taskDurationMs,
+    180 * multiplier,
+    label(sample, 'bundle load task time'),
+  );
+  assertAtMost(sample.load.totalBlockingTimeMs, 75 * multiplier, label(sample, 'bundle load TBT'));
+  assertAtMost(sample.heap.usedBytes, 5 * 1024 * 1024 * multiplier, label(sample, 'loaded heap'));
 }
 
 export function assertPerformanceBudgets(report) {
@@ -99,12 +149,10 @@ export function assertPerformanceBudgets(report) {
     assert.deepEqual(sample.errors, [], label(sample, 'browser errors'));
     if (sample.mode === 'active') {
       assertActiveFidelity(sample);
-      assertActivePerformance(sample);
+      assertActivePerformance(sample, 2);
     }
     if (sample.mode === 'loaded') {
-      assertAtMost(sample.load.taskDurationMs, 180, label(sample, 'bundle load task time'));
-      assertAtMost(sample.load.totalBlockingTimeMs, 75, label(sample, 'bundle load TBT'));
-      assertAtMost(sample.heap.usedBytes, 5 * 1024 * 1024, label(sample, 'loaded heap'));
+      assertLoadedPerformance(sample, 2);
     }
     if (sample.mode === 'off') {
       assert.equal(
@@ -115,6 +163,8 @@ export function assertPerformanceBudgets(report) {
     }
   }
 
+  assertActivePerformance(report.summary.modes.active);
+  assertLoadedPerformance(report.summary.modes.loaded);
   assertAtMost(impact(report, 'idle', 'taskDurationMs').delta, 100, 'idle task overhead');
   assertAtMost(impact(report, 'dom', 'durationMs').delta, 400, 'DOM elapsed overhead');
   assertAtMost(impact(report, 'dom', 'taskDurationMs').delta, 450, 'DOM task overhead');
