@@ -24,6 +24,7 @@ const DEFAULTS = {
   baseUrl: 'https://api.voidr.co/v1',
   platformUrl: 'https://platform.voidr.co',
   collectorUrl: 'https://collector.voidr.co',
+  recorderUrl: 'https://cdn.voidr.co/voidr-collector/default/latest/recorder.min.js',
   auth0Domain: 'bounties4.us.auth0.com',
   auth0ClientId: 'c4eLr6uaq98KB2dCKNkmP9bz6sS3gJfS',
   auth0Audience: 'https://service.bounties4.com/',
@@ -33,6 +34,7 @@ const RESOLVED = {
   baseUrl: __ENV__.VOIDR_API_BASE_URL || DEFAULTS.baseUrl,
   platformUrl: __ENV__.VOIDR_PLATFORM_URL || DEFAULTS.platformUrl,
   collectorUrl: __ENV__.VOIDR_COLLECTOR_URL || DEFAULTS.collectorUrl,
+  recorderUrl: __ENV__.VOIDR_RECORDER_URL || DEFAULTS.recorderUrl,
   auth0Domain: __ENV__.VOIDR_AUTH0_DOMAIN || DEFAULTS.auth0Domain,
   auth0ClientId: __ENV__.VOIDR_AUTH0_CLIENT_ID || DEFAULTS.auth0ClientId,
   auth0Audience: __ENV__.VOIDR_AUTH0_AUDIENCE || DEFAULTS.auth0Audience,
@@ -42,6 +44,7 @@ const API_CONFIG = {
   baseUrl: RESOLVED.baseUrl,
   platformUrl: RESOLVED.platformUrl,
   collectorUrl: RESOLVED.collectorUrl,
+  recorderUrl: RESOLVED.recorderUrl,
   auth0: {
     domain: RESOLVED.auth0Domain,
     clientId: RESOLVED.auth0ClientId,
@@ -385,8 +388,8 @@ async function captureAndUploadCookies(sessionId, pageUrl) {
 }
 
 async function fetchCollectorCode() {
-  const cdnUrl =
-    'https://cdn.voidr.co/voidr-collector/default/latest/recorder.min.js?v=' + Date.now();
+  const base = API_CONFIG.recorderUrl;
+  const cdnUrl = base + (base.includes('?') ? '&' : '?') + 'v=' + Date.now();
   const res = await fetch(cdnUrl);
   if (!res.ok) throw new Error(`Failed to fetch collector: ${res.status}`);
   return res.text();
