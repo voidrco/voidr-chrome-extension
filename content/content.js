@@ -565,9 +565,13 @@ async function startVoidrSessionRecording(testCaseName, options = {}) {
     // In evidence mode the panel reflects the manual-run case being proven,
     // instead of the generic "recording session" copy.
     const evidenceCaseName = options.evidence?.caseName || effectiveName;
+    const multiTabSuffix =
+      options.trackedTabCount > 1
+        ? ` · ${options.recordingRoleName || 'Tela'} · ${options.trackedTabCount} telas`
+        : '';
     const recTitleHtml = options.mode === 'evidence'
-      ? `Gravando evidência — &quot;${escapeHtml(evidenceCaseName)}&quot;`
-      : `Gravando sessão &quot;${escapeHtml(effectiveName)}&quot;`;
+      ? `Gravando evidência — &quot;${escapeHtml(evidenceCaseName)}&quot;${escapeHtml(multiTabSuffix)}`
+      : `Gravando sessão &quot;${escapeHtml(effectiveName)}&quot;${escapeHtml(multiTabSuffix)}`;
 
     const panel = document.createElement('div');
     panel.className = 'voidr-rec-panel' + (options.mode === 'evidence' ? ' voidr-rec-panel--evidence' : '');
@@ -664,6 +668,7 @@ async function startVoidrSessionRecording(testCaseName, options = {}) {
       const activeRunId = options.onboardingRunId || undefined;
       let sessionId = null;
       let allSessionIds = [];
+      let captureConfirmed = false;
 
       try {
         const result = await Promise.race([
@@ -676,44 +681,47 @@ async function startVoidrSessionRecording(testCaseName, options = {}) {
             );
           }),
           new Promise((resolve) =>
-            setTimeout(() => resolve({ success: false, timeout: true }), 5000),
+            setTimeout(() => resolve({ success: false, timeout: true }), 20000),
           ),
         ]);
         sessionId = result.sessionId || null;
         allSessionIds = result.sessionIds || (sessionId ? [sessionId] : []);
+        captureConfirmed = result.confirmed === true;
       } catch (_) {}
 
       // Só afirmamos "capturada" se o servidor confirmar que a sessão persistiu.
       // Sem isto o banner verde aparecia sempre (até quando o stop dava timeout
       // sem sessionId), gerando falso positivo.
-      let validated = false;
+      let validated = captureConfirmed;
       if (allSessionIds.length > 0) {
         if (stopBtn) stopBtn.innerHTML = `${spinnerSvg} Validando sessão...`;
 
-        // Validate the latest session (most recent, needs time to reach the collector)
-        const latestSid = sessionId || allSessionIds[allSessionIds.length - 1];
-        for (let attempt = 0; attempt < 5; attempt++) {
-          try {
-            const res = await new Promise((resolve) => {
-              chrome.runtime.sendMessage(
-                { action: 'voidr:validateSession', sessionId: latestSid },
-                (r) => {
-                  resolve(r || { found: false });
-                },
-              );
-            });
-            if (res.found) {
-              validated = true;
-              break;
+        // A captura multiaba só está pronta quando todas as streams chegaram.
+        // O vínculo por código já confirma capturas cross-org; nos demais fluxos
+        // consultamos individualmente cada sessão no collector.
+        if (!validated) {
+          const pending = new Set(allSessionIds);
+          for (let attempt = 0; attempt < 5 && pending.size > 0; attempt++) {
+            for (const sid of [...pending]) {
+              try {
+                const res = await new Promise((resolve) => {
+                  chrome.runtime.sendMessage(
+                    { action: 'voidr:validateSession', sessionId: sid },
+                    (r) => resolve(r || { found: false }),
+                  );
+                });
+                if (res.found) pending.delete(sid);
+              } catch (_) {}
             }
-          } catch (_) {}
-          await new Promise((r) => setTimeout(r, 2000));
+            if (pending.size > 0) await new Promise((r) => setTimeout(r, 2000));
+          }
+          validated = pending.size === 0;
         }
 
         for (const sid of allSessionIds) {
           broadcastSessionToOnboarding(sid, activeRunId, options.evidence);
         }
-        lastCapturedSessionId = latestSid;
+        lastCapturedSessionId = sessionId || allSessionIds[allSessionIds.length - 1];
       }
 
       border.remove();
@@ -864,6 +872,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         onboardingRunId: request.onboardingRunId,
         flows: request.flows || [],
         evidence: request.evidence,
+        recordingRoleName: request.recordingRoleName,
+        trackedTabCount: request.trackedTabCount,
         skipCountdown: true,
       });
       break;

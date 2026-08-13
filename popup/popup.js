@@ -644,6 +644,9 @@ function showOnboardingRecordingView(context) {
   const flows = Array.isArray(context.criticalFlows || context.flows)
     ? context.criticalFlows || context.flows
     : [];
+  const recordingTargets = Array.isArray(context.recordingTargets)
+    ? context.recordingTargets
+    : [];
 
   contentDiv.innerHTML = `
     <div class="rec-view">
@@ -652,7 +655,7 @@ function showOnboardingRecordingView(context) {
           <span class="rec-dot"></span>
         </div>
         <h2 class="rec-title">Onboarding Recording</h2>
-        <p class="rec-desc">Execute os fluxos abaixo e inicie a gravação.</p>
+        <p class="rec-desc">${recordingTargets.length > 1 ? `Vamos gravar ${recordingTargets.length} telas na mesma sessão. Alterne entre elas para demonstrar o fluxo.` : 'Execute os fluxos abaixo e inicie a gravação.'}</p>
       </div>
 
       <div class="rec-card">
@@ -684,6 +687,28 @@ function showOnboardingRecordingView(context) {
                 <div class="rec-flow-item">
                   <span class="rec-flow-num">${i + 1}</span>
                   <span class="rec-flow-name">${escapeHtml(f.name || f.id || 'Flow ' + (i + 1))}</span>
+                </div>
+              `,
+                )
+                .join('')}
+            </div>
+          </div>
+        `
+            : ''
+        }
+
+        ${
+          recordingTargets.length > 1
+            ? `
+          <div class="rec-field">
+            <span class="rec-field-label">Telas da sessão</span>
+            <div class="rec-flows">
+              ${recordingTargets
+                .map(
+                  (target, i) => `
+                <div class="rec-flow-item">
+                  <span class="rec-flow-num">${i + 1}</span>
+                  <span class="rec-flow-name">${escapeHtml(target.name)}</span>
                 </div>
               `,
                 )
@@ -731,6 +756,48 @@ async function handleStartOnboardingRecording() {
         );
       });
     } catch (_) {}
+  }
+
+  const recordingTargets = Array.isArray(onboardingRecordingContext.recordingTargets)
+    ? onboardingRecordingContext.recordingTargets
+    : [];
+  if (recordingTargets.length > 1) {
+    chrome.runtime.sendMessage(
+      {
+        action: 'voidr:startMultiTabRecording',
+        recordingTargets,
+        captureBundleId: onboardingRecordingContext.captureBundleId || onboardingRecordingContext.code,
+        testCaseName: onboardingRecordingContext.sessionName || 'Fluxo entre telas',
+        mode: 'onboarding',
+        onboardingRunId: onboardingRecordingContext.onboardingRunId,
+        code: onboardingRecordingContext.code,
+        flows: onboardingRecordingContext.criticalFlows || onboardingRecordingContext.flows || [],
+        initOptions: {
+          user: { id: 'voidr-test-case-assistant' },
+          apiKey: onboardingRecordingContext.apiKey,
+          system: true,
+          samplingRate: 1,
+          captureEnvironmentBundle: true,
+          meta: {
+            testCase: onboardingRecordingContext.sessionName || 'Fluxo entre telas',
+            mode: 'onboarding',
+            code: onboardingRecordingContext.code,
+          },
+        },
+      },
+      (response) => {
+        if (!response?.success) {
+          showNotification(response?.error || 'Não foi possível iniciar as telas.', 'error', 5000);
+          if (btn) {
+            btn.textContent = 'Iniciar gravação';
+            btn.disabled = false;
+          }
+          return;
+        }
+        window.close();
+      },
+    );
+    return;
   }
 
   let targetHost = null;
