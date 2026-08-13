@@ -22,10 +22,31 @@
         </div>
       </div>
 
+      <section id="debug-service-settings" class="debug-service-settings" hidden>
+        <div class="debug-service-heading">
+          <span class="debug-service-badge">DEBUG</span>
+          <span>Service URL</span>
+        </div>
+        <div class="debug-service-controls">
+          <input
+            id="debug-service-url"
+            class="debug-service-input"
+            type="url"
+            spellcheck="false"
+            placeholder="https://branch.api-preview.voidr.co/v1"
+          />
+          <button id="debug-service-save" class="btn-primary btn-sm">Salvar</button>
+        </div>
+        <div class="debug-service-meta">
+          <span id="debug-service-status" class="debug-service-status"></span>
+          <button id="debug-service-reset" class="debug-service-reset">Usar produção</button>
+        </div>
+      </section>
+
       <div class="extension-content" id="main-extension-content"></div>
 
       <div class="extension-footer">
-        <div class="version">v1.0.0</div>
+        <div id="extension-version" class="version">v1.0.0</div>
       </div>
     </div>
 

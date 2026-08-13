@@ -1,10 +1,41 @@
 let currentView = 'main';
 let onboardingRecordingContext = null;
 let testCaseRecordingContext = null;
+let runtimeConfigPromise = null;
 
-function getApiBaseUrl() {
-  const env = (typeof globalThis !== 'undefined' && globalThis.__VOIDR_ENV__) || {};
-  return env.VOIDR_API_BASE_URL || 'https://voidr-service-785568282479.us-central1.run.app/v1';
+function sendRuntimeMessage(message) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timeout = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new Error('A extensão não respondeu. Tente reabri-la.'));
+    }, 5000);
+
+    chrome.runtime.sendMessage(message, (response) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+      resolve(response);
+    });
+  });
+}
+
+function getRuntimeConfig(force = false) {
+  if (!runtimeConfigPromise || force) {
+    runtimeConfigPromise = sendRuntimeMessage({ action: 'getRuntimeConfig' });
+  }
+  return runtimeConfigPromise;
+}
+
+async function getApiBaseUrl() {
+  const config = await getRuntimeConfig();
+  if (!config?.serviceUrl) throw new Error('Service URL unavailable');
+  return config.serviceUrl;
 }
 
 async function apiGet(endpoint) {
@@ -12,7 +43,7 @@ async function apiGet(endpoint) {
   if (!auth.isAuthenticated || !auth.token) {
     throw new Error('Not authenticated');
   }
-  const url = `${getApiBaseUrl()}${endpoint}`;
+  const url = `${await getApiBaseUrl()}${endpoint}`;
   const res = await fetch(url, {
     method: 'GET',
     headers: {
@@ -58,8 +89,76 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
+  await initializeDebugServiceSettings();
   await initializeExtension();
 });
+
+async function initializeDebugServiceSettings() {
+  const panel = document.getElementById('debug-service-settings');
+  const version = document.getElementById('extension-version');
+
+  try {
+    const config = await getRuntimeConfig();
+    const manifest = chrome.runtime.getManifest();
+    if (version)
+      version.textContent = `v${manifest.version}${config.isDebugBuild ? ' · DEBUG' : ''}`;
+    if (!config.isDebugBuild || !panel) return;
+
+    panel.hidden = false;
+    const input = document.getElementById('debug-service-url');
+    const saveButton = document.getElementById('debug-service-save');
+    const resetButton = document.getElementById('debug-service-reset');
+    const status = document.getElementById('debug-service-status');
+    let saveInFlight = false;
+    if (input) input.value = config.serviceUrl;
+
+    const save = async (serviceUrl) => {
+      if (saveInFlight || !saveButton || !resetButton || !status) return;
+      saveInFlight = true;
+      saveButton.disabled = true;
+      resetButton.disabled = true;
+      status.className = 'debug-service-status';
+      status.textContent = 'Salvando…';
+
+      try {
+        const result = await sendRuntimeMessage({ action: 'saveDebugServiceUrl', serviceUrl });
+        if (!result?.success) throw new Error(result?.error || 'Não foi possível salvar a URL.');
+        runtimeConfigPromise = Promise.resolve(result.config);
+        if (input) input.value = result.config.serviceUrl;
+        status.classList.add('debug-service-status--success');
+        if (!result.authenticationReset) {
+          status.textContent = result.authWindowOpened
+            ? 'URL mantida. Autenticação aberta.'
+            : 'URL mantida.';
+        } else {
+          const environmentText = result.config.isCustomServiceUrl
+            ? 'Preview ativo.'
+            : 'Produção restaurada.';
+          status.textContent = result.authWindowOpened
+            ? `${environmentText} Autenticação aberta.`
+            : `${environmentText} ${result.authWindowError || 'Abra a autenticação novamente.'}`;
+          await initializeExtension();
+        }
+      } catch (error) {
+        status.classList.add('debug-service-status--error');
+        status.textContent = error?.message || 'Não foi possível salvar a URL.';
+      } finally {
+        saveInFlight = false;
+        saveButton.disabled = false;
+        resetButton.disabled = false;
+      }
+    };
+
+    saveButton?.addEventListener('click', () => save(input?.value || ''));
+    resetButton?.addEventListener('click', () => save(''));
+    input?.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') save(input.value);
+    });
+  } catch (error) {
+    console.error('[Voidr Popup] Runtime config error:', error);
+    if (version) version.textContent = `v${chrome.runtime.getManifest().version}`;
+  }
+}
 
 async function initializeExtension() {
   const contentDiv = document.getElementById('main-extension-content');

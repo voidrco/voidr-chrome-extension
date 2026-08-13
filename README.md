@@ -173,6 +173,9 @@ The repository includes scripts to generate a Chrome Web Store‑ready ZIP in `d
 # Build without minification
 npm run extension:build
 
+# Build de debug com Service URL configurável no popup
+npm run extension:build:debug
+
 # Optional: minify JS/CSS then build
 npm run extension:build:minified
 
@@ -181,6 +184,15 @@ npm run extension:clean
 ```
 
 See `build.md` for a full production guide (icons, versioning, checklist).
+
+The debug artifact is generated at `dist/voidr-extension-debug.zip` with the
+name `Voidr Testing Assistant [DEBUG]`. It accepts HTTPS service roots (or
+HTTP on localhost), normalizes them to `/v1`, and never includes local env
+override files. The production artifact does not expose or honor this field.
+For `*.api-preview.voidr.co`, authentication is automatically scoped to the
+matching `*.app-preview.voidr.co` origin and recordings are sent to
+`https://collector-staging.voidr.co`. Saving a new Service URL opens the
+matching frontend authentication window automatically.
 
 ---
 

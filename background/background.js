@@ -8,8 +8,7 @@ try {
     importScripts('../config/env.js');
   } catch (__) {}
 }
-// Overrides locais de desenvolvimento (config/env.local.js, gitignored) —
-// ausente em builds de produção, então o catch silencioso é o caminho normal.
+// Ausente em builds de produção, então o catch silencioso é esperado.
 try {
   importScripts('config/env.local.js');
 } catch (_) {
@@ -50,6 +49,106 @@ const API_CONFIG = {
   },
 };
 
+const DEBUG_SERVICE_URL_STORAGE_KEY = 'voidrDebugServiceUrl';
+const AUTH_PLATFORM_STORAGE_KEY = 'voidrAuthPlatformUrl';
+const IS_DEBUG_BUILD = chrome.runtime.getManifest().name.endsWith('[DEBUG]');
+const PACKAGED_SERVICE_URL = API_CONFIG.baseUrl;
+const PACKAGED_PLATFORM_URL = API_CONFIG.platformUrl;
+const PACKAGED_COLLECTOR_URL = API_CONFIG.collectorUrl;
+
+function normalizeDebugServiceUrl(rawUrl) {
+  const value = String(rawUrl || '').trim();
+  if (!value) return PACKAGED_SERVICE_URL;
+
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch (_) {
+    throw new Error('Informe uma URL válida.');
+  }
+
+  const localHosts = new Set(['localhost', '127.0.0.1', '[::1]']);
+  const allowsHttp = localHosts.has(parsed.hostname);
+  if (parsed.protocol !== 'https:' && !(allowsHttp && parsed.protocol === 'http:')) {
+    throw new Error('Use HTTPS. HTTP é permitido apenas para localhost.');
+  }
+  if (parsed.username || parsed.password || parsed.search || parsed.hash) {
+    throw new Error('A URL não pode conter credenciais, parâmetros ou fragmentos.');
+  }
+
+  const path = parsed.pathname.replace(/\/+$/, '');
+  if (path && path !== '/v1') {
+    throw new Error('Use a raiz do service ou uma URL terminada em /v1.');
+  }
+
+  return `${parsed.origin}/v1`;
+}
+
+function resolvePlatformUrl(serviceUrl) {
+  const hostname = new URL(serviceUrl).hostname;
+  const previewSuffix = '.api-preview.voidr.co';
+  if (hostname.endsWith(previewSuffix)) {
+    const previewSlug = hostname.slice(0, -previewSuffix.length);
+    if (previewSlug) return `https://${previewSlug}.app-preview.voidr.co`;
+  }
+  if (hostname === 'api-staging.voidr.co') return 'https://staging.voidr.co';
+  return PACKAGED_PLATFORM_URL;
+}
+
+function resolveCollectorUrl(serviceUrl) {
+  const hostname = new URL(serviceUrl).hostname;
+  if (hostname.endsWith('.api-preview.voidr.co') || hostname === 'api-staging.voidr.co') {
+    return 'https://collector-staging.voidr.co';
+  }
+  return PACKAGED_COLLECTOR_URL;
+}
+
+function isConfiguredPlatformSender(sender) {
+  if (!sender?.tab?.url) return true;
+  try {
+    return new URL(sender.tab.url).origin === new URL(API_CONFIG.platformUrl).origin;
+  } catch (_) {
+    return false;
+  }
+}
+
+function getRuntimeConfigSnapshot() {
+  return {
+    isDebugBuild: IS_DEBUG_BUILD,
+    serviceUrl: API_CONFIG.baseUrl,
+    platformUrl: API_CONFIG.platformUrl,
+    collectorUrl: API_CONFIG.collectorUrl,
+    defaultServiceUrl: PACKAGED_SERVICE_URL,
+    isCustomServiceUrl: API_CONFIG.baseUrl !== PACKAGED_SERVICE_URL,
+  };
+}
+
+async function hydrateRuntimeConfig() {
+  if (!IS_DEBUG_BUILD) return;
+  try {
+    const stored = await chrome.storage.local.get([
+      DEBUG_SERVICE_URL_STORAGE_KEY,
+      AUTH_PLATFORM_STORAGE_KEY,
+    ]);
+    API_CONFIG.baseUrl = normalizeDebugServiceUrl(stored[DEBUG_SERVICE_URL_STORAGE_KEY]);
+    API_CONFIG.platformUrl = resolvePlatformUrl(API_CONFIG.baseUrl);
+    API_CONFIG.collectorUrl = resolveCollectorUrl(API_CONFIG.baseUrl);
+    if (
+      API_CONFIG.baseUrl !== PACKAGED_SERVICE_URL &&
+      stored[AUTH_PLATFORM_STORAGE_KEY] !== API_CONFIG.platformUrl
+    ) {
+      await chrome.storage.local.remove(['voidrAuth', AUTH_PLATFORM_STORAGE_KEY]);
+    }
+  } catch (_) {
+    await chrome.storage.local.remove([DEBUG_SERVICE_URL_STORAGE_KEY]).catch(() => {});
+    API_CONFIG.baseUrl = PACKAGED_SERVICE_URL;
+    API_CONFIG.platformUrl = PACKAGED_PLATFORM_URL;
+    API_CONFIG.collectorUrl = PACKAGED_COLLECTOR_URL;
+  }
+}
+
+const runtimeConfigReady = hydrateRuntimeConfig();
+
 // Estado global da autenticação
 let globalAuthState = {
   isAuthenticated: false,
@@ -59,6 +158,7 @@ let globalAuthState = {
 
 // Track last popup window id to refocus instead of creating a new one
 let lastPopupWindowId = null;
+let lastAuthWindowId = null;
 // Track last active content tab id to forward messages (not the popup window)
 let lastActiveContentTabId = null;
 
@@ -277,6 +377,33 @@ async function openAssistantWindowAt(position) {
       resolve(createdWin?.id || null);
     });
   });
+}
+
+async function openAuthConnectWindow() {
+  if (lastAuthWindowId) {
+    try {
+      await chrome.windows.remove(lastAuthWindowId);
+    } catch (_) {}
+  }
+
+  const authWindow = await chrome.windows.create({
+    url: `${API_CONFIG.platformUrl}/auth/extension-connect`,
+    type: 'popup',
+    width: 500,
+    height: 600,
+    focused: true,
+  });
+  lastAuthWindowId = authWindow?.id || null;
+  return lastAuthWindowId;
+}
+
+async function closeAuthConnectWindow() {
+  if (!lastAuthWindowId) return;
+  const windowId = lastAuthWindowId;
+  lastAuthWindowId = null;
+  try {
+    await chrome.windows.remove(windowId);
+  } catch (_) {}
 }
 
 function isHttpUrl(u) {
@@ -687,8 +814,9 @@ chrome.runtime.onStartup.addListener(() => {
 });
 
 // Listener para instalação da extensão
-chrome.runtime.onInstalled.addListener((details) => {
+chrome.runtime.onInstalled.addListener(async (details) => {
   console.log('Voidr Testing Assistant instalado:', details.reason);
+  await runtimeConfigReady;
 
   // Configurações iniciais
   chrome.storage.sync.set({
@@ -730,6 +858,7 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 // Verifica status de autenticação
 async function checkAuthenticationStatus() {
   try {
+    await runtimeConfigReady;
     const result = await chrome.storage.local.get(['voidrAuth']);
     const authData = result.voidrAuth;
 
@@ -828,6 +957,77 @@ async function tabBlocksCollectorConnects(tabId, collectorUrl) {
 // Listener para mensagens dos content scripts
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   switch (request.action) {
+    case 'getRuntimeConfig':
+      (async () => {
+        await runtimeConfigReady;
+        sendResponse(getRuntimeConfigSnapshot());
+      })();
+      return true;
+
+    case 'saveDebugServiceUrl':
+      (async () => {
+        try {
+          await runtimeConfigReady;
+          if (!IS_DEBUG_BUILD) {
+            sendResponse({
+              success: false,
+              error: 'Configuração disponível apenas no build debug.',
+            });
+            return;
+          }
+
+          const nextServiceUrl = normalizeDebugServiceUrl(request.serviceUrl);
+          const nextPlatformUrl = resolvePlatformUrl(nextServiceUrl);
+          const nextCollectorUrl = resolveCollectorUrl(nextServiceUrl);
+          const serviceUrlChanged = nextServiceUrl !== API_CONFIG.baseUrl;
+          if (serviceUrlChanged && (await hydrateActiveRecording())) {
+            sendResponse({
+              success: false,
+              error: 'Finalize ou descarte a gravação antes de trocar o service.',
+            });
+            return;
+          }
+
+          if (nextServiceUrl === PACKAGED_SERVICE_URL) {
+            await chrome.storage.local.remove([DEBUG_SERVICE_URL_STORAGE_KEY]);
+          } else {
+            await chrome.storage.local.set({ [DEBUG_SERVICE_URL_STORAGE_KEY]: nextServiceUrl });
+          }
+
+          if (serviceUrlChanged) {
+            API_CONFIG.baseUrl = nextServiceUrl;
+            API_CONFIG.platformUrl = nextPlatformUrl;
+            API_CONFIG.collectorUrl = nextCollectorUrl;
+            globalAuthState = { isAuthenticated: false, user: null, token: null };
+            await chrome.storage.local.remove(['voidrAuth', AUTH_PLATFORM_STORAGE_KEY]);
+          }
+
+          let authWindowOpened = false;
+          let authWindowError = null;
+          if (serviceUrlChanged || !globalAuthState.isAuthenticated) {
+            try {
+              authWindowOpened = Boolean(await openAuthConnectWindow());
+            } catch (error) {
+              authWindowError = error?.message || 'Não foi possível abrir o frontend.';
+            }
+          }
+
+          sendResponse({
+            success: true,
+            authenticationReset: serviceUrlChanged,
+            authWindowOpened,
+            authWindowError,
+            config: getRuntimeConfigSnapshot(),
+          });
+        } catch (error) {
+          sendResponse({
+            success: false,
+            error: error?.message || 'Não foi possível salvar a URL.',
+          });
+        }
+      })();
+      return true;
+
     case 'voidr:injectCollectorAndInit':
       (async () => {
         try {
@@ -1004,6 +1204,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     case 'validateAndStoreToken':
       (async () => {
         try {
+          await runtimeConfigReady;
+          if (!isConfiguredPlatformSender(sender)) {
+            sendResponse({ isAuthenticated: false, ignored: true });
+            return;
+          }
           globalAuthState = {
             isAuthenticated: true,
             user: null,
@@ -1016,6 +1221,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
               expiresAt: Date.now() + 24 * 60 * 60 * 1000,
               isAuthenticated: true,
             },
+            [AUTH_PLATFORM_STORAGE_KEY]: API_CONFIG.platformUrl,
           });
 
           try {
@@ -1030,6 +1236,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                   isAuthenticated: true,
                 },
               });
+              await closeAuthConnectWindow();
             }
           } catch (_) {}
 
@@ -1056,11 +1263,15 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       return true;
 
     case 'getAuthConnectUrl':
-      sendResponse({ url: `${API_CONFIG.platformUrl}/auth/extension-connect` });
-      break;
+      (async () => {
+        await runtimeConfigReady;
+        sendResponse({ url: `${API_CONFIG.platformUrl}/auth/extension-connect` });
+      })();
+      return true;
 
     case 'voidr:getOnboardingByCode':
       (async () => {
+        await runtimeConfigReady;
         const code = (request.code || '').trim().toUpperCase();
         if (!code) {
           sendResponse({ context: null, error: 'No code provided' });
@@ -1137,15 +1348,18 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       const autoCode = (request.code || '').trim().toUpperCase();
       if (!autoCode || !globalAuthState?.token) break;
 
-      fetch(
-        `${API_CONFIG.baseUrl}/onboarding/recording-sessions/code/${encodeURIComponent(autoCode)}`,
-        {
-          headers: {
-            Authorization: `Bearer ${globalAuthState.token}`,
-            'Content-Type': 'application/json',
+      (async () => {
+        await runtimeConfigReady;
+        return fetch(
+          `${API_CONFIG.baseUrl}/onboarding/recording-sessions/code/${encodeURIComponent(autoCode)}`,
+          {
+            headers: {
+              Authorization: `Bearer ${globalAuthState.token}`,
+              'Content-Type': 'application/json',
+            },
           },
-        },
-      )
+        );
+      })()
         .then((r) => (r.ok ? r.json() : null))
         .then((json) => {
           if (json?.data) {
@@ -1205,6 +1419,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
     case 'voidr:validateSession':
       (async () => {
+        await runtimeConfigReady;
         if (!globalAuthState.token) await checkAuthenticationStatus();
         if (!globalAuthState.token || !request.sessionId) {
           sendResponse({ found: false });
@@ -1515,6 +1730,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             priorRecording?.code || priorRecording?.initOptions?.meta?.code || null;
           let captureConfirmed = false;
           if (onboardingCode && globalAuthState.token) {
+            await runtimeConfigReady;
             for (const sid of allSessionIds) {
               try {
                 const res = await fetch(
@@ -1709,6 +1925,7 @@ chrome.tabs.onActivated.addListener((activeInfo) => {
 // Faz requisições autenticadas para a API
 async function makeAuthenticatedRequest(endpoint, method = 'GET', data = null) {
   try {
+    await runtimeConfigReady;
     console.log('[API] →', method, endpoint, data ? JSON.stringify(data).slice(0, 500) : '');
     const options = {
       method: method,
@@ -1948,9 +2165,11 @@ async function syncAuthWithPlatform(tabId) {
             expiresAt: Date.now() + 24 * 60 * 60 * 1000,
             isAuthenticated: true,
           },
+          [AUTH_PLATFORM_STORAGE_KEY]: API_CONFIG.platformUrl,
         });
 
         console.log('Authentication synced with platform for:', isValid.user?.email);
+        await closeAuthConnectWindow();
 
         // Notifica todas as abas e popups sobre a autenticação
         chrome.runtime
@@ -1986,6 +2205,7 @@ async function syncAuthWithPlatform(tabId) {
 // Valida token no background (sem depender da página de auth)
 async function validateTokenInBackground(token) {
   try {
+    await runtimeConfigReady;
     const response = await fetch(`${API_CONFIG.baseUrl}/auth/me`, {
       method: 'GET',
       headers: {
