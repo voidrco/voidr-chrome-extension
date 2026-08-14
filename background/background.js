@@ -94,6 +94,23 @@ function createRecordingSessionId() {
   return `voidr-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+function buildLastCapture(recording, sessionId, confirmed) {
+  const initOptions = recording?.initOptions || {};
+  const meta = initOptions.meta || {};
+
+  return {
+    sessionId,
+    capturedAt: Date.now(),
+    confirmed: Boolean(confirmed),
+    code: recording?.code || meta.code || undefined,
+    scenarioName: recording?.testCaseName || meta.testCase || undefined,
+    applicationId: initOptions.applicationId || meta.applicationId || meta.slug || undefined,
+    appName: recording?.applicationName || meta.applicationName || undefined,
+    captureBundleId: meta.captureBundleId || undefined,
+    mode: recording?.mode || meta.mode || undefined,
+  };
+}
+
 function normalizeActiveRecording(recording) {
   if (!recording || typeof recording !== 'object') return null;
 
@@ -142,9 +159,7 @@ function normalizeActiveRecording(recording) {
   });
 
   const tabTargets =
-    recording.tabTargets && typeof recording.tabTargets === 'object'
-      ? recording.tabTargets
-      : {};
+    recording.tabTargets && typeof recording.tabTargets === 'object' ? recording.tabTargets : {};
 
   const currentTabId = trackedTabIds.includes(recording.currentTabId)
     ? recording.currentTabId
@@ -167,6 +182,8 @@ function normalizeActiveRecording(recording) {
     onboardingRunId:
       recording.onboardingRunId || recording.initOptions?.meta?.onboardingRunId || null,
     code: recording.code || recording.initOptions?.meta?.code || null,
+    applicationName:
+      recording.applicationName || recording.initOptions?.meta?.applicationName || null,
     evidence: recording.evidence || recording.initOptions?.meta?.evidence || null,
     flows: recording.flows || recording.initOptions?.meta?.flows || [],
     sessionIds,
@@ -569,7 +586,12 @@ async function teardownExistingCollectorInTab(tabId) {
         // so wipe it on EVERY path — even when no instance is present (e.g.
         // async embeds that haven't loaded yet, or endSession-less versions).
         const wipe = () => {
-          for (const k of ['voidr_jwt', 'voidr_session_id', 'voidr_user_id', 'voidr_last_activity']) {
+          for (const k of [
+            'voidr_jwt',
+            'voidr_session_id',
+            'voidr_user_id',
+            'voidr_last_activity',
+          ]) {
             try {
               sessionStorage.removeItem(k);
             } catch (_) {}
@@ -637,7 +659,9 @@ async function armCollectorTakeoverWatchdog(tabId) {
             if (typeof current.endSession === 'function') current.endSession();
           } catch (_) {}
           window.VoidrCollector = window.__voidrExtCollector;
-          console.warn('[Voidr] native collector re-appeared after injection — torn down, handle restored');
+          console.warn(
+            '[Voidr] native collector re-appeared after injection — torn down, handle restored',
+          );
         };
         setTimeout(check, 4000);
         setTimeout(check, 12000);
@@ -656,6 +680,7 @@ async function sendResumeRecordingUi(tabId, recording) {
     evidence: recording.evidence || null,
     flows: recording.flows,
     applicationId: tabTarget?.applicationId || recording.initOptions?.applicationId || null,
+    applicationName: recording.applicationName || null,
     recordingRoleName: tabTarget?.name || null,
     trackedTabCount: recording.trackedTabIds?.length || 1,
   };
@@ -687,8 +712,7 @@ async function resumeActiveRecordingInTab(tabId) {
   await teardownExistingCollectorInTab(tabId);
   await injectCollectorInTab(tabId, collectorCode);
   const tabTarget = recording.tabTargets?.[String(tabId)] || null;
-  const tabSessionId =
-    recording.tabSessionIds?.[String(tabId)] || recording.canonicalSessionId;
+  const tabSessionId = recording.tabSessionIds?.[String(tabId)] || recording.canonicalSessionId;
   await initializeCollectorInTab(tabId, {
     ...recording.initOptions,
     forcedSessionId: tabSessionId,
@@ -877,10 +901,7 @@ async function resolveRecordingTargetTab(target, claimedTabIds = new Set()) {
   if (origin) {
     const matches = await chrome.tabs.query({ url: `${origin}/*` });
     const eligible = matches.find(
-      (tab) =>
-        tab.url &&
-        !claimedTabIds.has(tab.id) &&
-        !tab.url.startsWith(API_CONFIG.platformUrl),
+      (tab) => tab.url && !claimedTabIds.has(tab.id) && !tab.url.startsWith(API_CONFIG.platformUrl),
     );
     if (eligible?.id) return eligible.id;
   }
@@ -963,9 +984,46 @@ async function startMultiTabRecording(request) {
   return { sessionIds, tabIds: resolvedTargets.map(({ tabId }) => tabId) };
 }
 
+async function addRecordingTarget(request) {
+  const recording = await hydrateActiveRecording();
+  const target = request?.target;
+  if (!recording) throw new Error('Nenhuma gravação ativa');
+  if (!target?.targetUrl || !target?.applicationId) {
+    throw new Error('A aplicação adicional não tem URL configurada');
+  }
+
+  const claimedTabIds = new Set(recording.trackedTabIds || []);
+  const tabId = await resolveRecordingTargetTab(
+    { ...target, targetUrl: request.recordingUrl || target.targetUrl },
+    claimedTabIds,
+  );
+  await attachTrackedRecordingTab(tabId, { makeCurrent: true, target });
+  if (request.captureBundleId && activeRecording) {
+    activeRecording.initOptions = {
+      ...(activeRecording.initOptions || {}),
+      meta: {
+        ...(activeRecording.initOptions?.meta || {}),
+        captureBundleId: request.captureBundleId,
+        multiTab: true,
+      },
+    };
+    await persistActiveRecording();
+  }
+  await resumeActiveRecordingInTab(tabId);
+  await chrome.tabs.update(tabId, { active: true });
+  return { tabId };
+}
+
 // Listener para mensagens dos content scripts
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   switch (request.action) {
+    case 'voidr:addRecordingTarget':
+      addRecordingTarget(request)
+        .then((result) => sendResponse({ success: true, ...result }))
+        .catch((error) =>
+          sendResponse({ success: false, error: error?.message || 'Falha ao adicionar aplicação' }),
+        );
+      return true;
     case 'voidr:startMultiTabRecording':
       startMultiTabRecording(request)
         .then((result) => sendResponse({ success: true, ...result }))
@@ -1038,20 +1096,22 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           const sessionId = (await readCollectorSessionId(targetTabId)) || canonicalSessionId;
 
           try {
-            chrome.runtime.sendMessage({
-              action: 'voidr:sessionStarted',
-              sessionId,
-              testCaseName:
-                (request.initOptions &&
-                  request.initOptions.meta &&
-                  request.initOptions.meta.testCase) ||
-                null,
-              mode:
-                (request.initOptions &&
-                  request.initOptions.meta &&
-                  request.initOptions.meta.mode) ||
-                'test-case',
-            });
+            chrome.runtime
+              .sendMessage({
+                action: 'voidr:sessionStarted',
+                sessionId,
+                testCaseName:
+                  (request.initOptions &&
+                    request.initOptions.meta &&
+                    request.initOptions.meta.testCase) ||
+                  null,
+                mode:
+                  (request.initOptions &&
+                    request.initOptions.meta &&
+                    request.initOptions.meta.mode) ||
+                  'test-case',
+              })
+              .catch(() => {});
           } catch (_) {}
 
           await setActiveRecording({
@@ -1064,6 +1124,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             mode: request.initOptions?.meta?.mode || 'test-case',
             onboardingRunId: request.initOptions?.meta?.onboardingRunId,
             code: request.initOptions?.meta?.code || null,
+            applicationName: request.initOptions?.meta?.applicationName || null,
             evidence: request.initOptions?.meta?.evidence || null,
             flows: request.initOptions?.meta?.flows || [],
             sessionIds: [sessionId],
@@ -1433,7 +1494,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 } catch (_) {}
                 // Wipe our session's keys so a native collector on the next
                 // navigation can't adopt (and pollute) the recorded session.
-                for (const k of ['voidr_jwt', 'voidr_session_id', 'voidr_user_id', 'voidr_last_activity']) {
+                for (const k of [
+                  'voidr_jwt',
+                  'voidr_session_id',
+                  'voidr_user_id',
+                  'voidr_last_activity',
+                ]) {
                   try {
                     sessionStorage.removeItem(k);
                   } catch (_) {}
@@ -1690,14 +1756,20 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 );
                 const json = await res.json().catch(() => null);
                 if (res.ok && json?.success && Array.isArray(json?.data?.sessions)) {
-                  if (json.data.sessions.includes(sid)) confirmedSessionIds.add(sid);
+                  // The service now returns structured entries
+                  // `{ collectorSessionId, capturedAt }`. Keep accepting the
+                  // legacy string array so extension and service can roll out
+                  // independently without creating a false negative.
+                  const linked = json.data.sessions.some((entry) =>
+                    typeof entry === 'string' ? entry === sid : entry?.collectorSessionId === sid,
+                  );
+                  if (linked) confirmedSessionIds.add(sid);
                 }
               } catch (_) {}
             }
           }
           const captureConfirmed =
-            allSessionIds.length > 0 &&
-            allSessionIds.every((sid) => confirmedSessionIds.has(sid));
+            allSessionIds.length > 0 && allSessionIds.every((sid) => confirmedSessionIds.has(sid));
 
           // Persist a marker so the popup can show a success screen when reopened.
           // Onboarding-code captures pass `confirmed` from the link above so the
@@ -1706,12 +1778,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             const latestSid = sessionId || allSessionIds[allSessionIds.length - 1] || null;
             if (latestSid && (!activeRunId || onboardingCode)) {
               await chrome.storage.session.set({
-                voidrLastCapture: {
-                  sessionId: latestSid,
-                  capturedAt: Date.now(),
-                  confirmed: captureConfirmed,
-                  code: onboardingCode || undefined,
-                },
+                voidrLastCapture: buildLastCapture(priorRecording, latestSid, captureConfirmed),
               });
               // Reopen the assistant popup so the success screen shows automatically.
               try {
@@ -1728,9 +1795,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
               sessionId: sid,
               onboardingRunId: activeRunId,
               evidence: evidenceMeta || undefined,
+              confirmed: confirmedSessionIds.has(sid),
             };
             try {
-              chrome.runtime.sendMessage(capturedPayload);
+              chrome.runtime.sendMessage(capturedPayload).catch(() => {});
             } catch (_) {}
 
             try {
@@ -1760,6 +1828,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                         sessionId: sid,
                         onboardingRunId: activeRunId,
                         evidence: evidenceMeta || undefined,
+                        confirmed: confirmedSessionIds.has(sid),
                       },
                     ],
                   })
@@ -2013,10 +2082,12 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
         await syncAuthWithPlatform(tabId);
 
         // Notifica todas as abas da extensão sobre a autenticação bem-sucedida
-        chrome.runtime.sendMessage({
-          action: 'authenticationCompleted',
-          user: globalAuthState.user,
-        });
+        chrome.runtime
+          .sendMessage({
+            action: 'authenticationCompleted',
+            user: globalAuthState.user,
+          })
+          .catch(() => {});
       }, 3000);
     } else {
       // Sincronização normal para outras páginas
@@ -2060,7 +2131,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 });
 
 /**
- * 
+ *
  * @returns Resync auth reading Auth0 token from platform
  */
 async function resyncAuthFromPlatformTabs() {

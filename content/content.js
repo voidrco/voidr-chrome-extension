@@ -465,6 +465,11 @@ function buildRecordingContext(providedName, options = {}) {
 
 function sendCollectorInit(init) {
   try {
+    let captureBundleId;
+    try {
+      captureBundleId = new URL(window.location.href).searchParams.get('voidr_capture_bundle_id');
+    } catch (_) {}
+
     const initOptions = {
       user: { id: init.userId },
       apiKey: init.apiKey,
@@ -474,6 +479,8 @@ function sendCollectorInit(init) {
         testCase: init.effectiveName,
         mode: init.mode,
         slug: init.slug,
+        applicationName: init.applicationName || undefined,
+        captureBundleId: captureBundleId || undefined,
         onboardingRunId: init.onboardingRunId || undefined,
         code: init.code || undefined,
         flows: init.flows || undefined,
@@ -523,6 +530,7 @@ async function startVoidrSessionRecording(testCaseName, options = {}) {
         effectiveName,
         apiKey: options.apiKey,
         applicationId: options.applicationId || slug,
+        applicationName: options.applicationName,
         onboardingRunId: options.onboardingRunId,
         code: options.code,
         flows: options.flows,
@@ -569,12 +577,14 @@ async function startVoidrSessionRecording(testCaseName, options = {}) {
       options.trackedTabCount > 1
         ? ` · ${options.recordingRoleName || 'Tela'} · ${options.trackedTabCount} telas`
         : '';
-    const recTitleHtml = options.mode === 'evidence'
-      ? `Gravando evidência — &quot;${escapeHtml(evidenceCaseName)}&quot;${escapeHtml(multiTabSuffix)}`
-      : `Gravando sessão &quot;${escapeHtml(effectiveName)}&quot;${escapeHtml(multiTabSuffix)}`;
+    const recTitleHtml =
+      options.mode === 'evidence'
+        ? `Gravando evidência — &quot;${escapeHtml(evidenceCaseName)}&quot;${escapeHtml(multiTabSuffix)}`
+        : `Gravando sessão &quot;${escapeHtml(effectiveName)}&quot;${escapeHtml(multiTabSuffix)}`;
 
     const panel = document.createElement('div');
-    panel.className = 'voidr-rec-panel' + (options.mode === 'evidence' ? ' voidr-rec-panel--evidence' : '');
+    panel.className =
+      'voidr-rec-panel' + (options.mode === 'evidence' ? ' voidr-rec-panel--evidence' : '');
     panel.innerHTML = `
       <div class="voidr-rec-icon">
         <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" fill="#ef4444"><circle cx="12" cy="12" r="6" /></svg>
@@ -854,6 +864,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         mode: request.mode,
         slug: request.slug,
         applicationId: request.applicationId,
+        applicationName: request.applicationName,
         apiKey: request.apiKey,
         onboardingRunId: request.onboardingRunId,
         code: request.code,
@@ -869,6 +880,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         mode: request.mode,
         slug: request.applicationId,
         applicationId: request.applicationId,
+        applicationName: request.applicationName,
         onboardingRunId: request.onboardingRunId,
         flows: request.flows || [],
         evidence: request.evidence,
@@ -945,7 +957,9 @@ async function maybeStartEvidenceFromDeepLink() {
 
   const apiKey = await resolveCollectorApiKey();
   if (!apiKey) {
-    console.warn('[Voidr] Evidence deep-link detected but no collector API key (not authenticated?)');
+    console.warn(
+      '[Voidr] Evidence deep-link detected but no collector API key (not authenticated?)',
+    );
     window.__voidr_evidence_started__ = false;
     return;
   }
