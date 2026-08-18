@@ -14,10 +14,12 @@
     "extension:build:minified": "npm run extension:minify:js && npm run extension:minify:css && npm run extension:build",
     "collector:build": "cd collector-script && npm run build && cd .. && cp collector-script/dist/recorder.min.js vendor/recorder.min.js",
     "collector:setup": "cd collector-script && npm ci",
-    "verify": "node scripts/verify-package.mjs"
+    "verify": "node scripts/verify-package.mjs",
+    "e2e": "node tests/e2e-flow.mjs"
   },
   "devDependencies": {
     "clean-css-cli": "^5.6.2",
+    "playwright": "^1.62.1",
     "prettier": "^3.6.2",
     "terser": "^5.31.0"
   }
