@@ -429,7 +429,28 @@ function showRecordingSetupView(app) {
   });
 }
 
+// Pede a permissao de host da aba alvo no clique do usuario. Precisa rodar antes
+// de qualquer await: o gesto expira e o Chrome recusa o prompt depois disso.
+function ensureHostPermission(originPattern) {
+  if (!originPattern) return Promise.resolve(true);
+  // Sem await antes daqui: qualquer um consome o gesto do usuario e o Chrome
+  // recusa o prompt. request() ja resolve true na hora se a permissao existe.
+  return chrome.permissions.request({ origins: [originPattern] }).catch(() => false);
+}
+
+function hostOf(url) {
+  try {
+    return new URL(url).origin + '/*';
+  } catch (_) {
+    return null;
+  }
+}
+
 async function handleStartTestCaseRecording(app) {
+  if (!(await ensureHostPermission(hostOf(app.url)))) {
+    showNotification('Permissao negada para o site alvo — a gravacao nao pode comecar.', 'error', 5000);
+    return;
+  }
   const nameInput = document.getElementById('scenario-name-input');
   const scenarioName = (nameInput?.value || '').trim();
   const errorDiv = document.getElementById('setup-error');
@@ -728,6 +749,10 @@ function showOnboardingRecordingView(context) {
 
 async function handleStartOnboardingRecording() {
   if (!onboardingRecordingContext) return;
+  if (!(await ensureHostPermission(hostOf(onboardingRecordingContext.targetUrl)))) {
+    showNotification('Permissao negada para o site alvo — a gravacao nao pode comecar.', 'error', 5000);
+    return;
+  }
   const btn = document.getElementById('onboarding-start-btn');
   if (btn) {
     btn.textContent = 'Iniciando...';
