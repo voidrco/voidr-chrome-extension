@@ -19,11 +19,6 @@
     VOIDR_PLATFORM_URL: 'https://platform.voidr.co',
     VOIDR_COLLECTOR_URL: 'https://collector.voidr.co',
 
-    // Preview (release-unified-hive-chat)
-    // VOIDR_API_BASE_URL: 'https://release-unified-hive-chat.api-preview.voidr.co/v1',
-    // VOIDR_PLATFORM_URL: 'https://release-unified-hive-chat.app-preview.voidr.co',
-    // VOIDR_COLLECTOR_URL: 'https://collector-staging.voidr.co',
-
     // Staging
     // VOIDR_API_BASE_URL: 'https://api-staging.voidr.co/v1',
     // VOIDR_PLATFORM_URL: 'https://staging.voidr.co',
