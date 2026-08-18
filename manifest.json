@@ -38,7 +38,7 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["icons/*", "assets/*", "vendor/*"],
+      "resources": ["icons/*", "assets/*"],
       "matches": ["<all_urls>"]
     }
   ],
