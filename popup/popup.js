@@ -748,16 +748,12 @@ function showOnboardingRecordingView(context) {
 }
 
 async function handleStartOnboardingRecording() {
-  const diag = (m) => { console.log('[Voidr popup]', m); };
   if (!onboardingRecordingContext) {
     showNotification('Sem contexto de onboarding — recarregue e pareie o codigo de novo.', 'error', 6000);
-    diag('abortou: sem onboardingRecordingContext');
     return;
   }
   const alvo = hostOf(onboardingRecordingContext.targetUrl);
-  diag(`targetUrl=${onboardingRecordingContext.targetUrl} host=${alvo}`);
   const concedida = await ensureHostPermission(alvo);
-  diag(`permissao=${concedida}`);
   if (!concedida) {
     showNotification(`Sem permissao para ${alvo || '(alvo desconhecido)'} — gravacao cancelada.`, 'error', 6000);
     return;
@@ -789,7 +785,6 @@ async function handleStartOnboardingRecording() {
   // O resumo pos-gravacao le voidrPendingTestCase do storage. So o fluxo de
   // test-case escrevia isso, entao onboarding caia em 'Sem nome' / '—'.
   const ctx = onboardingRecordingContext;
-  diag(`chaves do contexto: ${Object.keys(ctx).join(',')}`);
   const primeiroFluxo = (ctx.criticalFlows || ctx.flows || [])[0];
   let hostAlvo = '';
   try { hostAlvo = ctx.targetUrl ? new URL(ctx.targetUrl).host : ''; } catch (_) {}
@@ -803,9 +798,7 @@ async function handleStartOnboardingRecording() {
         appId: ctx.applicationId || ctx.appId,
       },
     });
-  } catch (e) {
-    diag(`falha ao gravar voidrPendingTestCase: ${e?.message || e}`);
-  }
+  } catch (_) {}
 
   chrome.runtime.sendMessage(
     {
@@ -825,8 +818,6 @@ async function handleStartOnboardingRecording() {
       },
     },
     (response) => {
-      diag(`resposta do background: ${JSON.stringify(response)}`);
-      if (chrome.runtime.lastError) diag(`lastError: ${chrome.runtime.lastError.message}`);
       if (!response?.success) {
         const msg =
           response?.error || chrome.runtime.lastError?.message || 'sem resposta do background';
