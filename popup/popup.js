@@ -786,6 +786,27 @@ async function handleStartOnboardingRecording() {
     }
   } catch (_) {}
 
+  // O resumo pos-gravacao le voidrPendingTestCase do storage. So o fluxo de
+  // test-case escrevia isso, entao onboarding caia em 'Sem nome' / '—'.
+  const ctx = onboardingRecordingContext;
+  diag(`chaves do contexto: ${Object.keys(ctx).join(',')}`);
+  const primeiroFluxo = (ctx.criticalFlows || ctx.flows || [])[0];
+  let hostAlvo = '';
+  try { hostAlvo = ctx.targetUrl ? new URL(ctx.targetUrl).host : ''; } catch (_) {}
+  try {
+    await chrome.storage.session.set({
+      voidrPendingTestCase: {
+        scenarioName:
+          ctx.sessionName || primeiroFluxo?.name || ctx.name || 'Sessão de onboarding',
+        appName:
+          ctx.applicationName || ctx.appName || ctx.application?.name || hostAlvo || '—',
+        appId: ctx.applicationId || ctx.appId,
+      },
+    });
+  } catch (e) {
+    diag(`falha ao gravar voidrPendingTestCase: ${e?.message || e}`);
+  }
+
   chrome.runtime.sendMessage(
     {
       action: 'voidr:forwardToTargetTab',
