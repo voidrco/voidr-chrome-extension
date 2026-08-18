@@ -431,14 +431,11 @@ function showRecordingSetupView(app) {
 
 // Pede a permissao de host da aba alvo no clique do usuario. Precisa rodar antes
 // de qualquer await: o gesto expira e o Chrome recusa o prompt depois disso.
-async function ensureHostPermission(originPattern) {
-  if (!originPattern) return true;
-  try {
-    if (await chrome.permissions.contains({ origins: [originPattern] })) return true;
-    return await chrome.permissions.request({ origins: [originPattern] });
-  } catch (_) {
-    return false;
-  }
+function ensureHostPermission(originPattern) {
+  if (!originPattern) return Promise.resolve(true);
+  // Sem await antes daqui: qualquer um consome o gesto do usuario e o Chrome
+  // recusa o prompt. request() ja resolve true na hora se a permissao existe.
+  return chrome.permissions.request({ origins: [originPattern] }).catch(() => false);
 }
 
 function hostOf(url) {
