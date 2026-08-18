@@ -27,6 +27,16 @@ check(!sources.includes('fetchCollectorCode'), 'fetchCollectorCode presente — 
 check(!sources.includes('(0, eval)'), 'eval() presente — codigo remoto');
 check(!sources.includes('fonts.googleapis'), 'Google Fonts presente — recurso remoto');
 
+// Politica de permissao minima: nada de acesso amplo concedido na instalacao.
+// O acesso ao site alvo e pedido em runtime, no clique de "Concordo e iniciar".
+const broad = /^(https?:\/\/\*\/\*|<all_urls>)$/;
+check((manifest.host_permissions || []).every((h) => !broad.test(h)),
+  `host_permissions amplo na instalacao: ${JSON.stringify(manifest.host_permissions)} — deve ficar em optional_host_permissions`);
+check((manifest.optional_host_permissions || []).length > 0,
+  'optional_host_permissions ausente — o acesso ao site alvo precisa ser pedido em runtime');
+check(manifest.content_scripts.every((cs) => cs.matches.every((m) => !broad.test(m))),
+  'content_script com <all_urls> — dispara o mesmo aviso de "todos os sites" que host_permissions');
+
 // Permissao redundante e motivo declarado de rejeicao. Checa o array parseado:
 // background.js tem uma variavel local chamada activeTab e grep da falso positivo.
 check(!manifest.permissions.includes('activeTab'), 'activeTab de volta no manifest');
