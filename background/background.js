@@ -613,17 +613,31 @@ async function sendResumeRecordingUi(tabId, recording) {
     applicationId: recording.initOptions?.applicationId || null,
   };
 
+  // Os dois caminhos engoliam a excecao, entao painel ausente era indistinguivel
+  // de painel montado. Agora cada ramo diz o que aconteceu.
   try {
     await chrome.tabs.sendMessage(tabId, payload);
-  } catch (_) {
-    try {
-      await chrome.scripting.executeScript({
-        target: { tabId },
-        files: ['content/content.js'],
-      });
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      await chrome.tabs.sendMessage(tabId, payload);
-    } catch (_) {}
+    console.log('[Voidr] painel: content script ja estava na aba, mensagem entregue');
+    return;
+  } catch (e1) {
+    console.warn('[Voidr] painel: sendMessage falhou —', e1?.message || e1);
+  }
+
+  try {
+    await chrome.scripting.executeScript({ target: { tabId }, files: ['content/content.js'] });
+    console.log('[Voidr] painel: content script injetado sob demanda');
+  } catch (e2) {
+    console.error('[Voidr] painel: injecao do content script FALHOU —', e2?.message || e2);
+    return;
+  }
+
+  await new Promise((resolve) => setTimeout(resolve, 300));
+
+  try {
+    await chrome.tabs.sendMessage(tabId, payload);
+    console.log('[Voidr] painel: mensagem entregue apos injecao');
+  } catch (e3) {
+    console.error('[Voidr] painel: mensagem falhou mesmo apos injecao —', e3?.message || e3);
   }
 }
 
