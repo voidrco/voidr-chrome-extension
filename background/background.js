@@ -870,7 +870,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           const sessionId = (await readCollectorSessionId(targetTabId)) || canonicalSessionId;
 
           try {
-            chrome.runtime.sendMessage({
+            chrome.runtime
+              .sendMessage({
               action: 'voidr:sessionStarted',
               sessionId,
               testCaseName:
@@ -883,7 +884,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                   request.initOptions.meta &&
                   request.initOptions.meta.mode) ||
                 'test-case',
-            });
+            })
+              .catch(() => {});
           } catch (_) {}
 
           await setActiveRecording({
@@ -1815,10 +1817,13 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
         await syncAuthWithPlatform(tabId);
 
         // Notifica todas as abas da extensão sobre a autenticação bem-sucedida
-        chrome.runtime.sendMessage({
-          action: 'authenticationCompleted',
-          user: globalAuthState.user,
-        });
+        // Sem receptor (popup fechado) a promise rejeita e suja o console do worker.
+        chrome.runtime
+          .sendMessage({
+            action: 'authenticationCompleted',
+            user: globalAuthState.user,
+          })
+          .catch(() => {});
       }, 3000);
     } else {
       // Sincronização normal para outras páginas
