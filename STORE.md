@@ -92,6 +92,8 @@ e o `activeTab`. Portar arquivo a arquivo.
 - [ ] `vendor/recorder.min.js` é o snapshot pretendido (hash conferido)
 - [ ] `config/env.js` aponta para produção, sem bloco de staging/local descomentado
 - [ ] `manifest.json` sem `activeTab`; `version` bumpada
+      (checar o array `permissions` parseado, **nunca** `grep activeTab` — o
+      `background.js` tem uma variável local com esse nome e o grep dá 9 falsos positivos)
 - [ ] `background/background.js` sem `fetchCollectorCode` / `eval`
 - [ ] nenhuma URL interna no pacote (`grep -rn "run.app\|preview.voidr.co"`)
 - [ ] `npm run extension:build` e conferir `unzip -l dist/voidr-extension.zip`
