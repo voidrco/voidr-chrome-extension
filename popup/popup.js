@@ -748,9 +748,18 @@ function showOnboardingRecordingView(context) {
 }
 
 async function handleStartOnboardingRecording() {
-  if (!onboardingRecordingContext) return;
-  if (!(await ensureHostPermission(hostOf(onboardingRecordingContext.targetUrl)))) {
-    showNotification('Permissao negada para o site alvo — a gravacao nao pode comecar.', 'error', 5000);
+  const diag = (m) => { console.log('[Voidr popup]', m); };
+  if (!onboardingRecordingContext) {
+    showNotification('Sem contexto de onboarding — recarregue e pareie o codigo de novo.', 'error', 6000);
+    diag('abortou: sem onboardingRecordingContext');
+    return;
+  }
+  const alvo = hostOf(onboardingRecordingContext.targetUrl);
+  diag(`targetUrl=${onboardingRecordingContext.targetUrl} host=${alvo}`);
+  const concedida = await ensureHostPermission(alvo);
+  diag(`permissao=${concedida}`);
+  if (!concedida) {
+    showNotification(`Sem permissao para ${alvo || '(alvo desconhecido)'} — gravacao cancelada.`, 'error', 6000);
     return;
   }
   const btn = document.getElementById('onboarding-start-btn');
@@ -795,9 +804,12 @@ async function handleStartOnboardingRecording() {
       },
     },
     (response) => {
+      diag(`resposta do background: ${JSON.stringify(response)}`);
+      if (chrome.runtime.lastError) diag(`lastError: ${chrome.runtime.lastError.message}`);
       if (!response?.success) {
-        const msg = response?.error || 'Abra a aba do site-alvo e tente novamente.';
-        showNotification('Could not start: ' + msg, 'error', 4000);
+        const msg =
+          response?.error || chrome.runtime.lastError?.message || 'sem resposta do background';
+        showNotification('Nao iniciou: ' + msg, 'error', 8000);
         if (btn) {
           btn.textContent = 'Concordo e iniciar';
           btn.disabled = false;

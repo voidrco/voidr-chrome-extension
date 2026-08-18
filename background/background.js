@@ -786,6 +786,37 @@ function reloadTabAndWaitForLoad(tabId, timeoutMs = 15000) {
 // recording "runs" but nothing is saved. declarativeNetRequest only strips
 // headers on future navigations, so those tabs need one reload. A CSP-blocked
 // fetch rejects immediately even in no-cors mode, which makes a cheap probe.
+// Sem <all_urls> no manifest, o content script nao volta sozinho depois que a
+// aba recarrega (e o fluxo de gravacao recarrega, para dropar o CSP). Sem ele a
+// barra de gravacao some — e o Stop junto — enquanto o collector segue gravando.
+// Registrar dinamicamente para o dominio concedido devolve esse comportamento
+// sem reabrir acesso a todos os sites.
+const ID_CS_ALVO = 'voidr-target-content';
+
+async function ensureTargetContentScript(tabId) {
+  try {
+    const tab = await chrome.tabs.get(tabId).catch(() => null);
+    if (!tab?.url || !/^https?:/i.test(tab.url)) return;
+    const matches = [new URL(tab.url).origin + '/*'];
+    const cfg = {
+      id: ID_CS_ALVO,
+      matches,
+      js: ['content/content.js'],
+      css: ['content/content.css'],
+      runAt: 'document_end',
+      persistAcrossSessions: false,
+    };
+    const jaTem = await chrome.scripting
+      .getRegisteredContentScripts({ ids: [ID_CS_ALVO] })
+      .catch(() => []);
+    if (jaTem.length) await chrome.scripting.updateContentScripts([cfg]);
+    else await chrome.scripting.registerContentScripts([cfg]);
+    console.log('[Voidr] content script registrado para', matches[0]);
+  } catch (e) {
+    console.error('[Voidr] falha ao registrar content script no alvo', e?.message || e);
+  }
+}
+
 async function tabBlocksCollectorConnects(tabId, collectorUrl) {
   try {
     const res = await chrome.scripting.executeScript({
@@ -835,6 +866,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             sendResponse({ success: false, error: 'No eligible tab for injection' });
             return;
           }
+
+          // Antes de qualquer reload: garante que o content script volte sozinho.
+          await ensureTargetContentScript(targetTabId);
 
           // Strip CSP for the recording tab so collector can POST to voidr.co
           // across navigations (auth providers like Microsoft B2C block connect-src

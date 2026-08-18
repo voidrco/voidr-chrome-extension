@@ -30,6 +30,28 @@ const sw = ctx.serviceWorkers()[0] || (await ctx.waitForEvent('serviceworker', {
 const EXT_ID = new URL(sw.url()).host;
 log('setup', `extensao ${EXT_ID}`);
 
+// Captura o console do service worker: Playwright nao emite eventos de console
+// para workers, entao envolvemos console.* e lemos o buffer depois.
+await sw.evaluate(() => {
+  self.__logs = [];
+  for (const m of ['log', 'warn', 'error']) {
+    const orig = console[m].bind(console);
+    console[m] = (...a) => {
+      self.__logs.push(m.toUpperCase() + ' ' + a.map((x) => {
+        try { return typeof x === 'string' ? x : JSON.stringify(x); } catch { return String(x); }
+      }).join(' '));
+      orig(...a);
+    };
+  }
+  self.addEventListener('unhandledrejection', (e) =>
+    self.__logs.push('REJEICAO ' + (e.reason?.message || e.reason)));
+});
+const dumpSW = async (titulo) => {
+  const logs = await sw.evaluate(() => { const l = self.__logs.slice(); self.__logs.length = 0; return l; });
+  if (logs.length) { console.log(`  --- worker (${titulo}) ---`); logs.forEach((l) => console.log('  ' + l)); }
+};
+const permissoes = () => sw.evaluate(() => chrome.permissions.getAll().then((g) => g.origins));
+
 const page = ctx.pages()[0] || (await ctx.newPage());
 await page.goto(PLATAFORMA, { waitUntil: 'domcontentloaded' });
 
@@ -62,10 +84,13 @@ if (SO_LOGIN) {
 // ── Assistant -> codigo VDR ─────────────────────────────────────────────────
 try {
   log('assistant', 'enviando prompt');
-  const campo = page.getByPlaceholder(/Ask about quality|Pergunte sobre/i).first();
+  // O composer e uma div[contenteditable], nao input/textarea — o texto de
+  // placeholder e visual, entao getByPlaceholder nao acha.
+  const campo = page.locator('div[contenteditable="true"]').first();
   await campo.waitFor({ timeout: 20000 });
-  await campo.fill('i want to generate tests');
-  await campo.press('Enter');
+  await campo.click();
+  await page.keyboard.type('i want to generate tests');
+  await page.getByRole('button', { name: /^Send$/i }).first().click();
 
   log('assistant', 'aguardando opcoes');
   await page.getByText(/Create new tests/i).first().click({ timeout: 90000 });
@@ -122,8 +147,32 @@ try {
   }
 
   // ── consentimento + gravacao ──────────────────────────────────────────────
+  ui.on('console', (m) => console.log(`  [popup ${m.type()}] ${m.text()}`));
+  ui.on('pageerror', (e) => console.log(`  [popup ERRO] ${e.message}`));
+
+  log('permissao', `antes do clique: ${JSON.stringify(await permissoes())}`);
+  await dumpSW('antes do consentimento');
+
   log('gravacao', 'clicando em Concordo e iniciar');
+  log('gravacao', 'se o Chrome pedir permissao para o site alvo, ACEITE na janela');
   await ui.getByText(/Concordo e iniciar/i).first().click({ timeout: 30000 });
+  await ui.waitForTimeout(8000);
+
+  log('permissao', `depois do clique: ${JSON.stringify(await permissoes())}`);
+  await dumpSW('depois do consentimento');
+
+  // Estado do popup logo apos o clique: se o handler retornou cedo, ele deixa
+  // rastro no botao e/ou numa notificacao na propria DOM.
+  const estado = await ui.evaluate(() => ({
+    contexto: typeof onboardingRecordingContext !== 'undefined' && onboardingRecordingContext
+      ? { targetUrl: onboardingRecordingContext.targetUrl, code: onboardingRecordingContext.code,
+          runId: onboardingRecordingContext.onboardingRunId, appId: onboardingRecordingContext.applicationId }
+      : '(sem contexto)',
+    textoDoBotao: document.getElementById('onboarding-start-btn')?.textContent?.trim() ?? '(botao sumiu)',
+    notificacao: document.querySelector('.voidr-notification')?.textContent?.trim() ?? '(nenhuma)',
+    view: document.body.innerText.slice(0, 200).replace(/\n+/g, ' | '),
+  })).catch((e) => ({ erro: String(e).slice(0, 120) }));
+  log('popup', JSON.stringify(estado, null, 2));
 
   await abaAlvo.bringToFront();
   const barra = abaAlvo.locator('text=/Gravando sess/i').first();
@@ -155,6 +204,11 @@ try {
   else falha(`gravacao terminou em: ${venceu}`);
 } catch (e) {
   falha(`quebrou: ${e?.message || e}`);
+  try {
+    const logs = await sw.evaluate(() => self.__logs || []);
+    if (logs.length) { console.error('  --- worker (na falha) ---'); logs.forEach((l) => console.error('  ' + l)); }
+    console.error(`  permissoes: ${JSON.stringify(await sw.evaluate(() => chrome.permissions.getAll().then(g => g.origins)))}`);
+  } catch (_) {}
   const shot = path.join(RAIZ, 'dist', 'e2e-falha.png');
   await ctx.pages().at(-1)?.screenshot({ path: shot, fullPage: false }).catch(() => {});
   console.error(`screenshot: ${shot}`);
