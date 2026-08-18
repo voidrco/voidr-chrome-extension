@@ -4,7 +4,7 @@ let testCaseRecordingContext = null;
 
 function getApiBaseUrl() {
   const env = (typeof globalThis !== 'undefined' && globalThis.__VOIDR_ENV__) || {};
-  return env.VOIDR_API_BASE_URL || 'https://voidr-service-785568282479.us-central1.run.app/v1';
+  return env.VOIDR_API_BASE_URL || 'https://api.voidr.co/v1';
 }
 
 async function apiGet(endpoint) {
