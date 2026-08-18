@@ -1,5 +1,3 @@
-/* Space Grotesk loaded via link tag in popup.html */
-
 :root {
   --bg: #050607;
   --bg-elevated: #0a0b0c;
@@ -13,7 +11,7 @@
   --red: #ef4444;
   --green: #34d399;
   --blue: #60a5fa;
-  --font: 'Space Grotesk', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
 }
 
 * {
@@ -421,6 +419,18 @@ body {
 .rec-actions {
   display: flex;
   gap: 8px;
+}
+
+.recording-disclosure {
+  margin: 2px 0 14px;
+  color: var(--text-3);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.recording-disclosure a {
+  color: var(--text-2);
+  text-decoration: underline;
 }
 
 /* ── Shared View Header ───────────────────────────────────────────────────── */

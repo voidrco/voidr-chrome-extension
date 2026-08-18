@@ -1,0 +1,73 @@
+# cloudbuild-staging.yaml
+steps:
+  - name: 'mcr.microsoft.com/playwright:v1.61.1-noble'
+    entrypoint: 'npm'
+    args: ['ci']
+    id: 'npm-install'
+
+  - name: 'mcr.microsoft.com/playwright:v1.61.1-noble'
+    entrypoint: 'npm'
+    args: ['test']
+    id: 'unit-tests'
+    waitFor:
+      - 'npm-install'
+
+  - name: 'mcr.microsoft.com/playwright:v1.61.1-noble'
+    entrypoint: 'npm'
+    args: ['run', 'test:performance']
+    env:
+      - 'CI=true'
+      - 'PERF_CPU_THROTTLE=1'
+      - 'VOIDR_COLLECTOR_URL=https://collector-staging.voidr.co'
+    id: 'performance-tests'
+    waitFor:
+      - 'unit-tests'
+
+  - name: 'gcr.io/cloud-builders/gsutil'
+    args:
+      - 'cp'
+      - 'dist/recorder.min.js'
+      - 'gs://cdn-voidr-global/voidr-collector/staging/${SHORT_SHA}/recorder.min.js'
+    id: 'gcs-upload-versioned'
+    waitFor:
+      - 'performance-tests'
+
+  - name: 'gcr.io/cloud-builders/gsutil'
+    args:
+      - 'cp'
+      - 'dist/recorder.min.js'
+      - 'gs://cdn-voidr-global/voidr-collector/staging/latest/recorder.min.js'
+    id: 'gcs-upload-latest'
+    waitFor:
+      - 'performance-tests'
+
+  - name: 'gcr.io/cloud-builders/gcloud'
+    args:
+      - 'compute'
+      - 'url-maps'
+      - 'invalidate-cdn-cache'
+      - 'cdn-load-balancer'
+      - '--path=/voidr-collector/staging/*'
+      - '--async'
+    id: 'cdn-invalidate-cache'
+    waitFor:
+      - 'gcs-upload-latest'
+
+  - name: 'gcr.io/cloud-builders/gcloud'
+    entrypoint: 'bash'
+    secretEnv: ['API_TOKEN']
+    args:
+      - '-c'
+      - |
+        curl -X POST "https://api.cloudflare.com/client/v4/zones/40807c6c48cb5d8a1e29bfbca48a519e/purge_cache" \
+          -H "Authorization: Bearer $$API_TOKEN" \
+          -H "Content-Type: application/json" \
+          --data '{"prefixes":["cdn.voidr.co/voidr-collector/staging"]}'
+    id: 'cloudflare-purge-cache'
+    waitFor:
+      - 'cdn-invalidate-cache'
+
+availableSecrets:
+  secretManager:
+    - versionName: projects/785568282479/secrets/cloudflare-cdn-purge-token/versions/latest
+      env: 'API_TOKEN'
