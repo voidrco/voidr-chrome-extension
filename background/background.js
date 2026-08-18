@@ -938,10 +938,15 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             startedAt: Date.now(),
           });
 
-          // The CSP reload wiped the recording panel the content script had
-          // rendered before sending this message — restore it now.
-          if (reloadedForCsp && activeRecording) {
+          // Redesenha o painel sempre, nao so quando houve reload por CSP. Sem
+          // <all_urls> o content script entra tarde (injetado pelo fallback) e
+          // pode nao ter montado o painel — e sem painel nao ha botao Parar,
+          // entao a gravacao roda sem o usuario conseguir encerrar.
+          // sendResumeRecordingUi e idempotente: o content script remove os
+          // elementos antigos antes de montar.
+          if (activeRecording) {
             await sendResumeRecordingUi(targetTabId, activeRecording);
+            console.log('[Voidr] painel de gravacao (re)desenhado', { reloadedForCsp });
           }
 
           // Capture HttpOnly cookies (invisible to the page) for the environment
