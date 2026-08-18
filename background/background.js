@@ -94,6 +94,23 @@ function createRecordingSessionId() {
   return `voidr-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+function buildLastCapture(recording, sessionId, confirmed) {
+  const initOptions = recording?.initOptions || {};
+  const meta = initOptions.meta || {};
+
+  return {
+    sessionId,
+    capturedAt: Date.now(),
+    confirmed: Boolean(confirmed),
+    code: recording?.code || meta.code || undefined,
+    scenarioName: recording?.testCaseName || meta.testCase || undefined,
+    applicationId: initOptions.applicationId || meta.applicationId || meta.slug || undefined,
+    appName: recording?.applicationName || meta.applicationName || undefined,
+    captureBundleId: meta.captureBundleId || undefined,
+    mode: recording?.mode || meta.mode || undefined,
+  };
+}
+
 function normalizeActiveRecording(recording) {
   if (!recording || typeof recording !== 'object') return null;
 
@@ -123,6 +140,27 @@ function normalizeActiveRecording(recording) {
     ]),
   );
 
+  const rawTabSessionIds =
+    recording.tabSessionIds && typeof recording.tabSessionIds === 'object'
+      ? recording.tabSessionIds
+      : {};
+  const tabSessionIds = {};
+  trackedTabIds.forEach((tabId, index) => {
+    const existing = rawTabSessionIds[String(tabId)];
+    tabSessionIds[String(tabId)] =
+      typeof existing === 'string' && existing
+        ? existing
+        : index === 0 && canonicalSessionId
+          ? canonicalSessionId
+          : createRecordingSessionId();
+    if (!sessionIds.includes(tabSessionIds[String(tabId)])) {
+      sessionIds.push(tabSessionIds[String(tabId)]);
+    }
+  });
+
+  const tabTargets =
+    recording.tabTargets && typeof recording.tabTargets === 'object' ? recording.tabTargets : {};
+
   const currentTabId = trackedTabIds.includes(recording.currentTabId)
     ? recording.currentTabId
     : trackedTabIds[0];
@@ -132,6 +170,8 @@ function normalizeActiveRecording(recording) {
     currentTabId,
     trackedTabIds,
     canonicalSessionId,
+    tabSessionIds,
+    tabTargets,
     initOptions: {
       ...(recording.initOptions || {}),
       collectorUrl: API_CONFIG.collectorUrl,
@@ -142,6 +182,8 @@ function normalizeActiveRecording(recording) {
     onboardingRunId:
       recording.onboardingRunId || recording.initOptions?.meta?.onboardingRunId || null,
     code: recording.code || recording.initOptions?.meta?.code || null,
+    applicationName:
+      recording.applicationName || recording.initOptions?.meta?.applicationName || null,
     evidence: recording.evidence || recording.initOptions?.meta?.evidence || null,
     flows: recording.flows || recording.initOptions?.meta?.flows || [],
     sessionIds,
@@ -187,14 +229,18 @@ function isTrackedRecordingTab(recording, tabId) {
   return Boolean(recording && Number.isInteger(tabId) && recording.trackedTabIds?.includes(tabId));
 }
 
-async function attachTrackedRecordingTab(tabId, { makeCurrent = false } = {}) {
+async function attachTrackedRecordingTab(tabId, { makeCurrent = false, target = null } = {}) {
   const recording = await hydrateActiveRecording();
   if (!recording || !Number.isInteger(tabId)) return null;
 
   const wasTracked = recording.trackedTabIds.includes(tabId);
   if (!wasTracked) {
     recording.trackedTabIds.push(tabId);
+    const sessionId = createRecordingSessionId();
+    recording.tabSessionIds[String(tabId)] = sessionId;
+    recording.sessionIds.push(sessionId);
   }
+  if (target) recording.tabTargets[String(tabId)] = target;
   if (makeCurrent || !recording.currentTabId) {
     recording.currentTabId = tabId;
   }
@@ -540,7 +586,12 @@ async function teardownExistingCollectorInTab(tabId) {
         // so wipe it on EVERY path — even when no instance is present (e.g.
         // async embeds that haven't loaded yet, or endSession-less versions).
         const wipe = () => {
-          for (const k of ['voidr_jwt', 'voidr_session_id', 'voidr_user_id', 'voidr_last_activity']) {
+          for (const k of [
+            'voidr_jwt',
+            'voidr_session_id',
+            'voidr_user_id',
+            'voidr_last_activity',
+          ]) {
             try {
               sessionStorage.removeItem(k);
             } catch (_) {}
@@ -608,7 +659,9 @@ async function armCollectorTakeoverWatchdog(tabId) {
             if (typeof current.endSession === 'function') current.endSession();
           } catch (_) {}
           window.VoidrCollector = window.__voidrExtCollector;
-          console.warn('[Voidr] native collector re-appeared after injection — torn down, handle restored');
+          console.warn(
+            '[Voidr] native collector re-appeared after injection — torn down, handle restored',
+          );
         };
         setTimeout(check, 4000);
         setTimeout(check, 12000);
@@ -618,6 +671,7 @@ async function armCollectorTakeoverWatchdog(tabId) {
 }
 
 async function sendResumeRecordingUi(tabId, recording) {
+  const tabTarget = recording.tabTargets?.[String(tabId)] || null;
   const payload = {
     action: 'voidr:resumeRecordingUI',
     testCaseName: recording.testCaseName,
@@ -625,7 +679,10 @@ async function sendResumeRecordingUi(tabId, recording) {
     onboardingRunId: recording.onboardingRunId,
     evidence: recording.evidence || null,
     flows: recording.flows,
-    applicationId: recording.initOptions?.applicationId || null,
+    applicationId: tabTarget?.applicationId || recording.initOptions?.applicationId || null,
+    applicationName: recording.applicationName || null,
+    recordingRoleName: tabTarget?.name || null,
+    trackedTabCount: recording.trackedTabIds?.length || 1,
   };
 
   try {
@@ -654,12 +711,23 @@ async function resumeActiveRecordingInTab(tabId) {
   const collectorCode = await fetchCollectorCode();
   await teardownExistingCollectorInTab(tabId);
   await injectCollectorInTab(tabId, collectorCode);
-  await initializeCollectorInTab(tabId, recording.initOptions);
+  const tabTarget = recording.tabTargets?.[String(tabId)] || null;
+  const tabSessionId = recording.tabSessionIds?.[String(tabId)] || recording.canonicalSessionId;
+  await initializeCollectorInTab(tabId, {
+    ...recording.initOptions,
+    forcedSessionId: tabSessionId,
+    ...(tabTarget?.applicationId ? { applicationId: tabTarget.applicationId } : {}),
+    meta: {
+      ...(recording.initOptions?.meta || {}),
+      ...(tabTarget?.name ? { recordingRole: tabTarget.name } : {}),
+      multiTab: (recording.trackedTabIds?.length || 0) > 1,
+    },
+  });
   await armCollectorTakeoverWatchdog(tabId);
   await attachTrackedRecordingTab(tabId, { makeCurrent: true });
   await sendResumeRecordingUi(tabId, recording);
 
-  const sessionId = (await readCollectorSessionId(tabId)) || recording.canonicalSessionId;
+  const sessionId = (await readCollectorSessionId(tabId)) || tabSessionId;
   if (sessionId && activeRecording && !activeRecording.sessionIds.includes(sessionId)) {
     activeRecording.sessionIds.push(sessionId);
     await persistActiveRecording();
@@ -825,9 +893,144 @@ async function tabBlocksCollectorConnects(tabId, collectorUrl) {
   }
 }
 
+async function resolveRecordingTargetTab(target, claimedTabIds = new Set()) {
+  let origin = null;
+  try {
+    origin = new URL(target.targetUrl).origin;
+  } catch (_) {}
+  if (origin) {
+    const matches = await chrome.tabs.query({ url: `${origin}/*` });
+    const eligible = matches.find(
+      (tab) => tab.url && !claimedTabIds.has(tab.id) && !tab.url.startsWith(API_CONFIG.platformUrl),
+    );
+    if (eligible?.id) return eligible.id;
+  }
+  const created = await chrome.tabs.create({ url: target.targetUrl, active: false });
+  if (!created?.id) throw new Error(`Não foi possível abrir ${target.name}`);
+  await new Promise((resolve) => {
+    const listener = (tabId, changeInfo) => {
+      if (tabId !== created.id || changeInfo.status !== 'complete') return;
+      clearTimeout(timeout);
+      chrome.tabs.onUpdated.removeListener(listener);
+      resolve();
+    };
+    const timeout = setTimeout(() => {
+      chrome.tabs.onUpdated.removeListener(listener);
+      resolve();
+    }, 15000);
+    chrome.tabs.onUpdated.addListener(listener);
+  });
+  return created.id;
+}
+
+async function startMultiTabRecording(request) {
+  const targets = Array.isArray(request.recordingTargets)
+    ? request.recordingTargets.filter((target) => target?.targetUrl && target?.applicationId)
+    : [];
+  if (targets.length < 2) throw new Error('A gravação multiaba exige pelo menos duas telas');
+
+  const resolvedTargets = [];
+  const claimedTabIds = new Set();
+  for (const target of targets) {
+    const tabId = await resolveRecordingTargetTab(target, claimedTabIds);
+    claimedTabIds.add(tabId);
+    resolvedTargets.push({ tabId, target });
+  }
+
+  const canonicalSessionId = createRecordingSessionId();
+  const tabSessionIds = {};
+  const tabTargets = {};
+  const sessionIds = [];
+  resolvedTargets.forEach(({ tabId, target }, index) => {
+    const sessionId = index === 0 ? canonicalSessionId : createRecordingSessionId();
+    tabSessionIds[String(tabId)] = sessionId;
+    tabTargets[String(tabId)] = target;
+    sessionIds.push(sessionId);
+  });
+
+  const initOptions = {
+    ...(request.initOptions || {}),
+    collectorUrl: API_CONFIG.collectorUrl,
+    forcedSessionId: canonicalSessionId,
+    meta: {
+      ...(request.initOptions?.meta || {}),
+      multiTab: true,
+      captureBundleId: request.captureBundleId || undefined,
+    },
+  };
+  await setActiveRecording({
+    tabId: resolvedTargets[0].tabId,
+    currentTabId: resolvedTargets[0].tabId,
+    trackedTabIds: resolvedTargets.map(({ tabId }) => tabId),
+    tabSessionIds,
+    tabTargets,
+    canonicalSessionId,
+    initOptions,
+    testCaseName: request.testCaseName || 'Fluxo entre telas',
+    mode: request.mode || 'onboarding',
+    onboardingRunId: request.onboardingRunId || null,
+    code: request.code || null,
+    evidence: request.evidence || null,
+    flows: request.flows || [],
+    sessionIds,
+    startedAt: Date.now(),
+  });
+
+  for (const { tabId } of resolvedTargets) {
+    await enableCspBypassForTab(tabId);
+    await resumeActiveRecordingInTab(tabId);
+  }
+  await chrome.tabs.update(resolvedTargets[0].tabId, { active: true });
+  return { sessionIds, tabIds: resolvedTargets.map(({ tabId }) => tabId) };
+}
+
+async function addRecordingTarget(request) {
+  const recording = await hydrateActiveRecording();
+  const target = request?.target;
+  if (!recording) throw new Error('Nenhuma gravação ativa');
+  if (!target?.targetUrl || !target?.applicationId) {
+    throw new Error('A aplicação adicional não tem URL configurada');
+  }
+
+  const claimedTabIds = new Set(recording.trackedTabIds || []);
+  const tabId = await resolveRecordingTargetTab(
+    { ...target, targetUrl: request.recordingUrl || target.targetUrl },
+    claimedTabIds,
+  );
+  await attachTrackedRecordingTab(tabId, { makeCurrent: true, target });
+  if (request.captureBundleId && activeRecording) {
+    activeRecording.initOptions = {
+      ...(activeRecording.initOptions || {}),
+      meta: {
+        ...(activeRecording.initOptions?.meta || {}),
+        captureBundleId: request.captureBundleId,
+        multiTab: true,
+      },
+    };
+    await persistActiveRecording();
+  }
+  await resumeActiveRecordingInTab(tabId);
+  await chrome.tabs.update(tabId, { active: true });
+  return { tabId };
+}
+
 // Listener para mensagens dos content scripts
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   switch (request.action) {
+    case 'voidr:addRecordingTarget':
+      addRecordingTarget(request)
+        .then((result) => sendResponse({ success: true, ...result }))
+        .catch((error) =>
+          sendResponse({ success: false, error: error?.message || 'Falha ao adicionar aplicação' }),
+        );
+      return true;
+    case 'voidr:startMultiTabRecording':
+      startMultiTabRecording(request)
+        .then((result) => sendResponse({ success: true, ...result }))
+        .catch((error) =>
+          sendResponse({ success: false, error: error?.message || 'Falha ao iniciar gravação' }),
+        );
+      return true;
     case 'voidr:injectCollectorAndInit':
       (async () => {
         try {
@@ -893,20 +1096,22 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           const sessionId = (await readCollectorSessionId(targetTabId)) || canonicalSessionId;
 
           try {
-            chrome.runtime.sendMessage({
-              action: 'voidr:sessionStarted',
-              sessionId,
-              testCaseName:
-                (request.initOptions &&
-                  request.initOptions.meta &&
-                  request.initOptions.meta.testCase) ||
-                null,
-              mode:
-                (request.initOptions &&
-                  request.initOptions.meta &&
-                  request.initOptions.meta.mode) ||
-                'test-case',
-            });
+            chrome.runtime
+              .sendMessage({
+                action: 'voidr:sessionStarted',
+                sessionId,
+                testCaseName:
+                  (request.initOptions &&
+                    request.initOptions.meta &&
+                    request.initOptions.meta.testCase) ||
+                  null,
+                mode:
+                  (request.initOptions &&
+                    request.initOptions.meta &&
+                    request.initOptions.meta.mode) ||
+                  'test-case',
+              })
+              .catch(() => {});
           } catch (_) {}
 
           await setActiveRecording({
@@ -919,6 +1124,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             mode: request.initOptions?.meta?.mode || 'test-case',
             onboardingRunId: request.initOptions?.meta?.onboardingRunId,
             code: request.initOptions?.meta?.code || null,
+            applicationName: request.initOptions?.meta?.applicationName || null,
             evidence: request.initOptions?.meta?.evidence || null,
             flows: request.initOptions?.meta?.flows || [],
             sessionIds: [sessionId],
@@ -1234,35 +1440,49 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     case 'voidr:pauseSession':
     case 'voidr:resumeSession': {
       const method = request.action === 'voidr:pauseSession' ? 'pause' : 'resume';
-      const tabId = sender?.tab?.id;
-      if (!tabId) {
-        sendResponse({ success: false, error: 'No tab' });
-        return true;
-      }
-      chrome.scripting
-        .executeScript({
-          target: { tabId },
-          world: 'MAIN',
-          func: (m) => {
-            try {
-              if (window.VoidrCollector && typeof window.VoidrCollector[m] === 'function') {
-                window.VoidrCollector[m]();
-              }
-            } catch (_) {}
-          },
-          args: [method],
-        })
-        .then(() => sendResponse({ success: true }))
-        .catch((e) => sendResponse({ success: false, error: e?.message }));
+      (async () => {
+        const recording = await hydrateActiveRecording();
+        const tabIds = recording?.trackedTabIds?.length
+          ? recording.trackedTabIds
+          : sender?.tab?.id
+            ? [sender.tab.id]
+            : [];
+        if (tabIds.length === 0) {
+          sendResponse({ success: false, error: 'No tab' });
+          return;
+        }
+        await Promise.allSettled(
+          tabIds.map((tabId) =>
+            chrome.scripting.executeScript({
+              target: { tabId },
+              world: 'MAIN',
+              func: (m) => {
+                try {
+                  if (window.VoidrCollector && typeof window.VoidrCollector[m] === 'function') {
+                    window.VoidrCollector[m]();
+                  }
+                } catch (_) {}
+              },
+              args: [method],
+            }),
+          ),
+        );
+        sendResponse({ success: true });
+      })();
       return true;
     }
 
     case 'voidr:discardSession':
       (async () => {
-        const tabId = sender?.tab?.id;
+        const recording = await hydrateActiveRecording();
+        const tabIds = recording?.trackedTabIds?.length
+          ? recording.trackedTabIds
+          : sender?.tab?.id
+            ? [sender.tab.id]
+            : [];
         // End the collector session in the page so nothing else is sent.
-        try {
-          if (tabId) {
+        for (const tabId of tabIds) {
+          try {
             await chrome.scripting.executeScript({
               target: { tabId },
               world: 'MAIN',
@@ -1274,15 +1494,21 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 } catch (_) {}
                 // Wipe our session's keys so a native collector on the next
                 // navigation can't adopt (and pollute) the recorded session.
-                for (const k of ['voidr_jwt', 'voidr_session_id', 'voidr_user_id', 'voidr_last_activity']) {
+                for (const k of [
+                  'voidr_jwt',
+                  'voidr_session_id',
+                  'voidr_user_id',
+                  'voidr_last_activity',
+                ]) {
                   try {
                     sessionStorage.removeItem(k);
                   } catch (_) {}
                 }
               },
             });
-          }
-        } catch (_) {}
+          } catch (_) {}
+          await disableCspBypassForTab(tabId);
+        }
         // Drop the active recording state — session is discarded, not saved.
         try {
           await clearActiveRecording();
@@ -1513,7 +1739,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           // org-scoped session lookup can't see cross-org sessions).
           const onboardingCode =
             priorRecording?.code || priorRecording?.initOptions?.meta?.code || null;
-          let captureConfirmed = false;
+          const confirmedSessionIds = new Set();
           if (onboardingCode && globalAuthState.token) {
             for (const sid of allSessionIds) {
               try {
@@ -1530,11 +1756,20 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 );
                 const json = await res.json().catch(() => null);
                 if (res.ok && json?.success && Array.isArray(json?.data?.sessions)) {
-                  captureConfirmed = json.data.sessions.includes(sid) || captureConfirmed;
+                  // The service now returns structured entries
+                  // `{ collectorSessionId, capturedAt }`. Keep accepting the
+                  // legacy string array so extension and service can roll out
+                  // independently without creating a false negative.
+                  const linked = json.data.sessions.some((entry) =>
+                    typeof entry === 'string' ? entry === sid : entry?.collectorSessionId === sid,
+                  );
+                  if (linked) confirmedSessionIds.add(sid);
                 }
               } catch (_) {}
             }
           }
+          const captureConfirmed =
+            allSessionIds.length > 0 && allSessionIds.every((sid) => confirmedSessionIds.has(sid));
 
           // Persist a marker so the popup can show a success screen when reopened.
           // Onboarding-code captures pass `confirmed` from the link above so the
@@ -1543,12 +1778,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             const latestSid = sessionId || allSessionIds[allSessionIds.length - 1] || null;
             if (latestSid && (!activeRunId || onboardingCode)) {
               await chrome.storage.session.set({
-                voidrLastCapture: {
-                  sessionId: latestSid,
-                  capturedAt: Date.now(),
-                  confirmed: captureConfirmed,
-                  code: onboardingCode || undefined,
-                },
+                voidrLastCapture: buildLastCapture(priorRecording, latestSid, captureConfirmed),
               });
               // Reopen the assistant popup so the success screen shows automatically.
               try {
@@ -1565,9 +1795,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
               sessionId: sid,
               onboardingRunId: activeRunId,
               evidence: evidenceMeta || undefined,
+              confirmed: confirmedSessionIds.has(sid),
             };
             try {
-              chrome.runtime.sendMessage(capturedPayload);
+              chrome.runtime.sendMessage(capturedPayload).catch(() => {});
             } catch (_) {}
 
             try {
@@ -1597,6 +1828,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                         sessionId: sid,
                         onboardingRunId: activeRunId,
                         evidence: evidenceMeta || undefined,
+                        confirmed: confirmedSessionIds.has(sid),
                       },
                     ],
                   })
@@ -1605,38 +1837,50 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             } catch (_) {}
           }
 
-          // Refresh HttpOnly cookies for the environment bundle with the FINAL
-          // state before ending the session (cookies may have changed mid-run).
-          if (priorRecording?.initOptions?.captureEnvironmentBundle && sessionId) {
+          // Refresh cookies and end every tab collector. Each tab owns a
+          // separate rrweb stream, but all session ids are returned as one
+          // logical capture bundle.
+          for (const tabId of trackedForCleanup.length ? trackedForCleanup : [targetTabId]) {
+            const tabSessionId = priorRecording?.tabSessionIds?.[String(tabId)] || sessionId;
+            if (priorRecording?.initOptions?.captureEnvironmentBundle && tabSessionId) {
+              try {
+                const tab = await chrome.tabs.get(tabId).catch(() => null);
+                await captureAndUploadCookies(tabSessionId, tab?.url);
+              } catch (_) {}
+            }
             try {
-              const tab = await chrome.tabs.get(targetTabId).catch(() => null);
-              await captureAndUploadCookies(sessionId, tab?.url);
+              await chrome.scripting.executeScript({
+                target: { tabId },
+                world: 'MAIN',
+                func: () => {
+                  try {
+                    window.VoidrCollector &&
+                      window.VoidrCollector.endSession &&
+                      window.VoidrCollector.endSession();
+                  } catch (_) {}
+                  // Wipe our session's keys so a native collector on the next
+                  // navigation can't adopt (and pollute) the recorded session.
+                  for (const k of [
+                    'voidr_jwt',
+                    'voidr_session_id',
+                    'voidr_user_id',
+                    'voidr_last_activity',
+                  ]) {
+                    try {
+                      sessionStorage.removeItem(k);
+                    } catch (_) {}
+                  }
+                },
+              });
             } catch (_) {}
           }
 
-          // After broadcasting, request the collector to end the session
-          try {
-            await chrome.scripting.executeScript({
-              target: { tabId: targetTabId },
-              world: 'MAIN',
-              func: () => {
-                try {
-                  window.VoidrCollector &&
-                    window.VoidrCollector.endSession &&
-                    window.VoidrCollector.endSession();
-                } catch (_) {}
-                // Wipe our session's keys so a native collector on the next
-                // navigation can't adopt (and pollute) the recorded session.
-                for (const k of ['voidr_jwt', 'voidr_session_id', 'voidr_user_id', 'voidr_last_activity']) {
-                  try {
-                    sessionStorage.removeItem(k);
-                  } catch (_) {}
-                }
-              },
-            });
-          } catch (_) {}
-
-          sendResponse({ success: true, sessionId, sessionIds: allSessionIds });
+          sendResponse({
+            success: true,
+            sessionId,
+            sessionIds: allSessionIds,
+            confirmed: captureConfirmed,
+          });
         } catch (e) {
           sendResponse({
             success: false,
@@ -1838,10 +2082,12 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
         await syncAuthWithPlatform(tabId);
 
         // Notifica todas as abas da extensão sobre a autenticação bem-sucedida
-        chrome.runtime.sendMessage({
-          action: 'authenticationCompleted',
-          user: globalAuthState.user,
-        });
+        chrome.runtime
+          .sendMessage({
+            action: 'authenticationCompleted',
+            user: globalAuthState.user,
+          })
+          .catch(() => {});
       }, 3000);
     } else {
       // Sincronização normal para outras páginas
@@ -1885,7 +2131,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 });
 
 /**
- * 
+ *
  * @returns Resync auth reading Auth0 token from platform
  */
 async function resyncAuthFromPlatformTabs() {

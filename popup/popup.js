@@ -26,6 +26,29 @@ async function apiGet(endpoint) {
   return res.json();
 }
 
+function getCaptureSummaryContext(last = {}, pending = {}) {
+  const applicationId = last.applicationId || pending.appId || null;
+  const pendingMatchesCapture = !last.applicationId || pending.appId === last.applicationId;
+
+  return {
+    scenarioName:
+      last.scenarioName || (pendingMatchesCapture ? pending.scenarioName : null) || null,
+    appName: last.appName || (pendingMatchesCapture ? pending.appName : null) || null,
+    applicationId,
+  };
+}
+
+async function resolveApplicationName(applicationId) {
+  if (!applicationId) return null;
+
+  try {
+    const data = await apiGet(`/applications/${encodeURIComponent(applicationId)}`);
+    return data?.data?.name || null;
+  } catch (_) {
+    return null;
+  }
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
   chrome.runtime.onMessage.addListener((request) => {
     if (request?.action === 'voidr:sessionStarted') {
@@ -45,6 +68,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           request.sessionId,
           testCaseRecordingContext.scenarioName,
           testCaseRecordingContext.appName,
+          request.confirmed === true,
         );
         testCaseRecordingContext = null;
       }
@@ -87,8 +111,15 @@ async function initializeExtension() {
     const last = cap?.voidrLastCapture;
     if (last?.sessionId && Date.now() - (last.capturedAt || 0) < 15 * 60 * 1000) {
       const pend = cap?.voidrPendingTestCase || {};
+      const summary = getCaptureSummaryContext(last, pend);
       await chrome.storage.session.remove(['voidrLastCapture', 'voidrPendingTestCase']);
-      showSessionSummaryView(last.sessionId, pend.scenarioName, pend.appName, !!last.confirmed);
+      const appName = summary.appName || (await resolveApplicationName(summary.applicationId));
+      showSessionSummaryView(
+        last.sessionId,
+        summary.scenarioName,
+        appName || summary.applicationId,
+        !!last.confirmed,
+      );
       return;
     }
 
@@ -499,6 +530,7 @@ async function handleStartTestCaseRecording(app) {
         testCaseName: scenarioName,
         mode: 'test-case',
         slug: app._id,
+        applicationName: app.name,
         applicationId: app._id,
         apiKey,
       },
@@ -583,12 +615,25 @@ function showSessionSummaryView(sessionId, scenarioName, appName, preConfirmed =
     bindActions();
   };
 
+  const renderPending = () => {
+    contentDiv.innerHTML = `
+      <div class="summary-view">
+        <div class="summary-icon-wrap summary-icon-wrap--pending loading-state">${getIcon('Loader', 36)}</div>
+        <h2 class="summary-title">Sessão enviada</h2>
+        <p class="summary-desc">A gravação foi recebida e ainda está sendo processada. Ela já pode aparecer na plataforma; não é necessário gravar novamente.</p>
+        ${card}
+        ${actions}
+      </div>
+    `;
+    bindActions();
+  };
+
   const renderFailure = () => {
     contentDiv.innerHTML = `
       <div class="summary-view">
         <div class="summary-icon-wrap summary-icon-wrap--error">${getIcon('AlertCircle', 36)}</div>
-        <h2 class="summary-title">Gravação não confirmada</h2>
-        <p class="summary-desc">A sessão foi finalizada, mas não foi encontrada no servidor. Os dados podem não ter sido salvos — tente gravar novamente.</p>
+        <h2 class="summary-title">Não foi possível finalizar</h2>
+        <p class="summary-desc">A extensão não recebeu um identificador da gravação. Tente novamente.</p>
         ${card}
         ${actions}
       </div>
@@ -621,7 +666,9 @@ function showSessionSummaryView(sessionId, scenarioName, appName, preConfirmed =
       }
     });
 
-  // A indexação no servidor pode atrasar 1-2s após o stop; tenta algumas vezes.
+  // A indexação no servidor pode atrasar após o stop. Não transforme uma sessão
+  // que já tem id canônico em erro: em capturas por código ela pode pertencer à
+  // organização do código, e o lookup autenticado da extensão não a enxerga.
   (async () => {
     for (let attempt = 0; attempt < 3; attempt++) {
       if (await validateOnce()) {
@@ -630,7 +677,7 @@ function showSessionSummaryView(sessionId, scenarioName, appName, preConfirmed =
       }
       await new Promise((r) => setTimeout(r, 1200));
     }
-    renderFailure();
+    renderPending();
   })();
 }
 
@@ -644,6 +691,7 @@ function showOnboardingRecordingView(context) {
   const flows = Array.isArray(context.criticalFlows || context.flows)
     ? context.criticalFlows || context.flows
     : [];
+  const recordingTargets = Array.isArray(context.recordingTargets) ? context.recordingTargets : [];
 
   contentDiv.innerHTML = `
     <div class="rec-view">
@@ -652,7 +700,7 @@ function showOnboardingRecordingView(context) {
           <span class="rec-dot"></span>
         </div>
         <h2 class="rec-title">Onboarding Recording</h2>
-        <p class="rec-desc">Execute os fluxos abaixo e inicie a gravação.</p>
+        <p class="rec-desc">${recordingTargets.length > 1 ? `Vamos gravar ${recordingTargets.length} telas na mesma sessão. Alterne entre elas para demonstrar o fluxo.` : 'Execute os fluxos abaixo e inicie a gravação.'}</p>
       </div>
 
       <div class="rec-card">
@@ -684,6 +732,28 @@ function showOnboardingRecordingView(context) {
                 <div class="rec-flow-item">
                   <span class="rec-flow-num">${i + 1}</span>
                   <span class="rec-flow-name">${escapeHtml(f.name || f.id || 'Flow ' + (i + 1))}</span>
+                </div>
+              `,
+                )
+                .join('')}
+            </div>
+          </div>
+        `
+            : ''
+        }
+
+        ${
+          recordingTargets.length > 1
+            ? `
+          <div class="rec-field">
+            <span class="rec-field-label">Telas da sessão</span>
+            <div class="rec-flows">
+              ${recordingTargets
+                .map(
+                  (target, i) => `
+                <div class="rec-flow-item">
+                  <span class="rec-flow-num">${i + 1}</span>
+                  <span class="rec-flow-name">${escapeHtml(target.name)}</span>
                 </div>
               `,
                 )
@@ -733,6 +803,49 @@ async function handleStartOnboardingRecording() {
     } catch (_) {}
   }
 
+  const recordingTargets = Array.isArray(onboardingRecordingContext.recordingTargets)
+    ? onboardingRecordingContext.recordingTargets
+    : [];
+  if (recordingTargets.length > 1) {
+    chrome.runtime.sendMessage(
+      {
+        action: 'voidr:startMultiTabRecording',
+        recordingTargets,
+        captureBundleId:
+          onboardingRecordingContext.captureBundleId || onboardingRecordingContext.code,
+        testCaseName: onboardingRecordingContext.sessionName || 'Fluxo entre telas',
+        mode: 'onboarding',
+        onboardingRunId: onboardingRecordingContext.onboardingRunId,
+        code: onboardingRecordingContext.code,
+        flows: onboardingRecordingContext.criticalFlows || onboardingRecordingContext.flows || [],
+        initOptions: {
+          user: { id: 'voidr-test-case-assistant' },
+          apiKey: onboardingRecordingContext.apiKey,
+          system: true,
+          samplingRate: 1,
+          captureEnvironmentBundle: true,
+          meta: {
+            testCase: onboardingRecordingContext.sessionName || 'Fluxo entre telas',
+            mode: 'onboarding',
+            code: onboardingRecordingContext.code,
+          },
+        },
+      },
+      (response) => {
+        if (!response?.success) {
+          showNotification(response?.error || 'Não foi possível iniciar as telas.', 'error', 5000);
+          if (btn) {
+            btn.textContent = 'Iniciar gravação';
+            btn.disabled = false;
+          }
+          return;
+        }
+        window.close();
+      },
+    );
+    return;
+  }
+
   let targetHost = null;
   try {
     if (onboardingRecordingContext.targetUrl) {
@@ -751,6 +864,8 @@ async function handleStartOnboardingRecording() {
         mode: 'onboarding',
         slug: onboardingRecordingContext.applicationId || onboardingRecordingContext.appId,
         applicationId: onboardingRecordingContext.applicationId || onboardingRecordingContext.appId,
+        applicationName:
+          onboardingRecordingContext.applicationName || onboardingRecordingContext.appName,
         apiKey: onboardingRecordingContext.apiKey,
         onboardingRunId: onboardingRecordingContext.onboardingRunId,
         code: onboardingRecordingContext.code,
