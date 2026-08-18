@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Voidr Session Capture</title>
+    <link rel="stylesheet" href="popup.css" />
+    <script src="../config/env.js"></script>
+    <!-- Dev-only overrides (gitignored) — loaded only if the file exists,
+         so production consoles stay free of ERR_FILE_NOT_FOUND noise -->
+    <script src="../config/env-local-loader.js"></script>
+    <script src="../assets/lucide-icons.js"></script>
+  </head>
+  <body>
+    <div class="extension-container">
+      <div class="extension-header">
+        <div class="logo-container">
+          <img src="../assets/logo-light.svg" alt="Voidr" class="logo-icon" />
+        </div>
+      </div>
+
+      <div class="extension-content" id="main-extension-content"></div>
+
+      <div class="extension-footer">
+        <div class="version">v1.0.0</div>
+      </div>
+    </div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
