@@ -602,6 +602,17 @@ async function armCollectorTakeoverWatchdog(tabId) {
   } catch (_) {}
 }
 
+// O manifest declarava js E css juntos; executeScript injeta so o js. Sem o css
+// o painel e montado no DOM mas fica sem position/z-index/fundo — invisivel, e
+// sem nenhum erro, porque do ponto de vista do JS deu tudo certo.
+async function ensureContentCss(tabId) {
+  try {
+    await chrome.scripting.insertCSS({ target: { tabId }, files: ['content/content.css'] });
+  } catch (e) {
+    console.error('[Voidr] falha ao injetar content.css —', e?.message || e);
+  }
+}
+
 async function sendResumeRecordingUi(tabId, recording) {
   const payload = {
     action: 'voidr:resumeRecordingUI',
@@ -612,6 +623,8 @@ async function sendResumeRecordingUi(tabId, recording) {
     flows: recording.flows,
     applicationId: recording.initOptions?.applicationId || null,
   };
+
+  await ensureContentCss(tabId);
 
   // Os dois caminhos engoliam a excecao, entao painel ausente era indistinguivel
   // de painel montado. Agora cada ramo diz o que aconteceu.
@@ -1396,6 +1409,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
               target: { tabId: targetTabId },
               files: ['content/content.js'],
             });
+            await ensureContentCss(targetTabId);
             await new Promise((r) => setTimeout(r, 100));
             await chrome.tabs.sendMessage(targetTabId, payload);
             sendResponse({ success: true, forwarded: true, injected: true, tabId: targetTabId });
@@ -1475,6 +1489,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
               target: { tabId: targetTabId },
               files: ['content/content.js'],
             });
+            await ensureContentCss(targetTabId);
             await new Promise((r) => setTimeout(r, 100));
             await chrome.tabs.sendMessage(targetTabId, payload);
           }
