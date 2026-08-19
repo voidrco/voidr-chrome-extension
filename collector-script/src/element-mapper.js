@@ -10,7 +10,14 @@
  * fingerprint deduplicates screens that share the same visual state.
  */
 
-import { INTERACTIVE_SELECTOR, nameFromHref } from './utils/interactive-element.js';
+import {
+  collectRecorderRoots,
+  INTERACTIVE_SELECTOR,
+  isElementVisible,
+  isInsideRecorderUi,
+  isRecorderUi,
+  nameFromHref,
+} from './utils/interactive-element.js';
 
 const MAX_LABEL_LENGTH = 120;
 const MAX_TEXT_LENGTH = 50;
@@ -213,6 +220,9 @@ export class ElementMapper {
 
   onInteraction(element, interactionType) {
     if (!element || !this.currentUrl) return;
+    // The periodic scan filters these; an interaction must too, or a hidden
+    // control reaches the screen map as a locator no test can use.
+    if (isRecorderUi(element) || !isElementVisible(element)) return;
     try {
       const descriptor = this.describeElement(element);
       if (!descriptor) return;
@@ -231,8 +241,10 @@ export class ElementMapper {
     if (!this.currentUrl) return;
     try {
       const elements = document.querySelectorAll(INTERACTIVE_SELECTOR);
+      const recorderRoots = collectRecorderRoots(document);
       const descriptors = [];
       for (const el of elements) {
+        if (isInsideRecorderUi(el, recorderRoots)) continue;
         if (!this._isVisible(el)) continue;
         const descriptor = this.describeElement(el);
         if (!descriptor) continue;

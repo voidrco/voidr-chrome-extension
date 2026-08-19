@@ -1,7 +1,12 @@
 import { state } from '../state.js';
 import { isTasy, TASY_MASK_SELECTORS } from '../constants.js';
 import { generateSelector, getTextContent, throttle, truncate } from '../utils/helpers.js';
-import { getAccessibleLabel, resolveInteractiveTarget } from '../utils/interactive-element.js';
+import {
+  getAccessibleLabel,
+  isElementVisible,
+  isRecorderUi,
+  resolveInteractiveTarget,
+} from '../utils/interactive-element.js';
 
 const TASY_MASK_SELECTOR = TASY_MASK_SELECTORS.join(', ');
 
@@ -64,6 +69,13 @@ function pushClickEvent(event) {
   if (!rawTarget?.tagName) return;
   const target = resolveInteractiveTarget(path) || rawTarget;
   if (shouldIgnore(target) || shouldIgnore(rawTarget)) return;
+  if (isRecorderUi(target)) return;
+  // A UI that forwards the click to a hidden native control (Azure B2C behind a
+  // custom design system) re-dispatches it there, so the recording ends up with
+  // the invisible element the test can never act on. The visible click is
+  // already recorded milliseconds earlier — dropping this one keeps it, and
+  // keeps the effects attributed to it.
+  if (!isElementVisible(target)) return;
 
   const label = getAccessibleLabel(target) || getTextContent(target);
   const href = typeof target.getAttribute === 'function' ? target.getAttribute('href') : null;

@@ -10,7 +10,7 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -26,8 +26,30 @@ jobs:
       - name: Run tests
         run: npm test
 
+      # The browser download is the least predictable step in this job — a slow
+      # one has already burned the whole budget and cancelled the run before the
+      # performance test could start. Keyed on the resolved Playwright version,
+      # since that is what decides which build is needed.
+      - name: Resolve Playwright version
+        id: pw
+        run: echo "version=$(node -p "require('playwright/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        id: pw-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ steps.pw.outputs.version }}
+
+      # System libraries live outside the cached directory, so they are
+      # installed on every run — that part is apt-only and comparatively quick.
       - name: Install Chromium
-        run: npx playwright install --with-deps chromium
+        run: |
+          if [ "${{ steps.pw-cache.outputs.cache-hit }}" = "true" ]; then
+            npx playwright install-deps chromium
+          else
+            npx playwright install --with-deps chromium
+          fi
 
       - name: Run client-side performance tests
         run: npm run test:performance
