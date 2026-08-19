@@ -8,13 +8,18 @@
     "extension:dev": "echo 'Open chrome://extensions and Load unpacked → this folder'",
     "extension:clean": "rm -f dist/voidr-extension.zip",
     "extension:prepare": "mkdir -p dist",
-    "extension:build": "npm run extension:prepare && zip -r dist/voidr-extension.zip . -x 'node_modules/*' '.git/*' 'dist/*' '**/*.map' '**/*.test.*' '**/*.spec.*' '**/.DS_Store' '**/.env*'",
+    "extension:build": "npm run verify && npm run extension:clean && npm run extension:prepare && zip -r dist/voidr-extension.zip manifest.json assets background config content icons popup vendor -x 'config/env.local.js' 'config/env.local.example.js' '**/*.map' '**/*.test.*' '**/*.spec.*' '**/.DS_Store'",
     "extension:minify:js": "npx terser content/content.js -o content/content.min.js && npx terser popup/popup.js -o popup/popup.min.js && npx terser background/background.js -o background/background.min.js",
     "extension:minify:css": "npx cleancss -o content/content.min.css content/content.css && npx cleancss -o popup/popup.min.css popup/popup.css",
-    "extension:build:minified": "npm run extension:minify:js && npm run extension:minify:css && npm run extension:build"
+    "extension:build:minified": "npm run extension:minify:js && npm run extension:minify:css && npm run extension:build",
+    "collector:build": "cd collector-script && npm run build && cd .. && cp collector-script/dist/recorder.min.js vendor/recorder.min.js",
+    "collector:setup": "cd collector-script && npm ci",
+    "verify": "node scripts/verify-package.mjs",
+    "e2e": "node tests/e2e-flow.mjs"
   },
   "devDependencies": {
     "clean-css-cli": "^5.6.2",
+    "playwright": "^1.62.1",
     "prettier": "^3.6.2",
     "terser": "^5.31.0"
   }

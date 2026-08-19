@@ -395,10 +395,16 @@ function showRecordingSetupView(app) {
 
         <div id="setup-error" class="code-error"></div>
 
+        <p class="recording-disclosure">
+          Ao continuar, a Voidr captura interações, conteúdo visível, URLs e cookies necessários
+          para reproduzir esta sessão e envia esses dados com segurança à sua organização.
+          <a href="https://www.voidr.co/pt-br/legal/politica-privacidade" target="_blank" rel="noopener noreferrer">Política de Privacidade</a>
+        </p>
+
         <div class="rec-actions">
           <button id="start-recording-btn" class="btn-primary btn-flex">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="8,5 19,12 8,19"/></svg>
-            Iniciar gravação
+            Concordo e iniciar
           </button>
           <button id="back-setup-btn" class="btn-ghost">Voltar</button>
         </div>
@@ -423,7 +429,28 @@ function showRecordingSetupView(app) {
   });
 }
 
+// Pede a permissao de host da aba alvo no clique do usuario. Precisa rodar antes
+// de qualquer await: o gesto expira e o Chrome recusa o prompt depois disso.
+function ensureHostPermission(originPattern) {
+  if (!originPattern) return Promise.resolve(true);
+  // Sem await antes daqui: qualquer um consome o gesto do usuario e o Chrome
+  // recusa o prompt. request() ja resolve true na hora se a permissao existe.
+  return chrome.permissions.request({ origins: [originPattern] }).catch(() => false);
+}
+
+function hostOf(url) {
+  try {
+    return new URL(url).origin + '/*';
+  } catch (_) {
+    return null;
+  }
+}
+
 async function handleStartTestCaseRecording(app) {
+  if (!(await ensureHostPermission(hostOf(app.url)))) {
+    showNotification('Permissao negada para o site alvo — a gravacao nao pode comecar.', 'error', 5000);
+    return;
+  }
   const nameInput = document.getElementById('scenario-name-input');
   const scenarioName = (nameInput?.value || '').trim();
   const errorDiv = document.getElementById('setup-error');
@@ -458,7 +485,7 @@ async function handleStartTestCaseRecording(app) {
       errorDiv.style.display = 'block';
     }
     if (btn) {
-      btn.textContent = 'Iniciar gravação';
+      btn.textContent = 'Concordo e iniciar';
       btn.disabled = false;
     }
     return;
@@ -512,7 +539,7 @@ async function handleStartTestCaseRecording(app) {
             : 'Este produto não tem uma URL configurada. Abra o site-alvo e tente novamente.');
         showNotification('Could not start: ' + msg, 'error', 4000);
         if (btn) {
-          btn.textContent = 'Iniciar gravação';
+          btn.textContent = 'Concordo e iniciar';
           btn.disabled = false;
         }
         currentView = 'recording-setup';
@@ -694,10 +721,16 @@ function showOnboardingRecordingView(context) {
             : ''
         }
 
+        <p class="recording-disclosure">
+          Ao continuar, a Voidr captura interações, conteúdo visível, URLs e cookies necessários
+          para reproduzir esta sessão e envia esses dados com segurança à sua organização.
+          <a href="https://www.voidr.co/pt-br/legal/politica-privacidade" target="_blank" rel="noopener noreferrer">Política de Privacidade</a>
+        </p>
+
         <div class="rec-actions">
           <button id="onboarding-start-btn" class="btn-primary btn-flex">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="8,5 19,12 8,19"/></svg>
-            Iniciar gravação
+            Concordo e iniciar
           </button>
           <button id="onboarding-cancel-btn" class="btn-ghost">Cancelar</button>
         </div>
@@ -715,7 +748,16 @@ function showOnboardingRecordingView(context) {
 }
 
 async function handleStartOnboardingRecording() {
-  if (!onboardingRecordingContext) return;
+  if (!onboardingRecordingContext) {
+    showNotification('Sem contexto de onboarding — recarregue e pareie o codigo de novo.', 'error', 6000);
+    return;
+  }
+  const alvo = hostOf(onboardingRecordingContext.targetUrl);
+  const concedida = await ensureHostPermission(alvo);
+  if (!concedida) {
+    showNotification(`Sem permissao para ${alvo || '(alvo desconhecido)'} — gravacao cancelada.`, 'error', 6000);
+    return;
+  }
   const btn = document.getElementById('onboarding-start-btn');
   if (btn) {
     btn.textContent = 'Iniciando...';
@@ -740,6 +782,24 @@ async function handleStartOnboardingRecording() {
     }
   } catch (_) {}
 
+  // O resumo pos-gravacao le voidrPendingTestCase do storage. So o fluxo de
+  // test-case escrevia isso, entao onboarding caia em 'Sem nome' / '—'.
+  const ctx = onboardingRecordingContext;
+  const primeiroFluxo = (ctx.criticalFlows || ctx.flows || [])[0];
+  let hostAlvo = '';
+  try { hostAlvo = ctx.targetUrl ? new URL(ctx.targetUrl).host : ''; } catch (_) {}
+  try {
+    await chrome.storage.session.set({
+      voidrPendingTestCase: {
+        scenarioName:
+          ctx.sessionName || primeiroFluxo?.name || ctx.name || 'Sessão de onboarding',
+        appName:
+          ctx.applicationName || ctx.appName || ctx.application?.name || hostAlvo || '—',
+        appId: ctx.applicationId || ctx.appId,
+      },
+    });
+  } catch (_) {}
+
   chrome.runtime.sendMessage(
     {
       action: 'voidr:forwardToTargetTab',
@@ -759,10 +819,11 @@ async function handleStartOnboardingRecording() {
     },
     (response) => {
       if (!response?.success) {
-        const msg = response?.error || 'Abra a aba do site-alvo e tente novamente.';
-        showNotification('Could not start: ' + msg, 'error', 4000);
+        const msg =
+          response?.error || chrome.runtime.lastError?.message || 'sem resposta do background';
+        showNotification('Nao iniciou: ' + msg, 'error', 8000);
         if (btn) {
-          btn.textContent = 'Iniciar gravação';
+          btn.textContent = 'Concordo e iniciar';
           btn.disabled = false;
         }
         return;

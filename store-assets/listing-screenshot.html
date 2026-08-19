@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Voidr Testing Assistant — Store Screenshot</title>
+    <link rel="stylesheet" href="../popup/popup.css" />
+    <script src="../assets/lucide-icons.js"></script>
+    <style>
+      html,
+      body {
+        width: 1280px;
+        height: 800px;
+        overflow: hidden;
+      }
+
+      body {
+        display: grid;
+        grid-template-columns: 1fr 430px;
+        align-items: center;
+        gap: 76px;
+        padding: 60px 84px;
+        background:
+          radial-gradient(circle at 82% 18%, rgba(255, 255, 255, 0.08), transparent 28%),
+          linear-gradient(135deg, #050607 0%, #0a0b0d 100%);
+      }
+
+      .copy {
+        max-width: 610px;
+      }
+
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 28px;
+        padding: 7px 12px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 999px;
+        color: rgba(255, 255, 255, 0.58);
+        font-size: 12px;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+
+      .eyebrow-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: #34d399;
+        box-shadow: 0 0 16px rgba(52, 211, 153, 0.7);
+      }
+
+      h1 {
+        max-width: 590px;
+        margin: 0 0 24px;
+        color: rgba(255, 255, 255, 0.96);
+        font-size: 64px;
+        line-height: 1.02;
+        letter-spacing: -0.045em;
+      }
+
+      .lead {
+        max-width: 560px;
+        color: rgba(255, 255, 255, 0.55);
+        font-size: 19px;
+        line-height: 1.55;
+      }
+
+      .window {
+        width: 400px;
+        height: 620px;
+        overflow: hidden;
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        border-radius: 18px;
+        background: #050607;
+        box-shadow: 0 28px 90px rgba(0, 0, 0, 0.55);
+      }
+
+      .window .extension-container {
+        min-height: 620px;
+        max-height: 620px;
+      }
+
+      .window-chrome {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        height: 34px;
+        padding: 0 14px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        background: #111315;
+      }
+
+      .window-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.2);
+      }
+
+      .window .extension-header {
+        padding-top: 16px;
+      }
+
+      .window .extension-content {
+        justify-content: center;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="copy">
+      <div class="eyebrow"><span class="eyebrow-dot"></span>Extensão oficial Voidr</div>
+      <h1>Capture jornadas. Transforme-as em testes.</h1>
+      <p class="lead">
+        Registre sessões de navegação com controle explícito e conecte o resultado à plataforma
+        Voidr para onboarding, criação de testes e evidências de execução.
+      </p>
+    </main>
+
+    <section class="window" aria-label="Interface do Voidr Testing Assistant">
+      <div class="window-chrome" aria-hidden="true">
+        <span class="window-dot"></span><span class="window-dot"></span
+        ><span class="window-dot"></span>
+      </div>
+      <div class="extension-container">
+        <div class="extension-header">
+          <div class="logo-container">
+            <img src="../assets/logo-light.svg" alt="Voidr" class="logo-icon" />
+          </div>
+        </div>
+
+        <div class="extension-content">
+          <div class="main-view">
+            <div class="main-hero">
+              <div class="main-icon-wrap" id="camera-icon"></div>
+              <h2 class="main-title">Session Capture</h2>
+              <p class="main-desc">Grave sessões para gerar casos de teste ou onboarding.</p>
+            </div>
+
+            <button class="btn-primary btn-block" type="button">
+              <span id="video-icon"></span>
+              Gravar Sessão
+            </button>
+
+            <div class="separator">
+              <span class="separator-line"></span>
+              <span class="separator-text">ou</span>
+              <span class="separator-line"></span>
+            </div>
+
+            <div class="code-card">
+              <div class="code-label">Onboarding Code</div>
+              <div class="code-input-row">
+                <input class="code-input" placeholder="Ex: VDR-A7X3K2" />
+                <button class="btn-primary btn-sm" type="button">Conectar</button>
+              </div>
+              <p class="code-hint">
+                Cole o código exibido no assistente Voidr para iniciar a gravação.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div class="extension-footer"><div class="version">v1.0.0</div></div>
+      </div>
+    </section>
+
+    <script>
+      document.getElementById('camera-icon').innerHTML = getIcon('Camera', 28);
+      document.getElementById('video-icon').innerHTML = getIcon('Video', 16);
+    </script>
+  </body>
+</html>

@@ -1,0 +1,9 @@
+node_modules
+dist
+!dist/.gitkeep
+.gitnexus
+.claude/
+CLAUDE.md
+AGENTS.md
+.DS_Store
+performance/results

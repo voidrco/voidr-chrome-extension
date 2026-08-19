@@ -384,14 +384,6 @@ async function captureAndUploadCookies(sessionId, pageUrl) {
   }
 }
 
-async function fetchCollectorCode() {
-  const cdnUrl =
-    'https://cdn.voidr.co/voidr-collector/default/latest/recorder.min.js?v=' + Date.now();
-  const res = await fetch(cdnUrl);
-  if (!res.ok) throw new Error(`Failed to fetch collector: ${res.status}`);
-  return res.text();
-}
-
 // ── CSP bypass per recording tab ─────────────────────────────────────────────
 // Strict CSP `connect-src` on auth providers (e.g. Microsoft B2C used by Blip)
 // blocks the collector from POSTing events to collector.voidr.co. We use
@@ -473,18 +465,11 @@ async function enableCspBypassForRecording(recording) {
   }
 }
 
-async function injectCollectorInTab(tabId, collectorCode) {
+async function injectCollectorInTab(tabId) {
   await chrome.scripting.executeScript({
     target: { tabId },
     world: 'MAIN',
-    func: (code) => {
-      try {
-        (0, eval)(code);
-      } catch (e) {
-        console.error('[Voidr] Collector eval error', e);
-      }
-    },
-    args: [collectorCode],
+    files: ['vendor/recorder.min.js'],
   });
 }
 
@@ -617,6 +602,17 @@ async function armCollectorTakeoverWatchdog(tabId) {
   } catch (_) {}
 }
 
+// O manifest declarava js E css juntos; executeScript injeta so o js. Sem o css
+// o painel e montado no DOM mas fica sem position/z-index/fundo — invisivel, e
+// sem nenhum erro, porque do ponto de vista do JS deu tudo certo.
+async function ensureContentCss(tabId) {
+  try {
+    await chrome.scripting.insertCSS({ target: { tabId }, files: ['content/content.css'] });
+  } catch (e) {
+    console.error('[Voidr] falha ao injetar content.css —', e?.message || e);
+  }
+}
+
 async function sendResumeRecordingUi(tabId, recording) {
   const payload = {
     action: 'voidr:resumeRecordingUI',
@@ -628,17 +624,33 @@ async function sendResumeRecordingUi(tabId, recording) {
     applicationId: recording.initOptions?.applicationId || null,
   };
 
+  await ensureContentCss(tabId);
+
+  // Os dois caminhos engoliam a excecao, entao painel ausente era indistinguivel
+  // de painel montado. Agora cada ramo diz o que aconteceu.
   try {
     await chrome.tabs.sendMessage(tabId, payload);
-  } catch (_) {
-    try {
-      await chrome.scripting.executeScript({
-        target: { tabId },
-        files: ['content/content.js'],
-      });
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      await chrome.tabs.sendMessage(tabId, payload);
-    } catch (_) {}
+    console.log('[Voidr] painel: content script ja estava na aba, mensagem entregue');
+    return;
+  } catch (e1) {
+    console.warn('[Voidr] painel: sendMessage falhou —', e1?.message || e1);
+  }
+
+  try {
+    await chrome.scripting.executeScript({ target: { tabId }, files: ['content/content.js'] });
+    console.log('[Voidr] painel: content script injetado sob demanda');
+  } catch (e2) {
+    console.error('[Voidr] painel: injecao do content script FALHOU —', e2?.message || e2);
+    return;
+  }
+
+  await new Promise((resolve) => setTimeout(resolve, 300));
+
+  try {
+    await chrome.tabs.sendMessage(tabId, payload);
+    console.log('[Voidr] painel: mensagem entregue apos injecao');
+  } catch (e3) {
+    console.error('[Voidr] painel: mensagem falhou mesmo apos injecao —', e3?.message || e3);
   }
 }
 
@@ -649,11 +661,8 @@ async function resumeActiveRecordingInTab(tabId) {
   const tab = await chrome.tabs.get(tabId).catch(() => null);
   if (!tab?.url || !isHttpUrl(tab.url)) return false;
 
-  // Fetch the bundle BEFORE the teardown so the native collector has no
-  // CDN-roundtrip window to keep flushing between teardown and our injection.
-  const collectorCode = await fetchCollectorCode();
   await teardownExistingCollectorInTab(tabId);
-  await injectCollectorInTab(tabId, collectorCode);
+  await injectCollectorInTab(tabId);
   await initializeCollectorInTab(tabId, recording.initOptions);
   await armCollectorTakeoverWatchdog(tabId);
   await attachTrackedRecordingTab(tabId, { makeCurrent: true });
@@ -804,6 +813,37 @@ function reloadTabAndWaitForLoad(tabId, timeoutMs = 15000) {
 // recording "runs" but nothing is saved. declarativeNetRequest only strips
 // headers on future navigations, so those tabs need one reload. A CSP-blocked
 // fetch rejects immediately even in no-cors mode, which makes a cheap probe.
+// Sem <all_urls> no manifest, o content script nao volta sozinho depois que a
+// aba recarrega (e o fluxo de gravacao recarrega, para dropar o CSP). Sem ele a
+// barra de gravacao some — e o Stop junto — enquanto o collector segue gravando.
+// Registrar dinamicamente para o dominio concedido devolve esse comportamento
+// sem reabrir acesso a todos os sites.
+const ID_CS_ALVO = 'voidr-target-content';
+
+async function ensureTargetContentScript(tabId) {
+  try {
+    const tab = await chrome.tabs.get(tabId).catch(() => null);
+    if (!tab?.url || !/^https?:/i.test(tab.url)) return;
+    const matches = [new URL(tab.url).origin + '/*'];
+    const cfg = {
+      id: ID_CS_ALVO,
+      matches,
+      js: ['content/content.js'],
+      css: ['content/content.css'],
+      runAt: 'document_end',
+      persistAcrossSessions: false,
+    };
+    const jaTem = await chrome.scripting
+      .getRegisteredContentScripts({ ids: [ID_CS_ALVO] })
+      .catch(() => []);
+    if (jaTem.length) await chrome.scripting.updateContentScripts([cfg]);
+    else await chrome.scripting.registerContentScripts([cfg]);
+    console.log('[Voidr] content script registrado para', matches[0]);
+  } catch (e) {
+    console.error('[Voidr] falha ao registrar content script no alvo', e?.message || e);
+  }
+}
+
 async function tabBlocksCollectorConnects(tabId, collectorUrl) {
   try {
     const res = await chrome.scripting.executeScript({
@@ -854,6 +894,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             return;
           }
 
+          // Antes de qualquer reload: garante que o content script volte sozinho.
+          await ensureTargetContentScript(targetTabId);
+
           // Strip CSP for the recording tab so collector can POST to voidr.co
           // across navigations (auth providers like Microsoft B2C block connect-src
           // to collector.voidr.co otherwise). Rule is removed on session stop.
@@ -879,21 +922,17 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             forcedSessionId: canonicalSessionId,
           };
 
-          // If the app already embeds a running collector, stop it before we
-          // inject ours (avoids the two-recorder race and clears the cached JWT
-          // that would skip our forced session's /init). Bundle is fetched
-          // BEFORE the teardown so the native collector has no CDN-roundtrip
-          // window to keep flushing between teardown and injection.
-          const collectorCode = await fetchCollectorCode();
+          // Stop a native collector before injecting the packaged one.
           await teardownExistingCollectorInTab(targetTabId);
-          await injectCollectorInTab(targetTabId, collectorCode);
+          await injectCollectorInTab(targetTabId);
           await initializeCollectorInTab(targetTabId, initOptions);
           await armCollectorTakeoverWatchdog(targetTabId);
 
           const sessionId = (await readCollectorSessionId(targetTabId)) || canonicalSessionId;
 
           try {
-            chrome.runtime.sendMessage({
+            chrome.runtime
+              .sendMessage({
               action: 'voidr:sessionStarted',
               sessionId,
               testCaseName:
@@ -906,7 +945,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                   request.initOptions.meta &&
                   request.initOptions.meta.mode) ||
                 'test-case',
-            });
+            })
+              .catch(() => {});
           } catch (_) {}
 
           await setActiveRecording({
@@ -925,10 +965,15 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             startedAt: Date.now(),
           });
 
-          // The CSP reload wiped the recording panel the content script had
-          // rendered before sending this message — restore it now.
-          if (reloadedForCsp && activeRecording) {
+          // Redesenha o painel sempre, nao so quando houve reload por CSP. Sem
+          // <all_urls> o content script entra tarde (injetado pelo fallback) e
+          // pode nao ter montado o painel — e sem painel nao ha botao Parar,
+          // entao a gravacao roda sem o usuario conseguir encerrar.
+          // sendResumeRecordingUi e idempotente: o content script remove os
+          // elementos antigos antes de montar.
+          if (activeRecording) {
             await sendResumeRecordingUi(targetTabId, activeRecording);
+            console.log('[Voidr] painel de gravacao (re)desenhado', { reloadedForCsp });
           }
 
           // Capture HttpOnly cookies (invisible to the page) for the environment
@@ -1364,6 +1409,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
               target: { tabId: targetTabId },
               files: ['content/content.js'],
             });
+            await ensureContentCss(targetTabId);
             await new Promise((r) => setTimeout(r, 100));
             await chrome.tabs.sendMessage(targetTabId, payload);
             sendResponse({ success: true, forwarded: true, injected: true, tabId: targetTabId });
@@ -1443,6 +1489,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
               target: { tabId: targetTabId },
               files: ['content/content.js'],
             });
+            await ensureContentCss(targetTabId);
             await new Promise((r) => setTimeout(r, 100));
             await chrome.tabs.sendMessage(targetTabId, payload);
           }
@@ -1838,10 +1885,13 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
         await syncAuthWithPlatform(tabId);
 
         // Notifica todas as abas da extensão sobre a autenticação bem-sucedida
-        chrome.runtime.sendMessage({
-          action: 'authenticationCompleted',
-          user: globalAuthState.user,
-        });
+        // Sem receptor (popup fechado) a promise rejeita e suja o console do worker.
+        chrome.runtime
+          .sendMessage({
+            action: 'authenticationCompleted',
+            user: globalAuthState.user,
+          })
+          .catch(() => {});
       }, 3000);
     } else {
       // Sincronização normal para outras páginas
