@@ -31,12 +31,72 @@ export const INTERACTIVE_SELECTOR = [
   '[data-test-id]',
 ].join(', ');
 
+/** Roots of the recorder's own overlay — app DOM to nobody, noise to everybody. */
+export const RECORDER_UI_SELECTOR = [
+  '.voidr-rec-panel',
+  '.voidr-rec-border',
+  '.voidr-rec-countdown',
+].join(', ');
+
 function attr(el, name) {
   try {
     return el && typeof el.getAttribute === 'function' ? el.getAttribute(name) : null;
   } catch {
     return null;
   }
+}
+
+/**
+ * Is this element hidden from the user — and therefore from a generated test?
+ *
+ * Only CSS resolution is consulted, never geometry: `getBoundingClientRect`
+ * forces a layout flush, and this runs on the click path. `visibility: hidden`
+ * is also the mechanism that matters in practice — a design system drawn over a
+ * native form (Azure B2C) hides the original that way, and it inherits, so the
+ * check catches a control hidden by any ancestor.
+ *
+ * Anything unresolvable counts as visible: this filter only ever discards, so
+ * it must never guess.
+ */
+export function isElementVisible(el) {
+  if (!el) return true;
+  try {
+    if (el.hidden === true) return false;
+    const view = el.ownerDocument?.defaultView;
+    if (typeof view?.getComputedStyle !== 'function') return true;
+    const style = view.getComputedStyle(el);
+    if (!style) return true;
+    return style.visibility !== 'hidden' && style.display !== 'none';
+  } catch {
+    return true;
+  }
+}
+
+/** Is this element part of the recorder's own overlay? */
+export function isRecorderUi(el) {
+  try {
+    return typeof el?.closest === 'function' && Boolean(el.closest(RECORDER_UI_SELECTOR));
+  } catch {
+    return false;
+  }
+}
+
+/** The overlay roots, resolved once so a scan can use `contains` per element. */
+export function collectRecorderRoots(doc) {
+  try {
+    return Array.from(doc?.querySelectorAll?.(RECORDER_UI_SELECTOR) || []);
+  } catch {
+    return [];
+  }
+}
+
+/** `contains` against pre-resolved roots — no selector matching per element. */
+export function isInsideRecorderUi(el, roots) {
+  if (!el || !roots?.length) return false;
+  for (const root of roots) {
+    if (root === el || root.contains?.(el)) return true;
+  }
+  return false;
 }
 
 /** Structural equivalent of INTERACTIVE_SELECTOR for a single element. */
