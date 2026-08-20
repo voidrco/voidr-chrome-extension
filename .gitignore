@@ -12,6 +12,11 @@ dist
 dist-ssr
 *.local
 
+# The side panel build output IS shipped with the extension (manifest loads
+# sidepanel/dist/index.html directly) — keep it tracked.
+!sidepanel/dist/
+!sidepanel/dist/**
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

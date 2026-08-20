@@ -1,0 +1,172 @@
+/*
+ * Voidr Design System · Void Terminal
+ * Contract: voidr-ds/2026-08-01
+ * Source of truth: voidr-platform/src/index.css
+ *
+ * Keep raw color values in this token artifact only. Extension surfaces must
+ * consume the variables below so the popup and page overlays stay aligned
+ * with the product without loading remote application code.
+ */
+
+:root {
+  color-scheme: dark;
+
+  --background: #050607;
+  --background-elevated: #0a0b0c;
+  --background-secondary: #101112;
+  --background-tertiary: #1a1c1e;
+
+  --text-primary: rgba(255, 255, 255, 0.9);
+  --text-secondary: rgba(255, 255, 255, 0.5);
+  --text-tertiary: rgba(255, 255, 255, 0.3);
+  --text-quaternary: rgba(255, 255, 255, 0.15);
+
+  --border-color: rgba(255, 255, 255, 0.1);
+  --border-color-subtle: rgba(255, 255, 255, 0.06);
+  --border-color-active: rgba(255, 255, 255, 0.12);
+  --border-color-strong: rgba(255, 255, 255, 0.18);
+  --border-color-hover: rgba(255, 255, 255, 0.2);
+  --hover-color: rgba(255, 255, 255, 0.05);
+  --hover-color-strong: rgba(255, 255, 255, 0.08);
+  --input-bg: rgba(255, 255, 255, 0.04);
+  --input-border: rgba(255, 255, 255, 0.08);
+  --input-border-focus: rgba(255, 255, 255, 0.15);
+
+  --void-silver-light: #b4bccb;
+  --void-silver: #7b8494;
+  --graphite-light: #4a5160;
+  --graphite: #2f3440;
+  --amber-signal-light: #d4a74e;
+  --amber-signal: #a68419;
+  --verdigris-light: #34d399;
+  --verdigris: #059669;
+  --hot-coral-light: #f87171;
+  --hot-coral: #dc2626;
+  --electric-ice-light: #7dd3fc;
+  --electric-ice: #0ea5e9;
+  --chartreuse-light: #22d3ee;
+  --chartreuse: #0891b2;
+  --fuchsia-punk-light: #a78bfa;
+  --fuchsia-punk: #7c3aed;
+  --burnt-sienna-light: #94a3b8;
+  --burnt-sienna: #64748b;
+  --phosphor-blue-light: #818cf8;
+  --phosphor-blue: #6366f1;
+
+  --color-primary: var(--phosphor-blue);
+  --color-success: var(--verdigris);
+  --color-success-light: var(--verdigris-light);
+  --color-warning: var(--amber-signal);
+  --color-warning-light: var(--amber-signal-light);
+  --color-error: var(--hot-coral);
+  --color-error-light: var(--hot-coral-light);
+  --color-info: var(--electric-ice);
+  --color-info-light: var(--electric-ice-light);
+
+  --color-success-surface: rgba(52, 211, 153, 0.08);
+  --color-success-border: rgba(52, 211, 153, 0.2);
+  --color-warning-surface: rgba(212, 167, 78, 0.08);
+  --color-warning-border: rgba(212, 167, 78, 0.2);
+  --color-error-surface: rgba(248, 113, 113, 0.08);
+  --color-error-border: rgba(248, 113, 113, 0.2);
+  --color-info-surface: rgba(125, 211, 252, 0.08);
+  --color-info-border: rgba(125, 211, 252, 0.2);
+
+  --scrollbar-track: rgba(255, 255, 255, 0.04);
+  --scrollbar-thumb: rgba(255, 255, 255, 0.2);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.35);
+
+  --scrim: rgba(0, 0, 0, 0.5);
+  --shadow-panel: 0 1px 3px rgba(0, 0, 0, 0.2);
+  --shadow-menu: 0 10px 30px rgba(0, 0, 0, 0.35);
+
+  --font-sans: 'Space Grotesk', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --text-2xs: 11px;
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 14px;
+  --text-md: 15px;
+  --text-lg: 18px;
+
+  --input-height-sm: 32px;
+  --input-height-md: 36px;
+  --input-height-lg: 40px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-panel: 12px;
+
+  --motion-fast: 120ms;
+  --motion-standard: 180ms;
+  --motion-easing: cubic-bezier(0.2, 0, 0, 1);
+}
+
+@keyframes vdr-msg-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes vdr-shimmer {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+}
+
+*::-webkit-scrollbar-thumb {
+  border: 1px solid var(--scrollbar-track);
+  border-radius: var(--radius-md);
+  background: var(--scrollbar-thumb);
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 1ms !important;
+  }
+}
+
+.vdr-mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.vdr-focus-ring:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--text-secondary);
+  outline-offset: 2px;
+}
