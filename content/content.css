@@ -2,18 +2,38 @@
 
 /* ── Recording overlay ─────────────────────────────────────────────────────── */
 
+.voidr-rec-panel,
+.voidr-rec-panel *,
+.voidr-verification-composer-shell,
+.voidr-verification-composer-shell * {
+  box-sizing: border-box;
+}
+
+.voidr-rec-panel button:focus-visible,
+.voidr-verification-composer-shell button:focus-visible,
+.voidr-verification-composer-shell textarea:focus-visible {
+  outline: 2px solid var(--text-secondary) !important;
+  outline-offset: 2px !important;
+}
+
 .voidr-rec-border {
   position: fixed;
   inset: 0;
   pointer-events: none;
-  box-shadow: inset 0 0 0 4px #3b82f6;
+  box-shadow: inset 0 0 0 2px var(--text-secondary);
   z-index: 2147483646;
 }
 .voidr-rec-border--defect {
-  box-shadow: inset 0 0 0 4px #ef4444;
+  box-shadow: inset 0 0 0 2px var(--color-error-light);
 }
 .voidr-rec-border--evidence {
-  box-shadow: inset 0 0 0 4px #a855f7;
+  box-shadow: inset 0 0 0 2px var(--text-secondary);
+}
+.voidr-rec-border--loop-test {
+  box-shadow: inset 0 0 0 2px var(--text-secondary);
+}
+.voidr-rec-border--verification {
+  box-shadow: inset 0 0 0 2px var(--text-secondary);
 }
 
 .voidr-rec-countdown {
@@ -24,22 +44,142 @@
   width: 128px;
   height: 128px;
   border-radius: 9999px;
-  background: #111827;
-  color: #ffffff;
+  background: var(--background-elevated);
+  color: var(--text-primary);
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 72px;
   font-weight: 800;
-  font-family:
-    'Space Grotesk',
-    -apple-system,
-    BlinkMacSystemFont,
-    system-ui,
-    sans-serif;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  box-shadow: 0 12px 38px rgba(0, 0, 0, 0.5);
+  font-family: var(--font-mono);
+  border: 1px solid var(--border-color);
+  box-shadow: var(--shadow-panel);
   z-index: 2147483647;
+}
+
+.voidr-loop-launch-status,
+.voidr-loop-launch-status * {
+  box-sizing: border-box;
+}
+
+.voidr-loop-launch-status {
+  position: fixed;
+  top: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(460px, calc(100vw - 24px));
+  min-height: 64px;
+  display: grid;
+  grid-template-columns: 58px 30px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  color: var(--text-primary);
+  background: var(--background-elevated);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow-panel);
+  backdrop-filter: blur(12px) saturate(135%);
+  font-family: var(--font-sans);
+  z-index: 2147483647;
+}
+
+.voidr-loop-launch-status.is-error {
+  grid-template-columns: 58px 30px minmax(0, 1fr);
+}
+
+.voidr-loop-launch-brand {
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  padding-right: 10px;
+  border-right: 1px solid var(--border-color-subtle);
+  overflow: hidden;
+}
+
+.voidr-loop-launch-brand img {
+  display: block;
+  width: 46px;
+  height: 16px;
+  max-width: none;
+  object-fit: contain;
+  object-position: left center;
+}
+
+.voidr-loop-launch-indicator {
+  width: 28px;
+  height: 28px;
+  display: inline-grid;
+  place-items: center;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color-subtle);
+  border-radius: var(--radius-sm);
+}
+
+.voidr-loop-launch-indicator > span {
+  width: 13px;
+  height: 13px;
+  border: 1.5px solid var(--border-color);
+  border-top-color: var(--text-primary);
+  border-radius: 50%;
+  animation: voidr-launch-spin 0.8s linear infinite;
+}
+
+.voidr-loop-launch-status.is-error .voidr-loop-launch-indicator {
+  color: var(--color-error-light);
+}
+
+.voidr-loop-launch-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.voidr-loop-launch-copy strong {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.35;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.voidr-loop-launch-copy small {
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.voidr-loop-launch-open {
+  grid-column: 3;
+  justify-self: start;
+  min-height: var(--input-height-sm);
+  margin-top: 4px;
+  padding: 0 12px;
+  color: var(--background);
+  background: var(--text-primary);
+  border: 0;
+  border-radius: var(--radius-control);
+  font: 650 11px/1 var(--font-sans);
+  cursor: pointer;
+}
+
+.voidr-loop-launch-open:focus-visible {
+  outline: 2px solid var(--text-secondary);
+  outline-offset: 2px;
+}
+
+@keyframes voidr-launch-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .voidr-loop-launch-indicator > span {
+    animation: none;
+  }
 }
 
 .voidr-rec-panel {
@@ -48,31 +188,683 @@
   transform: translateX(-50%);
   bottom: 20px;
   max-width: min(90vw, 720px);
-  background: linear-gradient(180deg, #0b0f14 0%, #070a0f 100%);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  color: #e5e7eb;
+  background: var(--background-elevated);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
   padding: 12px 16px;
-  border-radius: 14px;
+  border-radius: var(--radius-panel);
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 10px 14px;
   z-index: 2147483647;
   backdrop-filter: blur(10px) saturate(135%);
-  box-shadow:
-    0 18px 48px rgba(0, 0, 0, 0.55),
-    inset 0 1px 0 rgba(255, 255, 255, 0.08);
-  font-family:
-    'Space Grotesk',
-    -apple-system,
-    BlinkMacSystemFont,
-    system-ui,
-    sans-serif;
+  box-shadow: var(--shadow-panel);
+  font-family: var(--font-sans);
 }
 
-/* Evidence mode: distinct violet accent so the tester knows this is a proof-of-execution capture. */
-.voidr-rec-panel--evidence { border-color: rgba(168,85,247,0.5); }
-.voidr-rec-panel--evidence .voidr-rec-icon { border-color: rgba(168,85,247,0.5); }
+/* Legacy mode classes are intentionally visually neutral. Capture intent is
+   communicated by copy and controls; color remains reserved for status. */
+.voidr-rec-panel--evidence {
+  border-color: var(--border-color);
+}
+.voidr-rec-panel--evidence .voidr-rec-icon {
+  border-color: var(--border-color);
+}
+
+.voidr-rec-panel--loop-test {
+  border-color: var(--border-color);
+}
+.voidr-rec-panel--loop-test .voidr-rec-icon {
+  border-color: var(--border-color);
+}
+.voidr-rec-panel--loop-test .voidr-rec-title {
+  color: var(--text-primary);
+}
+.voidr-rec-panel--verification {
+  border-color: var(--border-color);
+  background: var(--background-elevated);
+}
+.voidr-rec-panel--verification .voidr-rec-icon {
+  border-color: var(--border-color);
+}
+.voidr-rec-panel--verification .voidr-rec-title {
+  color: var(--text-primary);
+}
+
+.voidr-rec-panel--verification,
+.voidr-rec-panel--loop-test:has(.voidr-rec-live) {
+  width: min(760px, calc(100vw - 24px));
+  max-width: 760px;
+  min-height: 58px;
+  padding: 8px 9px 8px 12px;
+  flex-wrap: nowrap;
+  gap: 10px;
+  border-radius: var(--radius-panel);
+}
+
+.voidr-rec-brand {
+  display: inline-flex;
+  width: 58px;
+  height: var(--input-height-sm);
+  padding-right: 10px;
+  align-items: center;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border-right: 1px solid var(--border-color-subtle);
+}
+
+.voidr-rec-brand img {
+  display: block;
+  width: 46px;
+  height: 16px;
+  max-width: none;
+  flex: 0 0 auto;
+  object-fit: contain;
+  object-position: left center;
+}
+
+.voidr-rec-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--text-primary);
+}
+
+.voidr-rec-live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-error-light);
+  animation: voidr-live-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes voidr-live-pulse {
+  50% {
+    opacity: 0.55;
+    transform: scale(0.84);
+  }
+}
+
+.voidr-rec-tool-wrap {
+  position: relative;
+}
+
+.voidr-rec-count-badge {
+  min-width: 17px;
+  height: 17px;
+  padding: 0 5px;
+  border-radius: 999px;
+  display: inline-grid;
+  place-items: center;
+  background: var(--text-primary);
+  color: var(--background);
+  font-size: 9px;
+  line-height: 1;
+  font-weight: 750;
+}
+
+.voidr-rec-tool-menu,
+.voidr-rec-more-menu,
+.voidr-rec-signal-panel {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 10px);
+  min-width: 230px;
+  padding: 6px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-color);
+  background: var(--background-elevated);
+  box-shadow: var(--shadow-menu);
+  backdrop-filter: blur(18px);
+}
+
+.voidr-rec-tool-menu[hidden],
+.voidr-rec-more-menu[hidden],
+.voidr-rec-signal-panel[hidden],
+.voidr-rec-count-badge[hidden] {
+  display: none !important;
+}
+
+.voidr-rec-tool-menu button,
+.voidr-rec-more-menu button {
+  width: 100%;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+}
+
+.voidr-rec-tool-menu button {
+  display: grid;
+  grid-template-columns: 27px 1fr;
+  gap: 8px;
+  align-items: center;
+  padding: 9px;
+}
+
+.voidr-rec-tool-menu button:hover,
+.voidr-rec-more-menu button:hover {
+  background: var(--hover-color-strong);
+}
+
+.voidr-rec-tool-menu strong,
+.voidr-rec-tool-menu small {
+  display: block;
+}
+
+.voidr-rec-tool-menu strong {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.voidr-rec-tool-menu small {
+  margin-top: 2px;
+  color: var(--text-secondary);
+  font-size: 10px;
+}
+
+.voidr-rec-tool-icon {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  border-radius: var(--radius-md);
+  background: var(--hover-color-strong);
+  color: var(--text-primary);
+  font-size: 15px;
+}
+
+.voidr-rec-icon-action {
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--input-bg);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+
+.voidr-rec-icon-action:hover {
+  background: var(--hover-color-strong);
+  color: var(--text-primary);
+}
+
+.voidr-rec-more-menu {
+  min-width: 170px;
+}
+
+.voidr-rec-more-menu .voidr-rec-menu-item {
+  display: block;
+  padding: 9px 10px;
+  font-size: 12px;
+}
+
+.voidr-rec-more-menu .voidr-rec-menu-item.danger {
+  color: var(--color-error-light);
+}
+
+.voidr-rec-btn.voidr-rec-finish {
+  min-height: var(--input-height-sm);
+  border-color: var(--border-color-active) !important;
+  background: var(--hover-color-strong) !important;
+  color: var(--text-primary) !important;
+}
+
+.voidr-rec-btn.voidr-rec-finish:hover {
+  border-color: var(--border-color-hover) !important;
+  background: var(--hover-color-strong) !important;
+}
+
+.voidr-rec-capture {
+  color: var(--text-secondary) !important;
+}
+
+.voidr-rec-capture[aria-expanded='true'] {
+  border-color: var(--border-color-active) !important;
+  background: var(--hover-color-strong) !important;
+  color: var(--text-primary) !important;
+}
+
+.voidr-rec-signal-panel {
+  width: 284px;
+  padding: 12px;
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  animation: vdr-msg-in 0.25s var(--motion-easing) both;
+  transition: width var(--motion-standard) var(--motion-easing);
+}
+
+.voidr-rec-signal-panel.is-inspecting {
+  width: min(620px, calc(100vw - 32px));
+  padding: 0;
+  overflow: hidden;
+}
+
+.voidr-rec-signal-panel > header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 2px 10px;
+  border-bottom: 1px solid var(--border-color-subtle);
+}
+
+.voidr-rec-signal-panel > header strong {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.voidr-rec-signal-panel > header small {
+  color: var(--text-tertiary);
+  font-size: var(--text-2xs);
+}
+
+.voidr-rec-signal-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 8px 0;
+}
+
+.voidr-rec-signal {
+  display: grid;
+  grid-template-columns: 14px 1fr auto 11px;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 7px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-family: var(--font-sans);
+  font-size: var(--text-2xs);
+  text-align: left;
+}
+
+.voidr-rec-signal:hover,
+.voidr-rec-signal[aria-selected='true'] {
+  background: var(--hover-color);
+  border-color: var(--border-color-subtle);
+  color: var(--text-primary);
+}
+
+.voidr-rec-signal > svg:last-child {
+  color: var(--text-quaternary);
+}
+
+.voidr-rec-signal b {
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+.voidr-rec-signal-summary > p {
+  margin: 0;
+  padding: 9px 2px 1px;
+  border-top: 1px solid var(--border-color-subtle);
+  color: var(--text-tertiary);
+  font-size: var(--text-2xs);
+  line-height: 1.45;
+}
+
+.voidr-rec-signal-summary[hidden],
+.voidr-live-evidence[hidden] {
+  display: none !important;
+}
+
+.voidr-live-evidence {
+  min-height: 360px;
+}
+
+.voidr-live-evidence-head {
+  display: grid;
+  grid-template-columns: 30px 1fr auto;
+  align-items: center;
+  gap: 9px;
+  min-height: 50px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border-color-subtle);
+  background: var(--background-elevated);
+}
+
+.voidr-live-evidence-back {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.voidr-live-evidence-back:hover {
+  border-color: var(--border-color);
+  background: var(--hover-color);
+  color: var(--text-primary);
+}
+
+.voidr-live-evidence-head > div {
+  min-width: 0;
+}
+
+.voidr-live-evidence-head strong,
+.voidr-live-evidence-head small {
+  display: block;
+}
+
+.voidr-live-evidence-head strong {
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  font-weight: 650;
+}
+
+.voidr-live-evidence-head small {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 2px;
+  color: var(--text-tertiary);
+  font-size: 9px;
+}
+
+.voidr-live-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--color-success-light);
+  box-shadow: 0 0 0 3px var(--color-success-surface);
+}
+
+.voidr-live-evidence[data-state='loading'] .voidr-live-dot,
+.voidr-live-evidence[data-state='degraded'] .voidr-live-dot {
+  background: var(--color-warning-light);
+  box-shadow: 0 0 0 3px var(--color-warning-surface);
+}
+
+.voidr-live-evidence[data-state='error'] .voidr-live-dot {
+  background: var(--color-error-light);
+  box-shadow: 0 0 0 3px var(--color-error-surface);
+}
+
+.voidr-live-evidence-count {
+  min-width: 24px;
+  padding: 3px 6px;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  background: var(--input-bg);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  text-align: center;
+}
+
+.voidr-live-evidence-layout {
+  display: grid;
+  grid-template-columns: minmax(190px, 0.78fr) minmax(280px, 1.22fr);
+  height: min(410px, 55vh);
+  background: var(--background-elevated);
+}
+
+.voidr-live-evidence-feed {
+  min-width: 0;
+  border-right: 1px solid var(--border-color-subtle);
+  background: var(--background);
+}
+
+.voidr-live-evidence-feed-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 33px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--border-color-subtle);
+  color: var(--text-tertiary);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.voidr-live-evidence-feed-head small {
+  color: var(--text-quaternary);
+  font-size: 8px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.voidr-live-evidence-list,
+.voidr-live-evidence-detail {
+  height: calc(100% - 33px);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.voidr-live-evidence-item {
+  position: relative;
+  display: grid;
+  grid-template-columns: 5px minmax(0, 1fr) auto;
+  gap: 8px;
+  width: 100%;
+  min-height: 64px;
+  align-items: start;
+  padding: 9px 9px 9px 10px;
+  border: 0;
+  border-bottom: 1px solid var(--border-color-subtle);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-family: var(--font-sans);
+  text-align: left;
+}
+
+.voidr-live-evidence-item:hover,
+.voidr-live-evidence-item[aria-pressed='true'] {
+  background: var(--hover-color);
+}
+
+.voidr-live-evidence-item[aria-pressed='true']::after {
+  position: absolute;
+  inset: 8px auto 8px 0;
+  width: 2px;
+  border-radius: 0 2px 2px 0;
+  background: var(--text-secondary);
+  content: '';
+}
+
+.voidr-live-evidence-tone {
+  width: 5px;
+  height: 5px;
+  margin-top: 4px;
+  border-radius: 999px;
+  background: var(--text-quaternary);
+}
+
+.voidr-live-evidence-tone.is-success {
+  background: var(--color-success-light);
+}
+
+.voidr-live-evidence-tone.is-warning {
+  background: var(--color-warning-light);
+}
+
+.voidr-live-evidence-tone.is-danger {
+  background: var(--color-error-light);
+}
+
+.voidr-live-evidence-item-copy {
+  min-width: 0;
+}
+
+.voidr-live-evidence-item-copy small,
+.voidr-live-evidence-item-copy strong,
+.voidr-live-evidence-item-copy > span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.voidr-live-evidence-item-copy small {
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 8px;
+  text-transform: uppercase;
+}
+
+.voidr-live-evidence-item-copy strong {
+  margin-top: 3px;
+  color: var(--text-primary);
+  font-size: 10px;
+  font-weight: 550;
+}
+
+.voidr-live-evidence-item-copy > span {
+  margin-top: 3px;
+  color: var(--text-tertiary);
+  font-size: 8px;
+}
+
+.voidr-live-evidence-item time {
+  color: var(--text-quaternary);
+  font-family: var(--font-mono);
+  font-size: 8px;
+}
+
+.voidr-live-evidence-detail {
+  height: 100%;
+  padding: 14px;
+  background: var(--background-elevated);
+}
+
+.voidr-live-evidence-detail-head {
+  display: grid;
+  grid-template-columns: 6px minmax(0, 1fr);
+  gap: 9px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-color-subtle);
+}
+
+.voidr-live-evidence-detail-head small {
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 8px;
+  text-transform: uppercase;
+}
+
+.voidr-live-evidence-detail-head h3 {
+  margin: 3px 0 0;
+  overflow-wrap: anywhere;
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.voidr-live-evidence-fields {
+  display: grid;
+  gap: 6px;
+  padding-top: 10px;
+}
+
+.voidr-live-evidence-field {
+  margin: 0;
+  border: 1px solid var(--border-color-subtle);
+  border-radius: var(--radius-md);
+  background: var(--input-bg);
+}
+
+.voidr-live-evidence-field summary {
+  padding: 7px 9px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 550;
+}
+
+.voidr-live-evidence-field pre {
+  max-height: 180px;
+  margin: 0;
+  overflow: auto;
+  padding: 9px;
+  border-top: 1px solid var(--border-color-subtle);
+  color: var(--text-secondary);
+  font: 9px/1.55 var(--font-mono);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.voidr-live-evidence-field.is-inline {
+  display: grid;
+  grid-template-columns: minmax(90px, 0.7fr) minmax(0, 1.3fr);
+  gap: 10px;
+  align-items: baseline;
+  padding: 7px 9px;
+}
+
+.voidr-live-evidence-field.is-inline span {
+  color: var(--text-tertiary);
+  font-size: 9px;
+}
+
+.voidr-live-evidence-field.is-inline strong {
+  overflow-wrap: anywhere;
+  color: var(--text-secondary);
+  font-size: 9px;
+  font-weight: 500;
+  text-align: right;
+}
+
+.voidr-live-evidence-empty {
+  display: grid;
+  min-height: 110px;
+  place-items: center;
+  padding: 20px;
+  color: var(--text-tertiary);
+  font-size: 10px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.voidr-live-evidence > footer {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 0 11px;
+  border-top: 1px solid var(--border-color-subtle);
+  background: var(--background-elevated);
+  color: var(--text-tertiary);
+  font-size: 9px;
+}
+
+.voidr-rec-scenario {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--hover-color);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  font-size: 11px;
+  vertical-align: 1px;
+}
 
 .voidr-rec-icon {
   display: inline-flex;
@@ -82,14 +874,13 @@
   height: 28px;
   flex-shrink: 0;
   border-radius: 50%;
-  background: radial-gradient(circle at 30% 30%, #1f2937 0%, #0b0f14 70%);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: var(--background-secondary);
+  border: 1px solid var(--border-color);
 }
 
 .voidr-rec-title {
-  flex: 1;
   font-size: 13px;
-  color: #cbd5e1;
+  color: var(--text-primary);
   letter-spacing: 0.2px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -111,7 +902,7 @@
   align-items: center;
   flex-basis: 100%;
   padding-top: 6px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: 1px solid var(--border-color-subtle);
   overflow-x: auto;
   scrollbar-width: none;
 }
@@ -125,16 +916,16 @@
   gap: 3px;
   padding: 2px 6px;
   border-radius: 4px;
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--hover-color);
   font-size: 10px;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--text-secondary);
   white-space: nowrap;
   max-width: 200px;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .voidr-rec-flow-chip .voidr-rec-flow-num {
-  color: rgba(255, 255, 255, 0.3);
+  color: var(--text-tertiary);
   flex-shrink: 0;
 }
 
@@ -142,32 +933,22 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  background: linear-gradient(
-    180deg,
-    rgba(255, 255, 255, 0.03),
-    rgba(255, 255, 255, 0.02)
-  ) !important;
-  color: #ffffff !important;
-  border: 1px solid rgba(255, 255, 255, 0.16) !important;
-  padding: 6px 10px;
-  border-radius: 10px;
+  background: var(--input-bg) !important;
+  color: var(--text-primary) !important;
+  border: 1px solid var(--border-color) !important;
+  min-height: var(--input-height-sm);
+  padding: 0 10px;
+  border-radius: var(--radius-md);
   cursor: pointer;
-  font-family:
-    'Space Grotesk',
-    -apple-system,
-    BlinkMacSystemFont,
-    system-ui,
-    sans-serif;
-  font-size: 13px;
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
   font-weight: 500;
   transition:
-    background 0.15s ease,
-    transform 0.1s ease,
-    box-shadow 0.15s ease;
+    background var(--motion-fast) var(--motion-easing),
+    transform var(--motion-fast) var(--motion-easing);
 }
 .voidr-rec-btn:hover {
-  background: rgba(255, 255, 255, 0.08) !important;
-  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
+  background: var(--hover-color-strong) !important;
 }
 .voidr-rec-btn:active {
   transform: translateY(1px);
@@ -179,25 +960,294 @@
   fill: none !important;
 }
 .voidr-rec-btn.danger {
-  border-color: rgba(239, 68, 68, 0.6) !important;
-  background: rgba(239, 68, 68, 0.08) !important;
+  border-color: var(--color-error-border) !important;
+  background: var(--color-error-surface) !important;
 }
 .voidr-rec-btn.danger:hover {
-  background: rgba(239, 68, 68, 0.14) !important;
+  background: var(--color-error-border) !important;
+}
+.voidr-rec-btn.accent {
+  border-color: var(--border-color-strong) !important;
+  background: var(--hover-color-strong) !important;
+  color: var(--text-primary) !important;
+}
+.voidr-rec-btn.accent:hover {
+  background: var(--hover-color-strong) !important;
 }
 
-.voidr-rec-btn.primary {
-  background: #ffffff !important;
-  color: #000000 !important;
-  border-color: #ffffff !important;
-}
-.voidr-rec-btn.primary:hover {
-  background: #f1f1f1 !important;
-  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
+.voidr-rec-btn.voidr-rec-voice.is-listening {
+  border-color: var(--color-success-border) !important;
+  background: var(--color-success-surface) !important;
+  color: var(--color-success-light) !important;
 }
 
-.voidr-rec-border--paused {
-  box-shadow: inset 0 0 0 4px #f59e0b;
+.voidr-rec-btn.voidr-rec-voice.is-busy {
+  border-color: var(--color-warning-border) !important;
+  background: var(--color-warning-surface) !important;
+  color: var(--color-warning-light) !important;
+}
+
+.voidr-rec-btn.voidr-rec-voice.is-unavailable {
+  border-color: var(--color-error-border) !important;
+  color: var(--text-secondary) !important;
+}
+
+.voidr-rec-voice-caption {
+  order: 4;
+  flex-basis: 100%;
+  min-width: 0;
+  overflow: hidden;
+  border-top: 1px solid var(--border-color-subtle);
+  padding: 7px 2px 1px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.voidr-rec-panel--verification:has(.voidr-rec-voice-caption:not([hidden])) {
+  flex-wrap: wrap;
+}
+
+/* ── Verification handoff ──────────────────────────────────────────────── */
+
+.voidr-handoff {
+  width: min(720px, calc(100vw - 24px)) !important;
+  max-width: 720px !important;
+  min-height: 104px !important;
+  padding: 14px !important;
+  align-items: flex-start !important;
+  flex-wrap: nowrap !important;
+  gap: 13px !important;
+  overflow: hidden;
+  border-color: var(--border-color) !important;
+  background: var(--background-elevated) !important;
+  box-shadow: var(--shadow-panel) !important;
+}
+
+.voidr-handoff--success {
+  border-color: var(--color-success-border) !important;
+}
+
+.voidr-handoff--danger {
+  border-color: var(--color-error-border) !important;
+}
+
+.voidr-handoff-brand {
+  width: 64px;
+  height: 30px;
+  flex: 0 0 64px;
+  display: flex;
+  align-items: center;
+  padding-right: 12px;
+  border-right: 1px solid var(--border-color-subtle);
+}
+
+.voidr-handoff-brand img {
+  display: block;
+  width: 52px;
+  height: auto;
+}
+
+.voidr-handoff-main {
+  min-width: 0;
+  flex: 1;
+}
+
+.voidr-handoff-kicker {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 4px;
+  color: var(--text-secondary);
+  font-size: 9px;
+  font-weight: 720;
+  letter-spacing: 0.105em;
+  text-transform: uppercase;
+}
+
+.voidr-handoff-harness {
+  max-width: 160px;
+  overflow: hidden;
+  padding: 2px 6px;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  background: var(--hover-color);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.voidr-handoff-title {
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 680;
+  letter-spacing: -0.01em;
+}
+
+.voidr-handoff-detail {
+  max-width: 525px;
+  margin-top: 3px;
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+
+.voidr-handoff-steps {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  margin-top: 10px;
+  overflow: hidden;
+}
+
+.voidr-handoff-step {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-tertiary);
+  font-size: 9.5px;
+  white-space: nowrap;
+}
+
+.voidr-handoff-step.is-active {
+  color: var(--text-primary);
+}
+
+.voidr-handoff-step.is-done {
+  color: var(--text-secondary);
+}
+
+.voidr-handoff-step-mark {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 9px;
+  border: 1px solid var(--border-color-strong);
+  border-radius: 50%;
+}
+
+.voidr-handoff-step.is-active .voidr-handoff-step-mark {
+  border-color: var(--text-secondary);
+  box-shadow: 0 0 0 3px var(--hover-color-strong);
+  animation: voidr-handoff-pulse 1.4s ease-in-out infinite;
+}
+
+.voidr-handoff-step.is-done .voidr-handoff-step-mark {
+  display: grid;
+  place-items: center;
+  border-color: var(--border-color-strong);
+  background: var(--hover-color-strong);
+}
+
+.voidr-handoff-step-mark svg {
+  width: 7px;
+  height: 7px;
+  fill: none;
+  stroke: var(--text-primary);
+  stroke-width: 2.2;
+}
+
+.voidr-handoff-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  align-self: center;
+  gap: 6px;
+}
+
+.voidr-handoff-button {
+  min-height: 31px;
+  padding: 0 10px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--input-bg);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font: 600 10.5px/1 var(--font-sans);
+}
+
+.voidr-handoff-button:hover {
+  border-color: var(--border-color-strong);
+  background: var(--hover-color-strong);
+  color: var(--text-primary);
+}
+
+.voidr-handoff-button.is-primary {
+  border-color: var(--border-color-strong);
+  background: var(--text-primary);
+  color: var(--background);
+}
+
+.voidr-handoff-orbit {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border-color);
+  border-radius: 50%;
+  animation: voidr-handoff-spin 1.8s linear infinite;
+}
+
+.voidr-handoff-orbit i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--text-primary);
+  box-shadow: 0 -9px 0 var(--text-quaternary);
+}
+
+@keyframes voidr-handoff-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes voidr-handoff-pulse {
+  50% {
+    opacity: 0.5;
+  }
+}
+
+@media (max-width: 720px) {
+  .voidr-handoff {
+    bottom: 10px;
+    min-height: 0 !important;
+    padding: 12px !important;
+  }
+
+  .voidr-handoff-steps {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    row-gap: 6px;
+  }
+
+  .voidr-handoff-step {
+    align-items: flex-start;
+    line-height: 1.25;
+    white-space: normal;
+  }
+
+  .voidr-handoff--success .voidr-handoff-steps,
+  .voidr-handoff--ready .voidr-handoff-steps {
+    display: none;
+  }
+
+  .voidr-handoff-actions {
+    align-self: flex-start;
+  }
+
+  .voidr-handoff-button:not(.is-primary) {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .voidr-handoff-orbit,
+  .voidr-handoff-step.is-active .voidr-handoff-step-mark {
+    animation: none !important;
+  }
 }
 
 .voidr-rec-btn svg path,
@@ -209,7 +1259,257 @@
   fill: none !important;
 }
 
-/* ── Onboarding done banner ────────────────────────────────────────────────── */
+.voidr-verification-region-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  cursor: crosshair;
+  background: var(--text-quaternary);
+}
+
+.voidr-verification-region-box {
+  position: fixed;
+  border: 2px solid var(--text-primary);
+  border-radius: var(--radius-sm);
+  background: var(--hover-color-strong);
+  box-shadow: 0 0 0 9999px var(--scrim);
+  pointer-events: none;
+}
+
+.voidr-verification-element-highlight {
+  position: fixed;
+  z-index: 2147483647;
+  pointer-events: none;
+  border: 2px solid var(--text-primary);
+  border-radius: var(--radius-md);
+  background: var(--hover-color-strong);
+  box-shadow: 0 0 0 9999px var(--scrim);
+  transition:
+    left 60ms linear,
+    top 60ms linear,
+    width 60ms linear,
+    height 60ms linear;
+}
+
+.voidr-verification-selection-hint {
+  position: fixed;
+  z-index: 2147483647;
+  top: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 8px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  background: var(--background-elevated);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-menu);
+  font: 600 11px/1.2 var(--font-sans);
+  pointer-events: none;
+}
+
+.voidr-verification-composer-shell {
+  position: fixed;
+  z-index: 2147483647;
+  inset: 0;
+  display: grid;
+  place-items: end center;
+  padding: 20px;
+  background: var(--scrim);
+  backdrop-filter: blur(2px);
+}
+
+.voidr-verification-composer {
+  width: min(520px, calc(100vw - 24px));
+  padding: 16px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-panel);
+  background: var(--background-elevated);
+  box-shadow: var(--shadow-panel);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+}
+
+.voidr-verification-composer-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.voidr-verification-composer-kicker {
+  color: var(--text-secondary);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.voidr-verification-composer h2 {
+  margin: 3px 0 0;
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.voidr-verification-icon-btn {
+  width: var(--input-height-sm);
+  height: var(--input-height-sm);
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: var(--hover-color);
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+
+.voidr-verification-composer textarea {
+  width: 100%;
+  min-height: 94px;
+  margin-top: 13px;
+  resize: vertical;
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-lg);
+  outline: none;
+  background: var(--input-bg);
+  color: var(--text-primary);
+  padding: 11px 12px;
+  font: 500 13px/1.5 var(--font-sans);
+}
+
+.voidr-verification-composer textarea:focus {
+  border-color: var(--input-border-focus);
+  box-shadow: 0 0 0 3px var(--hover-color-strong);
+}
+
+.voidr-verification-composer-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 11px;
+}
+
+.voidr-verification-composer-actions > span {
+  color: var(--text-tertiary);
+  font-size: 9px;
+}
+
+.voidr-verification-save {
+  min-height: var(--input-height-sm);
+  border: 1px solid var(--border-color-active);
+  border-radius: var(--radius-md);
+  background: var(--hover-color-strong);
+  color: var(--text-primary);
+  padding: 0 12px;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.voidr-verification-save:disabled {
+  cursor: default;
+  opacity: 0.35;
+}
+
+.voidr-verification-toast {
+  position: fixed;
+  z-index: 2147483647;
+  right: 18px;
+  bottom: 92px;
+  border: 1px solid var(--color-success-border);
+  border-radius: var(--radius-lg);
+  background: var(--background-elevated);
+  color: var(--color-success-light);
+  padding: 9px 12px;
+  box-shadow: var(--shadow-menu);
+  font: 600 11px/1.3 var(--font-sans);
+  animation: vdr-msg-in 0.25s var(--motion-easing) both;
+}
+
+@media (min-width: 641px) and (max-width: 900px) {
+  .voidr-rec-signal-panel.is-inspecting {
+    position: fixed;
+    right: 16px;
+    bottom: 72px;
+    left: 16px;
+    width: auto;
+  }
+}
+
+@media (max-width: 640px) {
+  .voidr-rec-panel--verification,
+  .voidr-rec-panel--loop-test:has(.voidr-rec-live) {
+    bottom: 10px;
+    width: calc(100vw - 20px);
+  }
+
+  .voidr-rec-panel--loop-test:has(.voidr-rec-live) .voidr-rec-title {
+    display: none;
+  }
+
+  .voidr-rec-panel--loop-test:has(.voidr-rec-live) .voidr-rec-actions {
+    margin-left: auto;
+  }
+
+  .voidr-rec-panel--verification .voidr-rec-title,
+  .voidr-rec-panel--verification .voidr-rec-capture > span,
+  .voidr-rec-panel--verification .voidr-rec-voice > span {
+    display: none;
+  }
+
+  .voidr-rec-brand {
+    width: 25px;
+    padding-right: 8px;
+  }
+
+  .voidr-rec-signal-panel {
+    right: auto;
+    left: -68px;
+    width: min(284px, calc(100vw - 32px));
+  }
+
+  .voidr-rec-signal-panel.is-inspecting {
+    position: fixed;
+    right: 10px;
+    bottom: 62px;
+    left: 10px;
+    width: auto;
+    max-height: calc(100vh - 82px);
+  }
+
+  .voidr-live-evidence-layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(130px, 0.75fr) minmax(180px, 1.25fr);
+    height: min(490px, calc(100vh - 201px));
+  }
+
+  .voidr-live-evidence-feed {
+    border-right: 0;
+    border-bottom: 1px solid var(--border-color-subtle);
+  }
+
+  .voidr-live-evidence-detail {
+    padding: 11px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .voidr-rec-panel,
+  .voidr-rec-signal-panel,
+  .voidr-rec-tool-menu,
+  .voidr-verification-composer,
+  .voidr-verification-toast,
+  .voidr-onb-done,
+  .voidr-loop-banner {
+    animation: none !important;
+    transition: none !important;
+  }
+  .voidr-rec-live-dot {
+    animation: none !important;
+  }
+}
+
+/* ── Recording result banner (legacy class names retained) ────────────────── */
 
 .voidr-onb-done {
   position: fixed;
@@ -221,37 +1521,45 @@
   justify-content: center;
   gap: 10px;
   padding: 14px 20px;
-  background: linear-gradient(180deg, #052e16 0%, #022c22 100%);
-  border-bottom: 1px solid rgba(34, 197, 94, 0.25);
-  color: #86efac;
+  background: var(--background-elevated);
+  border-bottom: 1px solid var(--color-success-border);
+  color: var(--color-success-light);
   font-size: 13px;
   font-weight: 500;
-  font-family:
-    'Space Grotesk',
-    -apple-system,
-    BlinkMacSystemFont,
-    system-ui,
-    sans-serif;
+  font-family: var(--font-sans);
   z-index: 2147483647;
   animation: voidr-onb-slide-down 0.3s ease;
 }
 .voidr-onb-done svg {
   flex-shrink: 0;
 }
+
 .voidr-onb-done--discard {
-  background: linear-gradient(180deg, #3b0d0d 0%, #2a0a0a 100%);
-  border-bottom-color: rgba(239, 68, 68, 0.3);
-  color: #fca5a5;
+  border-bottom-color: var(--color-error-border);
+  color: var(--color-error-light);
 }
+
 .voidr-onb-done--warn {
-  background: linear-gradient(180deg, #3b2d09 0%, #2a1f05 100%);
-  border-bottom-color: rgba(245, 158, 11, 0.3);
-  color: #fcd34d;
+  border-bottom-color: var(--color-warning-border);
+  color: var(--color-warning-light);
 }
+
 .voidr-onb-done--pending {
-  background: linear-gradient(180deg, #0c2942 0%, #071d2e 100%);
-  border-bottom-color: rgba(59, 130, 246, 0.3);
-  color: #93c5fd;
+  border-bottom-color: var(--color-info-border);
+  color: var(--color-info-light);
+}
+
+.voidr-rec-recording-icon {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  color: var(--color-error-light);
+}
+
+.voidr-rec-spinner {
+  display: inline-flex;
+  animation: spin 1s linear infinite;
 }
 
 @keyframes voidr-onb-slide-down {
@@ -263,6 +1571,76 @@
     transform: translateY(0);
     opacity: 1;
   }
+}
+
+/* ── Loop-test session banner ──────────────────────────────────────────────── */
+
+.voidr-loop-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 12px 20px;
+  background: var(--background-elevated);
+  border-bottom: 1px solid var(--border-color);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 500;
+  font-family: var(--font-sans);
+  z-index: 2147483647;
+  animation: voidr-onb-slide-down 0.3s ease;
+}
+.voidr-loop-banner svg {
+  flex-shrink: 0;
+}
+
+.voidr-loop-banner--complete {
+  background: var(--background-elevated);
+  border-bottom-color: var(--color-success-border);
+  color: var(--color-success-light);
+}
+
+.voidr-loop-banner-scenario {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--hover-color-strong);
+  font-size: 11px;
+  opacity: 0.85;
+}
+
+.voidr-loop-banner-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--input-bg) !important;
+  color: var(--text-primary) !important;
+  border: 1px solid var(--border-color) !important;
+  padding: 6px 12px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 500;
+  transition:
+    background var(--motion-fast) var(--motion-easing),
+    transform var(--motion-fast) var(--motion-easing);
+}
+.voidr-loop-banner-btn:hover {
+  background: var(--hover-color-strong) !important;
+}
+.voidr-loop-banner-btn:active {
+  transform: translateY(1px);
+}
+.voidr-loop-banner-btn svg path,
+.voidr-loop-banner-btn svg polyline {
+  stroke: currentColor !important;
+  fill: none !important;
 }
 
 @keyframes spin {

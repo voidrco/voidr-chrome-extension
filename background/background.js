@@ -8,14 +8,39 @@ try {
     importScripts('../config/env.js');
   } catch (__) {}
 }
-// Overrides locais de desenvolvimento (config/env.local.js, gitignored) —
-// ausente em builds de produção, então o catch silencioso é o caminho normal.
+// Optional, gitignored localhost overrides. Worker import failures are caught,
+// so production packages remain quiet and use only config/env.js.
 try {
   importScripts('config/env.local.js');
 } catch (_) {
   try {
     importScripts('../config/env.local.js');
   } catch (__) {}
+}
+try {
+  importScripts('background/session-stop-helpers.js');
+} catch (_) {
+  importScripts('session-stop-helpers.js');
+}
+try {
+  importScripts('background/recording-lifecycle-helpers.js');
+} catch (_) {
+  importScripts('recording-lifecycle-helpers.js');
+}
+try {
+  importScripts('shared/recording-ux-helpers.js');
+} catch (_) {
+  importScripts('../shared/recording-ux-helpers.js');
+}
+try {
+  importScripts('shared/loop-bootstrap-helpers.js');
+} catch (_) {
+  importScripts('../shared/loop-bootstrap-helpers.js');
+}
+try {
+  importScripts('shared/verification-evidence-helpers.js');
+} catch (_) {
+  importScripts('../shared/verification-evidence-helpers.js');
 }
 
 // Configurações da API - com overrides via __VOIDR_ENV__
@@ -33,15 +58,27 @@ const RESOLVED = {
   baseUrl: __ENV__.VOIDR_API_BASE_URL || DEFAULTS.baseUrl,
   platformUrl: __ENV__.VOIDR_PLATFORM_URL || DEFAULTS.platformUrl,
   collectorUrl: __ENV__.VOIDR_COLLECTOR_URL || DEFAULTS.collectorUrl,
+  collectorScriptUrl:
+    __ENV__.VOIDR_COLLECTOR_SCRIPT_URL ||
+    'https://cdn.voidr.co/voidr-collector/default/latest/recorder.min.js',
   auth0Domain: __ENV__.VOIDR_AUTH0_DOMAIN || DEFAULTS.auth0Domain,
   auth0ClientId: __ENV__.VOIDR_AUTH0_CLIENT_ID || DEFAULTS.auth0ClientId,
   auth0Audience: __ENV__.VOIDR_AUTH0_AUDIENCE || DEFAULTS.auth0Audience,
 };
+const LOCAL_VERIFICATION_ADAPTER =
+  __ENV__.VERIFICATION_LOCAL_ADAPTER_ENABLED === true ||
+  __ENV__.VERIFICATION_LOCAL_ADAPTER_ENABLED === 'true';
+const LOCAL_VERIFICATION_KEY = __ENV__.VERIFICATION_LOCAL_DEV_KEY || 'voidr-verification-local';
+const LOCAL_VERIFICATION_ORGANIZATION =
+  __ENV__.VERIFICATION_LOCAL_ORGANIZATION || 'org_verification_local';
+const LOCAL_VERIFICATION_COLLECTOR_KEY =
+  __ENV__.VERIFICATION_LOCAL_COLLECTOR_API_KEY || 'voidr-verification-collector-local';
 
 const API_CONFIG = {
   baseUrl: RESOLVED.baseUrl,
   platformUrl: RESOLVED.platformUrl,
   collectorUrl: RESOLVED.collectorUrl,
+  collectorScriptUrl: RESOLVED.collectorScriptUrl,
   auth0: {
     domain: RESOLVED.auth0Domain,
     clientId: RESOLVED.auth0ClientId,
@@ -63,11 +100,25 @@ let lastPopupWindowId = null;
 let lastActiveContentTabId = null;
 
 const ACTIVE_RECORDING_STORAGE_KEY = 'voidrActiveRecording';
+const LOOP_STARTUP_FAILURE_STORAGE_KEY = 'voidrLoopStartupFailure';
+const LOOP_FINALIZATION_STORAGE_KEY = 'voidrLastLoopFinalization';
+const loopBootstrapStaging = VoidrLoopBootstrap.createStagingStore(chrome.storage.session);
+const loopCapabilitySecrets = VoidrLoopBootstrap.createGenerationCapabilityStore(
+  chrome.storage.session,
+);
+const stopCapabilitySecrets = VoidrRecordingLifecycle.createStopCapabilityStore(
+  chrome.storage.session,
+);
 
 // Active recording state — persisted because MV3 service workers are ephemeral
 let activeRecording = null;
-// Guard against race condition: if onUpdated fires before sessionStopped is dequeued
-let lastStoppedAt = 0;
+const runWithRecordingStateLock = VoidrRecordingLifecycle.createSerializedExecutor();
+const stopRequestLatch = VoidrRecordingLifecycle.createKeyedSingleFlightLatch();
+
+function isTrustedAssistantSender(sender) {
+  const popupRoot = chrome.runtime.getURL('popup/');
+  return typeof sender?.url === 'string' && sender.url.startsWith(popupRoot);
+}
 
 // Helpers to persist assistant window id across service worker restarts
 async function getStoredAssistantWindowId() {
@@ -94,16 +145,21 @@ function createRecordingSessionId() {
   return `voidr-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+function createLifecycleGeneration() {
+  return `lifecycle-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 function normalizeActiveRecording(recording) {
   if (!recording || typeof recording !== 'object') return null;
 
+  const lifecycleGeneration =
+    (typeof recording.lifecycleGeneration === 'string' && recording.lifecycleGeneration) || null;
   const trackedTabIds = Array.from(
     new Set(
-      [
-        recording.tabId,
-        recording.currentTabId,
-        ...(Array.isArray(recording.trackedTabIds) ? recording.trackedTabIds : []),
-      ].filter((tabId) => Number.isInteger(tabId)),
+      (Array.isArray(recording.trackedTabIds)
+        ? recording.trackedTabIds
+        : [recording.tabId, recording.currentTabId]
+      ).filter((tabId) => Number.isInteger(tabId)),
     ),
   );
 
@@ -114,7 +170,29 @@ function normalizeActiveRecording(recording) {
     (Array.isArray(recording.sessionIds) && recording.sessionIds[0]) ||
     null;
 
-  if (!canonicalSessionId || trackedTabIds.length === 0) return null;
+  const unacknowledgedRemovals = Array.isArray(recording.unacknowledgedRemovals)
+    ? recording.unacknowledgedRemovals
+        .filter(
+          (removal) =>
+            Number.isInteger(removal?.tabId) &&
+            removal.generation === lifecycleGeneration &&
+            removal.acknowledged !== true,
+        )
+        .map((removal) => ({
+          tabId: removal.tabId,
+          generation: removal.generation,
+          sessionId:
+            typeof removal.sessionId === 'string' && removal.sessionId
+              ? removal.sessionId
+              : canonicalSessionId,
+          removedAt: Number(removal.removedAt) || Date.now(),
+          acknowledged: false,
+        }))
+    : [];
+
+  if (!canonicalSessionId || (trackedTabIds.length === 0 && unacknowledgedRemovals.length === 0)) {
+    return null;
+  }
 
   const sessionIds = Array.from(
     new Set([
@@ -125,15 +203,41 @@ function normalizeActiveRecording(recording) {
 
   const currentTabId = trackedTabIds.includes(recording.currentTabId)
     ? recording.currentTabId
-    : trackedTabIds[0];
+    : (trackedTabIds[0] ?? null);
+  const {
+    token: _token,
+    voidr_token: _voidrToken,
+    recordingToken: _recordingToken,
+    capabilityToken: _capabilityToken,
+    ...safeInitOptions
+  } = recording.initOptions || {};
+  const safeLoopTest = safeInitOptions.loopTest?.scenarioId
+    ? {
+        scenarioId: safeInitOptions.loopTest.scenarioId,
+        cycleId: safeInitOptions.loopTest.cycleId,
+        cycleNumber: safeInitOptions.loopTest.cycleNumber,
+      }
+    : undefined;
+  const safeMeta = {
+    ...(safeInitOptions.meta || {}),
+    loopTest: safeInitOptions.meta?.loopTest?.scenarioId
+      ? {
+          scenarioId: safeInitOptions.meta.loopTest.scenarioId,
+          cycleId: safeInitOptions.meta.loopTest.cycleId,
+          cycleNumber: safeInitOptions.meta.loopTest.cycleNumber,
+        }
+      : undefined,
+  };
 
   return {
-    tabId: trackedTabIds[0],
+    tabId: trackedTabIds[0] ?? null,
     currentTabId,
     trackedTabIds,
     canonicalSessionId,
     initOptions: {
-      ...(recording.initOptions || {}),
+      ...safeInitOptions,
+      meta: safeMeta,
+      loopTest: safeLoopTest,
       collectorUrl: API_CONFIG.collectorUrl,
       forcedSessionId: canonicalSessionId,
     },
@@ -143,13 +247,31 @@ function normalizeActiveRecording(recording) {
       recording.onboardingRunId || recording.initOptions?.meta?.onboardingRunId || null,
     code: recording.code || recording.initOptions?.meta?.code || null,
     evidence: recording.evidence || recording.initOptions?.meta?.evidence || null,
+    loopTest: recording.loopTest || recording.initOptions?.meta?.loopTest || null,
     flows: recording.flows || recording.initOptions?.meta?.flows || [],
     sessionIds,
     startedAt: recording.startedAt || Date.now(),
+    lifecycle: ['starting', 'recording', 'stopping'].includes(recording.lifecycle)
+      ? recording.lifecycle
+      : 'recording',
+    lifecycleGeneration:
+      lifecycleGeneration || `legacy-${canonicalSessionId}-${Number(recording.startedAt) || 0}`,
+    lifecycleVersion:
+      Number.isInteger(recording.lifecycleVersion) && recording.lifecycleVersion >= 0
+        ? recording.lifecycleVersion
+        : 0,
+    removedTabIds: Array.isArray(recording.removedTabIds)
+      ? recording.removedTabIds.filter(Number.isInteger)
+      : [],
+    unacknowledgedRemovals,
   };
 }
 
-async function hydrateActiveRecording(force = false) {
+function withRecordingStateLock(task) {
+  return runWithRecordingStateLock(task);
+}
+
+async function hydrateActiveRecordingUnlocked(force = false) {
   if (activeRecording && !force) return activeRecording;
 
   try {
@@ -162,6 +284,10 @@ async function hydrateActiveRecording(force = false) {
   return activeRecording;
 }
 
+async function hydrateActiveRecording(force = false) {
+  return withRecordingStateLock(() => hydrateActiveRecordingUnlocked(force));
+}
+
 async function persistActiveRecording() {
   try {
     if (activeRecording) {
@@ -172,43 +298,225 @@ async function persistActiveRecording() {
   } catch (_) {}
 }
 
-async function setActiveRecording(recording) {
+async function writeActiveRecordingUnlocked(recording) {
   activeRecording = normalizeActiveRecording(recording);
   await persistActiveRecording();
   return activeRecording;
 }
 
+async function setActiveRecording(recording) {
+  return withRecordingStateLock(() => writeActiveRecordingUnlocked(recording));
+}
+
+async function claimActiveRecording(recording) {
+  return withRecordingStateLock(async () => {
+    await hydrateActiveRecordingUnlocked();
+    if (activeRecording) return null;
+    return writeActiveRecordingUnlocked(recording);
+  });
+}
+
 async function clearActiveRecording() {
-  activeRecording = null;
-  await persistActiveRecording();
+  return withRecordingStateLock(async () => {
+    const generation = activeRecording?.lifecycleGeneration;
+    activeRecording = null;
+    await persistActiveRecording();
+    await Promise.all([
+      loopCapabilitySecrets.discardGeneration(generation),
+      stopCapabilitySecrets.discardGeneration(generation),
+    ]);
+  });
+}
+
+function isActiveLifecycleGenerationCurrent(token, allowedLifecycles = ['starting', 'recording']) {
+  return VoidrRecordingLifecycle.matchesLifecycleGeneration(
+    activeRecording,
+    token,
+    allowedLifecycles,
+  );
+}
+
+async function runWithActiveLifecycleGeneration(
+  token,
+  operation,
+  allowedLifecycles = ['starting', 'recording'],
+) {
+  return withRecordingStateLock(async () => {
+    if (!isActiveLifecycleGenerationCurrent(token, allowedLifecycles)) {
+      return { ran: false, value: undefined };
+    }
+    return { ran: true, value: await operation() };
+  });
+}
+
+async function updateActiveRecordingIfCurrent(token, update, allowedLifecycles = null) {
+  return withRecordingStateLock(async () => {
+    if (!VoidrRecordingLifecycle.matchesLifecycleToken(activeRecording, token, allowedLifecycles)) {
+      return null;
+    }
+    const next =
+      typeof update === 'function' ? update(activeRecording) : { ...activeRecording, ...update };
+    return writeActiveRecordingUnlocked({
+      ...next,
+      lifecycleVersion: activeRecording.lifecycleVersion + 1,
+    });
+  });
+}
+
+async function updateActiveRecordingForGeneration(
+  lifecycleGeneration,
+  update,
+  allowedLifecycles = null,
+) {
+  return withRecordingStateLock(async () => {
+    if (
+      !activeRecording ||
+      activeRecording.lifecycleGeneration !== lifecycleGeneration ||
+      (Array.isArray(allowedLifecycles) && !allowedLifecycles.includes(activeRecording.lifecycle))
+    ) {
+      return null;
+    }
+    const next =
+      typeof update === 'function' ? update(activeRecording) : { ...activeRecording, ...update };
+    return writeActiveRecordingUnlocked({
+      ...next,
+      lifecycleVersion: activeRecording.lifecycleVersion + 1,
+    });
+  });
+}
+
+async function clearActiveRecordingIfCurrent(token, beforeClear = null) {
+  return withRecordingStateLock(async () => {
+    if (!VoidrRecordingLifecycle.matchesLifecycleToken(activeRecording, token)) return false;
+    if (beforeClear) await beforeClear(activeRecording);
+    if (!VoidrRecordingLifecycle.matchesLifecycleToken(activeRecording, token)) return false;
+    const generation = activeRecording.lifecycleGeneration;
+    activeRecording = null;
+    await persistActiveRecording();
+    await Promise.all([
+      loopCapabilitySecrets.discardGeneration(generation),
+      stopCapabilitySecrets.discardGeneration(generation),
+    ]);
+    return true;
+  });
+}
+
+async function clearActiveRecordingForGeneration(
+  lifecycleGeneration,
+  allowedLifecycles = null,
+  beforeClear = null,
+  { preserveLoopCapability = false } = {},
+) {
+  return withRecordingStateLock(async () => {
+    const matches = () =>
+      activeRecording?.lifecycleGeneration === lifecycleGeneration &&
+      (!Array.isArray(allowedLifecycles) ||
+        allowedLifecycles.length === 0 ||
+        allowedLifecycles.includes(activeRecording.lifecycle));
+    if (!matches()) return false;
+    if (beforeClear) await beforeClear(activeRecording);
+    if (!matches()) return false;
+    const generation = activeRecording.lifecycleGeneration;
+    activeRecording = null;
+    await persistActiveRecording();
+    await stopCapabilitySecrets.discardGeneration(generation);
+    if (!preserveLoopCapability) {
+      await loopCapabilitySecrets.discardGeneration(generation);
+    }
+    return true;
+  });
+}
+
+async function getSafeRecordingState() {
+  const recording = await hydrateActiveRecording();
+  let startupFailure = null;
+  let finalization = null;
+  try {
+    const [stored, sessionStored] = await Promise.all([
+      chrome.storage.local.get([LOOP_STARTUP_FAILURE_STORAGE_KEY]),
+      chrome.storage.session.get([LOOP_FINALIZATION_STORAGE_KEY]),
+    ]);
+    const failure = stored[LOOP_STARTUP_FAILURE_STORAGE_KEY];
+    if (failure && typeof failure === 'object') {
+      startupFailure = {
+        reason: VoidrRecordingUx.safeFailureReason(failure.reason),
+        failedAt: Number(failure.failedAt) || null,
+      };
+    }
+    const lastFinalization = sessionStored[LOOP_FINALIZATION_STORAGE_KEY];
+    if (
+      lastFinalization &&
+      typeof lastFinalization === 'object' &&
+      Date.now() - Number(lastFinalization.updatedAt || 0) < 4 * 60 * 60 * 1000
+    ) {
+      finalization = lastFinalization;
+    }
+  } catch (_) {}
+  return {
+    active: VoidrRecordingUx.sanitizeActiveRecording(recording),
+    startupFailure,
+    finalization,
+  };
+}
+
+async function persistLoopStartupFailure(reason) {
+  const failure = {
+    reason: VoidrRecordingUx.safeFailureReason(reason),
+    failedAt: Date.now(),
+  };
+  await chrome.storage.local.set({ [LOOP_STARTUP_FAILURE_STORAGE_KEY]: failure });
+  await chrome.action.setBadgeText({ text: '!' });
+  await chrome.action.setBadgeBackgroundColor({ color: '#ef4444' });
+  return failure;
+}
+
+async function clearLoopStartupFailure() {
+  await chrome.storage.local.remove([LOOP_STARTUP_FAILURE_STORAGE_KEY]);
+  await chrome.action.setBadgeText({ text: '' });
 }
 
 function isTrackedRecordingTab(recording, tabId) {
   return Boolean(recording && Number.isInteger(tabId) && recording.trackedTabIds?.includes(tabId));
 }
 
-async function attachTrackedRecordingTab(tabId, { makeCurrent = false } = {}) {
-  const recording = await hydrateActiveRecording();
-  if (!recording || !Number.isInteger(tabId)) return null;
+async function attachTrackedRecordingTab(
+  tabId,
+  { makeCurrent = false, expectedToken = null } = {},
+) {
+  if (!Number.isInteger(tabId)) return null;
+  return withRecordingStateLock(async () => {
+    const recording = activeRecording || (await hydrateActiveRecordingUnlocked());
+    if (!recording || recording.lifecycle === 'stopping') return null;
+    if (
+      expectedToken &&
+      !VoidrRecordingLifecycle.matchesLifecycleGeneration(recording, expectedToken, [
+        'starting',
+        'recording',
+      ])
+    ) {
+      return null;
+    }
 
-  const wasTracked = recording.trackedTabIds.includes(tabId);
-  if (!wasTracked) {
-    recording.trackedTabIds.push(tabId);
-  }
-  if (makeCurrent || !recording.currentTabId) {
-    recording.currentTabId = tabId;
-  }
-  if (!recording.tabId) {
-    recording.tabId = tabId;
-  }
-  await setActiveRecording(recording);
+    const wasTracked = recording.trackedTabIds.includes(tabId);
+    const shouldMakeCurrent = makeCurrent || !recording.currentTabId;
+    if (wasTracked && (!shouldMakeCurrent || recording.currentTabId === tabId) && recording.tabId) {
+      return recording;
+    }
 
-  // Ensure CSP bypass rule exists for any tab joining the recording.
-  if (!wasTracked) {
-    await enableCspBypassForTab(tabId);
-  }
+    const next = {
+      ...recording,
+      trackedTabIds: wasTracked ? recording.trackedTabIds : [...recording.trackedTabIds, tabId],
+      currentTabId: shouldMakeCurrent ? tabId : recording.currentTabId,
+      tabId: recording.tabId || tabId,
+      lifecycleVersion: recording.lifecycleVersion + 1,
+    };
+    await writeActiveRecordingUnlocked(next);
 
-  return activeRecording;
+    // Keep CSP enablement inside the lifecycle lock. Failed-start cleanup can
+    // then snapshot every joined child without a delayed enable leaking a rule.
+    if (!wasTracked) await enableCspBypassForTab(tabId);
+    return activeRecording;
+  });
 }
 
 // On window removed, clear stored id if it matches
@@ -474,18 +782,39 @@ async function injectCollectorInTab(tabId) {
 }
 
 async function initializeCollectorInTab(tabId, initOptions) {
-  await chrome.scripting.executeScript({
+  const results = await chrome.scripting.executeScript({
     target: { tabId },
     world: 'MAIN',
-    func: (opts) => {
+    func: async (opts) => {
       try {
-        window.VoidrCollector?.init?.(opts);
+        if (!window.VoidrCollector?.init) {
+          throw new Error('Collector init API is unavailable');
+        }
+        await window.VoidrCollector.init(opts);
+        const sessionId = window.VoidrCollector.getSessionId?.() || null;
+        let authenticatedSessionId = null;
+        let hasAuthenticatedSession = false;
+        try {
+          authenticatedSessionId = window.sessionStorage.getItem('voidr_session_id');
+          hasAuthenticatedSession = Boolean(window.sessionStorage.getItem('voidr_jwt'));
+        } catch (_) {}
+        return {
+          ready:
+            Boolean(sessionId) && hasAuthenticatedSession && authenticatedSessionId === sessionId,
+          sessionId,
+        };
       } catch (e) {
         console.error('[Voidr] Collector init error', e);
+        throw e;
       }
     },
     args: [initOptions],
   });
+  const readiness = results?.[0]?.result;
+  if (!VoidrRecordingLifecycle.isCollectorReadinessConfirmed(readiness)) {
+    throw new Error('Collector did not confirm an authenticated recording session');
+  }
+  return readiness.sessionId;
 }
 
 async function readCollectorSessionId(tabId) {
@@ -495,7 +824,10 @@ async function readCollectorSessionId(tabId) {
       world: 'MAIN',
       func: () => {
         try {
-          return window.VoidrCollector?.getSessionId?.() || null;
+          const liveSessionId = window.VoidrCollector?.getSessionId?.() || null;
+          const storedSessionId = window.sessionStorage.getItem('voidr_session_id');
+          const hasAuthenticatedSession = Boolean(window.sessionStorage.getItem('voidr_jwt'));
+          return liveSessionId || (hasAuthenticatedSession ? storedSessionId : null) || null;
         } catch (_) {
           return null;
         }
@@ -507,77 +839,43 @@ async function readCollectorSessionId(tabId) {
   }
 }
 
-// Takeover: if the target app already embeds a running Voidr collector, stop it
-// BEFORE we inject ours. endSession() tears down its rrweb/timers/fetch-XHR
-// interceptors (kills the two-recorder race) AND clears voidr_jwt/voidr_session_id
-// from sessionStorage — otherwise the cached JWT short-circuits our forced
-// session's /init and the session is never created server-side. No-op when no
-// collector is present. Must run before injectCollectorInTab (which reassigns
-// window.VoidrCollector, losing the handle to the native instance).
+// Preserve upstream takeover semantics when the target app embeds its own
+// collector. Clear stale session credentials before extension initialization,
+// then guard against a late native bundle replacing the extension instance.
 async function teardownExistingCollectorInTab(tabId) {
   try {
-    const res = await chrome.scripting.executeScript({
+    await chrome.scripting.executeScript({
       target: { tabId },
       world: 'MAIN',
       func: () => {
-        // The real poison is the orphan voidr_jwt in sessionStorage (a stale
-        // token makes the recorder skip /init and flush under the wrong org),
-        // so wipe it on EVERY path — even when no instance is present (e.g.
-        // async embeds that haven't loaded yet, or endSession-less versions).
         const wipe = () => {
-          for (const k of ['voidr_jwt', 'voidr_session_id', 'voidr_user_id', 'voidr_last_activity']) {
+          for (const key of [
+            'voidr_jwt',
+            'voidr_session_id',
+            'voidr_user_id',
+            'voidr_last_activity',
+          ]) {
             try {
-              sessionStorage.removeItem(k);
+              sessionStorage.removeItem(key);
             } catch (_) {}
           }
         };
         try {
           const existing = window.VoidrCollector;
-          if (!existing) {
-            wipe();
-            return { present: false, wiped: true };
-          }
-          const info = {
-            present: true,
-            version: existing.version || null,
-            sessionId:
-              (typeof existing.getSessionId === 'function' && existing.getSessionId()) || null,
-            toreDown: false,
-          };
-          if (typeof existing.endSession === 'function') {
-            existing.endSession();
-            info.toreDown = true;
-          }
-          // Drop the dead handle so page code can't revive/reuse the native
-          // instance after we inject ours.
+          if (typeof existing?.endSession === 'function') existing.endSession();
           try {
             delete window.VoidrCollector;
           } catch (_) {
             window.VoidrCollector = undefined;
           }
+        } finally {
           wipe();
-          info.wiped = true;
-          return info;
-        } catch (e) {
-          wipe();
-          return { present: false, wiped: true, error: String(e) };
         }
       },
     });
-    const info = (res && res[0] && res[0].result) || { present: false };
-    console.log('[Voidr] native collector teardown', JSON.stringify(info));
-    return info;
-  } catch (e) {
-    console.warn('[Voidr] native collector teardown failed', e?.message || e);
-    return { present: false };
-  }
+  } catch (_) {}
 }
 
-// Async embeds (script injected via createElement/GTM) can finish loading AFTER
-// our injection: the native bundle unconditionally reassigns window.VoidrCollector
-// and its init() adopts our forced session — two recorders on one session, and
-// the stop flow would endSession the wrong instance. Stash our handle and, on a
-// delayed re-check, tear down the usurper and restore ours.
 async function armCollectorTakeoverWatchdog(tabId) {
   try {
     await chrome.scripting.executeScript({
@@ -590,10 +888,9 @@ async function armCollectorTakeoverWatchdog(tabId) {
           const current = window.VoidrCollector;
           if (!current || current === window.__voidrExtCollector) return;
           try {
-            if (typeof current.endSession === 'function') current.endSession();
+            current.endSession?.();
           } catch (_) {}
           window.VoidrCollector = window.__voidrExtCollector;
-          console.warn('[Voidr] native collector re-appeared after injection — torn down, handle restored');
         };
         setTimeout(check, 4000);
         setTimeout(check, 12000);
@@ -631,66 +928,286 @@ async function ensureContentCss(tabId) {
   }
 }
 
-async function sendResumeRecordingUi(tabId, recording) {
+// A final chunk can spend several seconds in anonymization + local/cloud
+// storage before its ACK returns. Keep this inside the UI's 25s stop budget
+// without racing a seal that is already durably completing.
+const COLLECTOR_TAB_STOP_TIMEOUT_MS = 15000;
+const COLLECTOR_FINALIZE_TIMEOUT_MS = 5000;
+const COOKIE_UPLOAD_TIMEOUT_MS = 3000;
+
+function withTimeout(promise, timeoutMs, message) {
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        const error = new Error(message);
+        error.code = 'COLLECTOR_STOP_TIMEOUT';
+        reject(error);
+      }, timeoutMs);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
+async function quiesceCollectorInTab(tabId) {
+  const execution = chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    func: async (deadlineMs) => {
+      const collector = window.VoidrCollector;
+      if (!collector) {
+        return {
+          ok: true,
+          flushed: true,
+          unavailable: true,
+          legacy: true,
+          finalChunkSeq: null,
+        };
+      }
+      if (typeof collector.stopAndFlush === 'function') {
+        return await collector.stopAndFlush({ deadlineMs });
+      }
+
+      // Compatibility with pre-barrier collectors. Their endSession() starts
+      // the final keepalive chunk/beacon before returning. We never directly
+      // seal from inside this page; the background waits for every legacy tab
+      // to quiesce and a settle window before issuing one authoritative seal.
+      if (typeof collector.endSession !== 'function') {
+        throw new Error('Collector stop API is unavailable');
+      }
+      const legacyResult = await collector.endSession();
+      return {
+        ok: legacyResult?.sealed !== false,
+        // Legacy collectors provide no awaited chunk ACK. Keep this explicitly
+        // unconfirmed until finalize derives a durable server watermark.
+        flushed: legacyResult?.flushed === true,
+        confirmed: false,
+        legacy: true,
+        finalChunkSeq: legacyResult?.finalChunkSeq ?? null,
+        error: legacyResult?.error || null,
+      };
+    },
+    args: [COLLECTOR_TAB_STOP_TIMEOUT_MS - 500],
+  });
+  const result = await withTimeout(
+    execution,
+    COLLECTOR_TAB_STOP_TIMEOUT_MS,
+    `Collector stop timed out after ${COLLECTOR_TAB_STOP_TIMEOUT_MS}ms`,
+  );
+  const stopResult = result?.[0]?.result;
+  if (
+    !stopResult ||
+    stopResult.ok !== true ||
+    (!stopResult.legacy && !stopResult.unavailable && stopResult.flushed !== true)
+  ) {
+    throw new Error(stopResult?.error || 'Collector did not acknowledge its final chunk');
+  }
+  return stopResult;
+}
+
+async function finalizeSessionDirect(
+  sessionId,
+  initOptions = {},
+  { reason = null, finalizedThrough = null } = {},
+) {
+  const apiKey = initOptions.apiKey;
+  if (!apiKey) throw new Error('Direct finalize fallback has no collector apiKey');
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), COLLECTOR_FINALIZE_TIMEOUT_MS);
+  try {
+    const collectorUrl = initOptions.collectorUrl || API_CONFIG.collectorUrl;
+    const body = {
+      apiKey,
+      sessionId,
+      endedAt: Date.now(),
+      finalizationMode: 'explicit-stop',
+    };
+    if (Number.isInteger(finalizedThrough) && finalizedThrough >= 0) {
+      body.finalizedThrough = finalizedThrough;
+      body.finalChunkSeq = finalizedThrough;
+    }
+    const res = await fetch(`${collectorUrl}/sessions/${encodeURIComponent(sessionId)}/finalize`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error(`Direct finalize failed (HTTP ${res.status})`);
+    const seal = await res.json();
+    if (seal?.sealed !== true) throw new Error('Direct finalize returned no durable seal');
+    return {
+      ...seal,
+      sessionId,
+      degraded: Boolean(reason),
+      error: reason,
+      fallback: reason ? 'compatibility' : undefined,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function attachLoopTestSession(sessionId, loopTest, lifecycleGeneration) {
+  if (!loopTest?.scenarioId) return null;
+  return VoidrLoopBootstrap.attachSessionWithCapability({
+    capabilityStore: loopCapabilitySecrets,
+    lifecycleGeneration,
+    scenarioId: loopTest.scenarioId,
+    sessionId,
+    endpoint: `${API_CONFIG.baseUrl}/loop-test/scenarios/${encodeURIComponent(loopTest.scenarioId)}/sessions`,
+    fetchImpl: fetch,
+  });
+}
+
+async function linkOnboardingSessions(recording, sessionIds) {
+  const code = recording?.code || recording?.initOptions?.meta?.code || null;
+  if (!code || !globalAuthState.token) return { code, confirmed: false };
+
+  let confirmed = false;
+  for (const sessionId of sessionIds) {
+    try {
+      const res = await fetch(
+        `${API_CONFIG.baseUrl}/onboarding/recording-sessions/code/${encodeURIComponent(code)}/sessions`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${globalAuthState.token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ collectorSessionId: sessionId }),
+        },
+      );
+      const json = await res.json().catch(() => null);
+      if (res.ok && json?.success && Array.isArray(json?.data?.sessions)) {
+        confirmed = json.data.sessions.includes(sessionId) || confirmed;
+      }
+    } catch (_) {}
+  }
+  return { code, confirmed };
+}
+
+async function sendResumeRecordingUi(tabId, recording, { showCountdown = false } = {}) {
+  const stopCapability = await stopCapabilitySecrets.issue(
+    recording.lifecycleGeneration,
+    tabId,
+    recording.canonicalSessionId,
+  );
   const payload = {
     action: 'voidr:resumeRecordingUI',
     testCaseName: recording.testCaseName,
     mode: recording.mode,
     onboardingRunId: recording.onboardingRunId,
     evidence: recording.evidence || null,
+    loopTest: recording.loopTest || null,
+    verification: recording.initOptions?.meta?.verification || null,
     flows: recording.flows,
     applicationId: recording.initOptions?.applicationId || null,
+    lifecycleGeneration: recording.lifecycleGeneration,
+    stopCapability,
+    showCountdown,
   };
 
   await ensureContentCss(tabId);
+  let lastError = null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      await chrome.tabs.sendMessage(tabId, payload);
+      return true;
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolve) => setTimeout(resolve, 150 * (attempt + 1)));
+    }
+  }
 
-  // Os dois caminhos engoliam a excecao, entao painel ausente era indistinguivel
-  // de painel montado. Agora cada ramo diz o que aconteceu.
   try {
+    await chrome.scripting.insertCSS({
+      target: { tabId },
+      files: ['shared/voidr-design-system.css', 'content/content.css'],
+    });
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: [
+        'background/session-stop-helpers.js',
+        'assets/lucide-icons.js',
+        'shared/recording-signal-helpers.js',
+        'shared/live-evidence-inspector.js',
+        'shared/verification-handoff-ux.js',
+        'content/content.js',
+      ],
+    });
+    await new Promise((resolve) => setTimeout(resolve, 300));
     await chrome.tabs.sendMessage(tabId, payload);
-    console.log('[Voidr] painel: content script ja estava na aba, mensagem entregue');
-    return;
-  } catch (e1) {
-    console.warn('[Voidr] painel: sendMessage falhou —', e1?.message || e1);
+    return true;
+  } catch (error) {
+    lastError = error;
   }
+  console.warn('[Voidr] Recording UI receiver unavailable after navigation', {
+    tabId,
+    error: lastError?.message || String(lastError),
+  });
+  return false;
+}
 
-  try {
-    await chrome.scripting.executeScript({ target: { tabId }, files: ['content/content.js'] });
-    console.log('[Voidr] painel: content script injetado sob demanda');
-  } catch (e2) {
-    console.error('[Voidr] painel: injecao do content script FALHOU —', e2?.message || e2);
-    return;
-  }
+async function cleanupFailedRecordingBootstrap(startupToken, fallbackTabId) {
+  const stopping = await updateActiveRecordingForGeneration(
+    startupToken.generation,
+    (recording) => ({ ...recording, lifecycle: 'stopping' }),
+    ['starting', 'recording'],
+  );
+  if (!stopping) return false;
 
-  await new Promise((resolve) => setTimeout(resolve, 300));
-
-  try {
-    await chrome.tabs.sendMessage(tabId, payload);
-    console.log('[Voidr] painel: mensagem entregue apos injecao');
-  } catch (e3) {
-    console.error('[Voidr] painel: mensagem falhou mesmo apos injecao —', e3?.message || e3);
-  }
+  const cleanupToken = VoidrRecordingLifecycle.lifecycleToken(stopping);
+  return clearActiveRecordingIfCurrent(cleanupToken, async (recording) => {
+    await VoidrRecordingLifecycle.cleanupFailedCollectorBootstrap({
+      tabId: fallbackTabId,
+      trackedTabIds: recording.trackedTabIds,
+      disableCsp: disableCspBypassForTab,
+      clearActive: async () => {},
+    });
+  });
 }
 
 async function resumeActiveRecordingInTab(tabId) {
   const recording = await hydrateActiveRecording();
-  if (!recording) return false;
+  if (!recording || recording.lifecycle === 'stopping') return false;
+  const lifecycleToken = VoidrRecordingLifecycle.lifecycleToken(recording);
+  if (!lifecycleToken) return false;
 
   const tab = await chrome.tabs.get(tabId).catch(() => null);
   if (!tab?.url || !isHttpUrl(tab.url)) return false;
 
-  await teardownExistingCollectorInTab(tabId);
-  await injectCollectorInTab(tabId);
-  await initializeCollectorInTab(tabId, recording.initOptions);
-  await armCollectorTakeoverWatchdog(tabId);
-  await attachTrackedRecordingTab(tabId, { makeCurrent: true });
-  await sendResumeRecordingUi(tabId, recording);
+  await ensureTargetContentScript(tabId);
+  const resumed = await VoidrRecordingLifecycle.resumeCollectorWithLifecycleChecks({
+    token: lifecycleToken,
+    isCurrent: (token) => isActiveLifecycleGenerationCurrent(token),
+    runIfCurrent: (token, operation) => runWithActiveLifecycleGeneration(token, operation),
+    fetchCollector: async () => null,
+    injectCollector: async () => {
+      await teardownExistingCollectorInTab(tabId);
+      return injectCollectorInTab(tabId);
+    },
+    initializeCollector: async () => {
+      const sessionId = await initializeCollectorInTab(tabId, recording.initOptions);
+      await armCollectorTakeoverWatchdog(tabId);
+      return sessionId;
+    },
+  });
+  if (!resumed.resumed) return false;
 
-  const sessionId = (await readCollectorSessionId(tabId)) || recording.canonicalSessionId;
-  if (sessionId && activeRecording && !activeRecording.sessionIds.includes(sessionId)) {
-    activeRecording.sessionIds.push(sessionId);
-    await persistActiveRecording();
-  }
+  const attached = await attachTrackedRecordingTab(tabId, {
+    makeCurrent: true,
+    expectedToken: lifecycleToken,
+  });
+  if (!attached) return false;
+  const attachedToken = VoidrRecordingLifecycle.lifecycleToken(attached);
+  const ready = await updateActiveRecordingForGeneration(
+    attachedToken.generation,
+    (current) => VoidrRecordingLifecycle.markRecordingReady(current, resumed.sessionId),
+    ['starting', 'recording'],
+  );
+  if (!ready) return false;
+  await sendResumeRecordingUi(tabId, ready);
 
   return true;
 }
@@ -698,6 +1215,7 @@ async function resumeActiveRecordingInTab(tabId) {
 // Hydrate auth state whenever the service worker starts up
 // MV3 service workers are ephemeral; don't rely on in-memory state
 checkAuthenticationStatus();
+loopCapabilitySecrets.purgeExpired().catch(() => {});
 hydrateActiveRecording().then((recording) => {
   // Re-apply CSP bypass rules for any active recording so the rule survives
   // a service worker restart mid-recording.
@@ -846,8 +1364,17 @@ async function ensureTargetContentScript(tabId) {
     const cfg = {
       id: ID_CS_ALVO,
       matches,
-      js: ['content/content.js'],
-      css: ['content/content.css'],
+      js: [
+        'shared/loop-bootstrap-helpers.js',
+        'content/bootstrap.js',
+        'background/session-stop-helpers.js',
+        'assets/lucide-icons.js',
+        'shared/recording-signal-helpers.js',
+        'shared/live-evidence-inspector.js',
+        'shared/verification-handoff-ux.js',
+        'content/content.js',
+      ],
+      css: ['shared/voidr-design-system.css', 'content/content.css'],
       runAt: 'document_end',
       persistAcrossSessions: false,
     };
@@ -883,14 +1410,957 @@ async function tabBlocksCollectorConnects(tabId, collectorUrl) {
   }
 }
 
+const VERIFICATION_CAPABILITY_PREFIX = 'voidrVerificationCapability:';
+const VERIFICATION_EVIDENCE_PREFIX = 'voidrVerificationEvidence:';
+const VERIFICATION_VOICE_PREFIX = 'voidrVerificationVoice:';
+const ACTIVE_VERIFICATION_VOICE_KEY = 'voidrActiveVerificationVoice';
+let offscreenVoiceDocumentPromise = null;
+
+function verificationCapabilityKey(verificationId, generation) {
+  return `${VERIFICATION_CAPABILITY_PREFIX}${verificationId}:${generation}`;
+}
+
+async function readVerificationCapability(verificationId, generation) {
+  const key = verificationCapabilityKey(verificationId, generation);
+  const value = await chrome.storage.session.get([key]);
+  const record = value[key];
+  if (
+    !record ||
+    record.verificationId !== verificationId ||
+    record.generation !== generation ||
+    typeof record.token !== 'string' ||
+    new Date(record.expiresAt).getTime() <= Date.now()
+  ) {
+    await chrome.storage.session.remove([key]);
+    return null;
+  }
+  return { key, record };
+}
+
+async function persistVerificationCapability(record) {
+  const key = verificationCapabilityKey(record.verificationId, record.generation);
+  await chrome.storage.session.set({ [key]: record });
+  return key;
+}
+
+async function verificationIngest(record, endpoint, body) {
+  const response = await fetch(
+    `${API_CONFIG.baseUrl}/verification-ingest/verifications/${encodeURIComponent(record.verificationId)}/${endpoint}`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${record.token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    },
+  );
+  const json = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(
+      json?.message || json?.error || `Verification ingest failed (${response.status})`,
+    );
+  }
+  const data = json?.data || json;
+  const lifecycleVersion = Number(data?.lifecycleVersion ?? data?.verification?.lifecycleVersion);
+  if (Number.isInteger(lifecycleVersion)) {
+    record.lifecycleVersion = lifecycleVersion;
+    await persistVerificationCapability(record);
+  }
+  return data;
+}
+
+async function ensureOffscreenVoiceDocument() {
+  if (await chrome.offscreen.hasDocument()) return;
+  if (!offscreenVoiceDocumentPromise) {
+    offscreenVoiceDocumentPromise = chrome.offscreen
+      .createDocument({
+        url: 'offscreen/voice.html',
+        reasons: ['USER_MEDIA'],
+        justification: 'Capture optional microphone notes while a Voidr Loop is recording.',
+      })
+      .finally(() => {
+        offscreenVoiceDocumentPromise = null;
+      });
+  }
+  await offscreenVoiceDocumentPromise;
+}
+
+async function notifyVerificationVoice(tabId, state) {
+  if (!Number.isInteger(tabId)) return;
+  await chrome.tabs
+    .sendMessage(tabId, { action: 'voidr:verificationVoiceStatus', ...state })
+    .catch(() => undefined);
+}
+
+async function persistVerificationVoiceSegment(message) {
+  const found = await readVerificationCapability(message.verificationId, message.generation);
+  if (!found) throw new Error('Verification capability is expired or revoked');
+  const segmentId = message.segment?.segmentId;
+  if (!segmentId || message.segment?.generation !== message.generation) {
+    throw new Error('Voice segment coordinates are invalid');
+  }
+  const key = `${VERIFICATION_VOICE_PREFIX}${message.verificationId}:${message.generation}:${segmentId}`;
+  await chrome.storage.local.set({
+    [key]: {
+      verificationId: message.verificationId,
+      generation: message.generation,
+      tabId: message.tabId,
+      segment: message.segment,
+      capturedAt: Date.now(),
+      adapter: 'local-extension-outbox',
+    },
+  });
+  try {
+    const uploaded = await verificationIngest(found.record, 'voice-segments', message.segment);
+    await chrome.storage.local.remove([key]);
+    await notifyVerificationVoice(message.tabId, {
+      state: 'listening',
+      transcript: uploaded?.segment?.text || '',
+      segmentId,
+    });
+    return uploaded;
+  } catch (error) {
+    await chrome.storage.local.set({
+      [key]: {
+        verificationId: message.verificationId,
+        generation: message.generation,
+        tabId: message.tabId,
+        segment: message.segment,
+        capturedAt: Date.now(),
+        adapter: 'local-extension-outbox',
+        lastAttemptAt: Date.now(),
+        uploadError: error?.message || String(error),
+      },
+    });
+    await notifyVerificationVoice(message.tabId, { state: 'queued' });
+    throw error;
+  }
+}
+
+async function flushPendingVerificationVoice(record) {
+  const stored = await chrome.storage.local.get(null);
+  const entries = Object.entries(stored).filter(
+    ([key, value]) =>
+      key.startsWith(VERIFICATION_VOICE_PREFIX) &&
+      value?.verificationId === record.verificationId &&
+      value?.generation === record.generation,
+  );
+  for (const [key, value] of entries) {
+    const uploaded = await verificationIngest(record, 'voice-segments', value.segment);
+    await chrome.storage.local.remove([key]);
+    await notifyVerificationVoice(value.tabId, {
+      state: 'listening',
+      transcript: uploaded?.segment?.text || '',
+      segmentId: value.segment?.segmentId,
+    });
+  }
+  return entries.length;
+}
+
+async function queueVerificationIngest(record, endpoint, input, idempotencyKey) {
+  const pending = Array.isArray(record.pending) ? record.pending : [];
+  if (!pending.some((entry) => entry.idempotencyKey === idempotencyKey)) {
+    pending.push({ endpoint, input, idempotencyKey, queuedAt: Date.now() });
+  }
+  record.pending = pending.slice(-50);
+  await persistVerificationCapability(record);
+}
+
+async function reconcilePendingVerificationEvidence(record) {
+  const stored = await chrome.storage.local.get(null);
+  const candidates = Object.entries(stored).filter(
+    ([key, value]) =>
+      key.startsWith(VERIFICATION_EVIDENCE_PREFIX) &&
+      value?.verificationId === record.verificationId &&
+      value?.generation === record.generation,
+  );
+  for (const [key, value] of candidates) {
+    const evidenceId = key.slice(VERIFICATION_EVIDENCE_PREFIX.length);
+    const legacyRefs = [
+      `verification-evidence-local:${evidenceId}`,
+      `verification-crop-local:${evidenceId}`,
+    ];
+    const localRef =
+      value.localRef ||
+      legacyRefs.find((candidate) =>
+        (record.pending || []).some(
+          (entry) => entry.input?.screenshotRef === candidate || entry.input?.cropRef === candidate,
+        ),
+      ) ||
+      legacyRefs[0];
+    if (!VoidrVerificationEvidence.isLocalEvidenceRef(localRef)) {
+      throw new Error('Pending Verification evidence has an invalid local reference');
+    }
+    const match = /^data:(image\/(?:webp|png|jpeg));base64,(.+)$/s.exec(value.dataUrl || '');
+    if (!match) throw new Error('Pending Verification evidence has invalid image data');
+    try {
+      const uploaded = await verificationIngest(record, 'evidence-assets', {
+        generation: record.generation,
+        kind:
+          value.kind === 'crop' || String(localRef).startsWith('verification-crop-local:')
+            ? 'crop'
+            : 'screenshot',
+        contentType: match[1],
+        dataBase64: match[2],
+        localRefs: value.localRef ? [value.localRef] : legacyRefs,
+      });
+      if (!uploaded?.evidenceRef) {
+        throw new Error('Verification evidence upload returned no durable reference');
+      }
+      record.pending = VoidrVerificationEvidence.replacePendingEvidenceRef(
+        record.pending,
+        localRef,
+        uploaded.evidenceRef,
+      );
+      await persistVerificationCapability(record);
+      await chrome.storage.local.remove([key]);
+    } catch (error) {
+      await chrome.storage.local.set({
+        [key]: {
+          ...value,
+          uploadError: error?.message || String(error),
+          lastAttemptAt: Date.now(),
+        },
+      });
+      throw error;
+    }
+  }
+  return candidates.length;
+}
+
+async function flushVerificationIngestQueue(record) {
+  const pending = Array.isArray(record.pending) ? [...record.pending] : [];
+  if (pending.some((entry) => VoidrVerificationEvidence.hasLocalEvidenceRefs(entry.input))) {
+    throw new Error('Verification evidence is still pending durable upload');
+  }
+  record.pending = [];
+  await persistVerificationCapability(record);
+  for (const entry of pending) {
+    try {
+      await verificationIngest(record, entry.endpoint, {
+        ...entry.input,
+        lifecycleVersion: record.lifecycleVersion,
+        idempotencyKey: entry.idempotencyKey,
+      });
+    } catch (error) {
+      await queueVerificationIngest(record, entry.endpoint, entry.input, entry.idempotencyKey);
+      throw error;
+    }
+  }
+  return pending.length;
+}
+
+async function waitForCollectorReadiness(sessionId, collectorToken, timeoutMs = 20000) {
+  let readToken = collectorToken || globalAuthState.token || null;
+  // Local Loops deliberately bypass Auth0, but collector read endpoints still
+  // require a short-lived collector JWT. Mint it in memory from the explicit
+  // localhost-only key; never persist it in recording/capability state.
+  if (!readToken && LOCAL_VERIFICATION_ADAPTER && LOCAL_VERIFICATION_COLLECTOR_KEY) {
+    const response = await fetch(`${API_CONFIG.collectorUrl}/init`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ apiKey: LOCAL_VERIFICATION_COLLECTOR_KEY }),
+    });
+    if (!response.ok) {
+      throw new Error(`Collector local read authorization failed (HTTP ${response.status})`);
+    }
+    const payload = await response.json();
+    readToken = payload?.token || payload?.data?.token || payload?.data?.data?.token || null;
+    if (!readToken) throw new Error('Collector local read authorization returned no token');
+  }
+  const deadline = Date.now() + timeoutMs;
+  let last = null;
+  while (Date.now() < deadline) {
+    const response = await fetch(
+      `${API_CONFIG.collectorUrl}/sessions/${encodeURIComponent(sessionId)}/ensure-indexed`,
+      {
+        method: 'POST',
+        headers: {
+          ...(readToken ? { Authorization: `Bearer ${readToken}` } : {}),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ budgetMs: 1500 }),
+      },
+    );
+    last = await response.json().catch(() => null);
+    if (response.ok && ['ready', 'indexed'].includes(last?.status)) return last;
+    if (response.status === 409 && last?.status === 'failed') {
+      throw new Error(last?.lastError || 'Collector indexing failed');
+    }
+    await new Promise((resolve) => setTimeout(resolve, 750));
+  }
+  throw new Error(`Collector readiness timed out${last?.status ? ` (${last.status})` : ''}`);
+}
+
+const VERIFICATION_RETRY_ALARM_PREFIX = 'voidrVerificationSealRetry:';
+
+function safeVerificationCoordinates(recording) {
+  const verification =
+    recording?.initOptions?.verification || recording?.initOptions?.meta?.verification || null;
+  if (!verification?.verificationId || !verification?.generation) return null;
+  return {
+    verificationId: verification.verificationId,
+    generation: verification.generation,
+    bindingId: verification.bindingId || null,
+    loopId: verification.loopId || recording?.loopTest?.scenarioId || null,
+    cycleId:
+      verification.cycleId || verification.verificationId || recording?.loopTest?.cycleId || null,
+    cycleNumber: verification.cycleNumber || recording?.loopTest?.cycleNumber || null,
+  };
+}
+
+function loopFinalizationStateFromVerification(verification, fallback = 'context') {
+  const deliveryState = verification?.harnessDelivery?.state;
+  if (['available', 'acknowledged', 'failed'].includes(deliveryState)) return deliveryState;
+  if (
+    !verification?.harness &&
+    ['artifact_ready', 'diagnosing', 'decision_required', 'open', 'confirmed'].includes(
+      verification?.status,
+    )
+  ) {
+    return 'product_ready';
+  }
+  return fallback;
+}
+
+async function persistLoopFinalization(coordinates, patch = {}) {
+  if (!coordinates?.verificationId || !coordinates?.generation) return null;
+  let previous = null;
+  try {
+    const stored = await chrome.storage.session.get([LOOP_FINALIZATION_STORAGE_KEY]);
+    previous = stored[LOOP_FINALIZATION_STORAGE_KEY] || null;
+  } catch (_) {}
+  const sameRun =
+    previous?.verificationId === coordinates.verificationId &&
+    previous?.generation === coordinates.generation;
+  const next = {
+    ...(sameRun ? previous : {}),
+    verificationId: coordinates.verificationId,
+    generation: coordinates.generation,
+    loopId: coordinates.loopId || previous?.loopId || null,
+    cycleId: coordinates.cycleId || previous?.cycleId || coordinates.verificationId,
+    cycleNumber: coordinates.cycleNumber || previous?.cycleNumber || null,
+    state: patch.state || (sameRun ? previous?.state : null) || 'stopping',
+    harness: patch.harness === undefined ? previous?.harness || null : patch.harness,
+    harnessDelivery:
+      patch.harnessDelivery === undefined
+        ? previous?.harnessDelivery || null
+        : patch.harnessDelivery,
+    error: patch.error === undefined ? previous?.error || null : patch.error,
+    sessionId: patch.sessionId || previous?.sessionId || null,
+    updatedAt: Date.now(),
+  };
+  await chrome.storage.session.set({ [LOOP_FINALIZATION_STORAGE_KEY]: next });
+  try {
+    chrome.runtime.sendMessage({ action: 'voidr:loopFinalizationUpdated', finalization: next });
+  } catch (_) {}
+  return next;
+}
+
+async function readLoopFinalization(verificationId, generation) {
+  try {
+    const stored = await chrome.storage.session.get([LOOP_FINALIZATION_STORAGE_KEY]);
+    const finalization = stored[LOOP_FINALIZATION_STORAGE_KEY];
+    if (
+      finalization?.verificationId === verificationId &&
+      finalization?.generation === generation
+    ) {
+      return finalization;
+    }
+  } catch (_) {}
+  return null;
+}
+
+async function stageVerificationSeal(record, coordinates, stopResult) {
+  const sessionId = stopResult?.sessionId;
+  if (!sessionId) throw new Error('Verification stop did not return a sessionId');
+  const finalizations = stopResult?.finalizations || {};
+  const finalization =
+    finalizations[sessionId] ||
+    Object.values(finalizations).find((item) => item?.sessionId === sessionId) ||
+    {};
+  const sealedThrough = Number(
+    finalization.sealedThrough ?? finalization.finalizedThrough ?? stopResult?.finalChunkSeq,
+  );
+  if (!Number.isInteger(sealedThrough) || sealedThrough < 1) {
+    throw new Error('Collector seal did not expose a durable watermark');
+  }
+  record.pendingSeal = {
+    sessionId,
+    sealedThrough,
+    idempotencyKey: `seal:${coordinates.generation}:${sessionId}:${sealedThrough}`,
+    receivedAt: Date.now(),
+  };
+  record.loopFinalization = coordinates;
+  await persistVerificationCapability(record);
+  await persistLoopFinalization(coordinates, {
+    state: 'sealing',
+    sessionId,
+    error: null,
+  });
+  return record.pendingSeal;
+}
+
+function verificationRetryAlarmName(verificationId, generation) {
+  return `${VERIFICATION_RETRY_ALARM_PREFIX}${verificationId}:${generation}`;
+}
+
+async function attemptPendingVerificationSeal(record, timeoutMs = 20000) {
+  const pending = record.pendingSeal;
+  if (
+    !pending?.sessionId ||
+    !Number.isInteger(pending.sealedThrough) ||
+    pending.sealedThrough < 1
+  ) {
+    throw new Error('Pending Verification seal receipt is incomplete');
+  }
+  await flushPendingVerificationVoice(record);
+  await reconcilePendingVerificationEvidence(record);
+  await flushVerificationIngestQueue(record);
+  if (!globalAuthState.token) {
+    await checkAuthenticationStatus();
+  }
+  const readiness = await waitForCollectorReadiness(pending.sessionId, undefined, timeoutMs);
+  const indexedThrough = Number(
+    readiness?.readinessToken?.indexedThrough ?? readiness?.indexedThrough,
+  );
+  if (!Number.isInteger(indexedThrough) || indexedThrough < pending.sealedThrough) {
+    throw new Error('Collector readiness is behind the durable seal');
+  }
+  const data = await verificationIngest(record, 'seal', {
+    lifecycleVersion: record.lifecycleVersion,
+    idempotencyKey:
+      pending.idempotencyKey ||
+      `seal:${record.generation}:${pending.sessionId}:${pending.sealedThrough}`,
+    sessionId: pending.sessionId,
+    watermark: {
+      acceptedSequence: pending.sealedThrough,
+      durableSequence: pending.sealedThrough,
+      derivedSequence: indexedThrough,
+    },
+  });
+  record.pendingSeal = null;
+  await persistLoopFinalization(record.loopFinalization, {
+    state: 'context',
+    sessionId: pending.sessionId,
+    error: null,
+  });
+  const key = verificationCapabilityKey(record.verificationId, record.generation);
+  await chrome.storage.session.remove([key]);
+  await chrome.alarms.clear(verificationRetryAlarmName(record.verificationId, record.generation));
+  return { data, readiness };
+}
+
+async function waitForVerificationHandoffStatus(verificationId, timeoutMs = 12000) {
+  if (!LOCAL_VERIFICATION_ADAPTER) return null;
+  const deadline = Date.now() + timeoutMs;
+  let latest = null;
+  while (Date.now() < deadline) {
+    const response = await fetch(
+      `${API_CONFIG.baseUrl}/verification-dev/verifications/${encodeURIComponent(verificationId)}/status`,
+      {
+        headers: {
+          'x-voidr-dev-key': LOCAL_VERIFICATION_KEY,
+          'x-voidr-organization-id': LOCAL_VERIFICATION_ORGANIZATION,
+        },
+      },
+    );
+    if (response.ok) {
+      const body = await response.json().catch(() => null);
+      latest = body?.data ?? body;
+      const productReady =
+        !latest?.harness &&
+        [
+          'artifact_ready',
+          'diagnosing',
+          'decision_required',
+          'open',
+          'confirmed',
+          'failed',
+        ].includes(latest?.status);
+      if (
+        productReady ||
+        ['available', 'acknowledged', 'failed'].includes(latest?.harnessDelivery?.state)
+      ) {
+        return latest;
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 750));
+  }
+  return latest;
+}
+
+async function scheduleVerificationSealRetry(record) {
+  await persistVerificationCapability(record);
+  await chrome.alarms.create(verificationRetryAlarmName(record.verificationId, record.generation), {
+    delayInMinutes: 0.1,
+  });
+}
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (!alarm?.name?.startsWith(VERIFICATION_RETRY_ALARM_PREFIX)) return;
+  const coordinates = alarm.name.slice(VERIFICATION_RETRY_ALARM_PREFIX.length);
+  const splitAt = coordinates.lastIndexOf(':');
+  if (splitAt < 1) return;
+  const verificationId = coordinates.slice(0, splitAt);
+  const generation = coordinates.slice(splitAt + 1);
+  void readVerificationCapability(verificationId, generation)
+    .then(async (found) => {
+      if (!found?.record?.pendingSeal) return;
+      try {
+        await attemptPendingVerificationSeal(found.record);
+        const verification = await waitForVerificationHandoffStatus(verificationId, 12000).catch(
+          () => null,
+        );
+        await persistLoopFinalization(found.record.loopFinalization, {
+          state: loopFinalizationStateFromVerification(verification, 'product_ready'),
+          harness: verification?.harness || null,
+          harnessDelivery: verification?.harnessDelivery || null,
+          error: null,
+        });
+      } catch (error) {
+        await persistLoopFinalization(found.record.loopFinalization, {
+          state: 'pending',
+          error: error?.message || String(error),
+        });
+        await scheduleVerificationSealRetry(found.record);
+      }
+    })
+    .catch(() => undefined);
+});
+
 // Listener para mensagens dos content scripts
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   switch (request.action) {
+    case 'voidr:startVerification':
+      (async () => {
+        const verification = request.verification;
+        const capability = request.capability;
+        if (
+          !verification?.verificationId ||
+          !verification?.generation ||
+          !verification?.targetUrl ||
+          !capability?.token ||
+          !capability?.expiresAt
+        ) {
+          throw new Error('Verification handoff is incomplete');
+        }
+        const target = new URL(verification.targetUrl);
+        if (!['http:', 'https:'].includes(target.protocol)) {
+          throw new Error('Verification target must use HTTP(S)');
+        }
+        const record = {
+          verificationId: verification.verificationId,
+          generation: verification.generation,
+          bindingId: verification.bindingId,
+          token: capability.token,
+          expiresAt: capability.expiresAt,
+          lifecycleVersion: verification.lifecycleVersion,
+          createdAt: Date.now(),
+          pending: [],
+        };
+        await persistVerificationCapability(record);
+        const tab = await chrome.tabs.create({ url: target.toString(), active: true });
+        if (!Number.isInteger(tab.id)) throw new Error('Unable to open Verification target');
+        await new Promise((resolve) => setTimeout(resolve, 900));
+        const payload = {
+          action: 'voidr:startVerificationRecording',
+          verification: {
+            verificationId: verification.verificationId,
+            generation: verification.generation,
+            bindingId: verification.bindingId,
+            mission: verification.mission,
+            targetUrl: verification.targetUrl,
+          },
+        };
+        try {
+          await chrome.tabs.sendMessage(tab.id, payload);
+        } catch (_) {
+          await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            files: ['content/content.js'],
+          });
+          await new Promise((resolve) => setTimeout(resolve, 120));
+          await chrome.tabs.sendMessage(tab.id, payload);
+        }
+        sendResponse({ success: true, tabId: tab.id });
+      })().catch((error) =>
+        sendResponse({ success: false, error: error?.message || String(error) }),
+      );
+      return true;
+
+    case 'voidr:startVerificationVoice':
+      (async () => {
+        const tabId = Number.isInteger(sender?.tab?.id) ? sender.tab.id : request.tabId;
+        if (!Number.isInteger(tabId)) throw new Error('Voice capture requires an active tab');
+        const found = await readVerificationCapability(request.verificationId, request.generation);
+        if (!found) throw new Error('Verification capability is expired or revoked');
+        await ensureOffscreenVoiceDocument();
+        await chrome.storage.session.set({
+          [ACTIVE_VERIFICATION_VOICE_KEY]: {
+            verificationId: request.verificationId,
+            generation: request.generation,
+            tabId,
+            startedAt: Date.now(),
+          },
+        });
+        const response = await chrome.runtime.sendMessage({
+          action: 'voidr:offscreenStartVoice',
+          verificationId: request.verificationId,
+          generation: request.generation,
+          tabId,
+          baseOffsetMs: Math.max(0, Number(request.baseOffsetMs) || 0),
+          language: request.language || 'pt-BR',
+        });
+        if (!response?.success) {
+          await chrome.storage.session.remove([ACTIVE_VERIFICATION_VOICE_KEY]);
+          throw new Error(response?.error || 'Microphone capture could not start');
+        }
+        await notifyVerificationVoice(tabId, { state: 'listening' });
+        sendResponse({ success: true, state: 'listening' });
+      })().catch(async (error) => {
+        const tabId = Number.isInteger(sender?.tab?.id) ? sender.tab.id : request.tabId;
+        await notifyVerificationVoice(tabId, {
+          state: 'unavailable',
+          error: error?.message || String(error),
+        });
+        sendResponse({ success: false, error: error?.message || String(error) });
+      });
+      return true;
+
+    case 'voidr:stopVerificationVoice':
+      (async () => {
+        if (await chrome.offscreen.hasDocument()) {
+          const stopped = await chrome.runtime.sendMessage({ action: 'voidr:offscreenStopVoice' });
+          if (!stopped?.success)
+            throw new Error(stopped?.error || 'Microphone capture did not stop');
+        }
+        const found = await readVerificationCapability(request.verificationId, request.generation);
+        if (found) await flushPendingVerificationVoice(found.record);
+        await chrome.storage.session.remove([ACTIVE_VERIFICATION_VOICE_KEY]);
+        const tabId = Number.isInteger(sender?.tab?.id) ? sender.tab.id : request.tabId;
+        await notifyVerificationVoice(tabId, { state: 'stopped' });
+        sendResponse({ success: true, state: 'stopped' });
+      })().catch((error) =>
+        sendResponse({ success: false, error: error?.message || String(error) }),
+      );
+      return true;
+
+    case 'voidr:voicePcmSegment':
+      (async () => {
+        if (sender?.url !== chrome.runtime.getURL('offscreen/voice.html')) {
+          throw new Error('Voice segments are accepted only from the governed capture document');
+        }
+        const data = await persistVerificationVoiceSegment(request);
+        sendResponse({ success: true, data });
+      })().catch((error) =>
+        sendResponse({ success: false, error: error?.message || String(error) }),
+      );
+      return true;
+
+    case 'voidr:verificationIngest':
+      (async () => {
+        const found = await readVerificationCapability(request.verificationId, request.generation);
+        if (!found) throw new Error('Verification capability is expired or revoked');
+        const idempotencyKey =
+          request.idempotencyKey ||
+          `${request.endpoint}:${request.generation}:${crypto.randomUUID()}`;
+        const input = request.input || {};
+        if (
+          request.endpoint === 'annotations' &&
+          VoidrVerificationEvidence.hasLocalEvidenceRefs(input)
+        ) {
+          await queueVerificationIngest(found.record, request.endpoint, input, idempotencyKey);
+          sendResponse({ success: true, queued: true, waitingForDurableEvidence: true });
+          return;
+        }
+        try {
+          const data = await verificationIngest(found.record, request.endpoint, {
+            ...input,
+            lifecycleVersion: found.record.lifecycleVersion,
+            idempotencyKey,
+          });
+          sendResponse({ success: true, data });
+        } catch (error) {
+          if (request.queueWhenOffline === true) {
+            await queueVerificationIngest(found.record, request.endpoint, input, idempotencyKey);
+            sendResponse({ success: true, queued: true });
+            return;
+          }
+          throw error;
+        }
+      })().catch((error) =>
+        sendResponse({ success: false, error: error?.message || String(error) }),
+      );
+      return true;
+
+    case 'voidr:flushVerificationQueue':
+      (async () => {
+        const found = await readVerificationCapability(request.verificationId, request.generation);
+        if (!found) throw new Error('Verification capability is expired or revoked');
+        await reconcilePendingVerificationEvidence(found.record);
+        const flushed = await flushVerificationIngestQueue(found.record);
+        sendResponse({ success: true, flushed });
+      })().catch((error) =>
+        sendResponse({ success: false, error: error?.message || String(error) }),
+      );
+      return true;
+
+    case 'voidr:captureVerificationEvidence':
+      (async () => {
+        const dataUrl = await Promise.race([
+          chrome.tabs.captureVisibleTab(sender?.tab?.windowId, {
+            format: 'png',
+          }),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('Verification screenshot capture timed out')), 5000),
+          ),
+        ]);
+        const found = await readVerificationCapability(request.verificationId, request.generation);
+        if (!found) throw new Error('Verification capability is expired or revoked');
+        const match = /^data:(image\/png);base64,(.+)$/s.exec(dataUrl);
+        if (!match) throw new Error('Verification screenshot has an invalid media type');
+        let ref;
+        try {
+          const uploaded = await verificationIngest(found.record, 'evidence-assets', {
+            generation: request.generation,
+            kind: 'screenshot',
+            contentType: match[1],
+            dataBase64: match[2],
+          });
+          ref = uploaded.evidenceRef;
+        } catch (error) {
+          // Offline safety: preserve the bytes locally and allow the text
+          // annotation to queue. The cycle is explicitly degraded until a
+          // durable asset is available; no screenshot is silently discarded.
+          const evidenceId = crypto.randomUUID();
+          ref = `verification-evidence-local:${evidenceId}`;
+          await chrome.storage.local.set({
+            [`voidrVerificationEvidence:${evidenceId}`]: {
+              localRef: ref,
+              kind: 'screenshot',
+              dataUrl,
+              verificationId: request.verificationId,
+              generation: request.generation,
+              rect: request.rect || null,
+              capturedAt: Date.now(),
+              adapter: 'local-extension-storage',
+              uploadError: error?.message || String(error),
+            },
+          });
+        }
+        sendResponse({ success: true, ref, dataUrl });
+      })().catch((error) =>
+        sendResponse({ success: false, error: error?.message || String(error) }),
+      );
+      return true;
+
+    case 'voidr:storeVerificationCrop':
+      (async () => {
+        if (typeof request.dataUrl !== 'string' || !request.dataUrl.startsWith('data:image/')) {
+          throw new Error('Invalid Verification crop');
+        }
+        const found = await readVerificationCapability(request.verificationId, request.generation);
+        if (!found) throw new Error('Verification capability is expired or revoked');
+        const match = /^data:(image\/(?:webp|png|jpeg));base64,(.+)$/s.exec(request.dataUrl);
+        if (!match) throw new Error('Invalid Verification crop media type');
+        let ref;
+        try {
+          const uploaded = await verificationIngest(found.record, 'evidence-assets', {
+            generation: request.generation,
+            kind: 'crop',
+            contentType: match[1],
+            dataBase64: match[2],
+          });
+          ref = uploaded.evidenceRef;
+        } catch (error) {
+          const evidenceId = crypto.randomUUID();
+          ref = `verification-crop-local:${evidenceId}`;
+          await chrome.storage.local.set({
+            [`voidrVerificationEvidence:${evidenceId}`]: {
+              localRef: ref,
+              kind: 'crop',
+              dataUrl: request.dataUrl,
+              verificationId: request.verificationId,
+              generation: request.generation,
+              capturedAt: Date.now(),
+              adapter: 'local-extension-storage',
+              uploadError: error?.message || String(error),
+            },
+          });
+        }
+        sendResponse({ success: true, ref });
+      })().catch((error) =>
+        sendResponse({ success: false, error: error?.message || String(error) }),
+      );
+      return true;
+
+    case 'voidr:verificationSeal':
+      (async () => {
+        const found = await readVerificationCapability(request.verificationId, request.generation);
+        const coordinates = {
+          verificationId: request.verificationId,
+          generation: request.generation,
+          loopId: request.verification?.loopId || request.stopResult?.verification?.loopId || null,
+          cycleId:
+            request.verification?.cycleId ||
+            request.stopResult?.verification?.cycleId ||
+            request.verificationId,
+          cycleNumber:
+            request.verification?.cycleNumber ||
+            request.stopResult?.verification?.cycleNumber ||
+            null,
+        };
+        if (!found) {
+          const stored = await readLoopFinalization(request.verificationId, request.generation);
+          if (!stored) throw new Error('Verification capability is expired or revoked');
+          const verification = await waitForVerificationHandoffStatus(
+            request.verificationId,
+            12000,
+          ).catch(() => null);
+          const state = verification
+            ? loopFinalizationStateFromVerification(verification, stored.state)
+            : stored.state;
+          const finalization = await persistLoopFinalization(coordinates, {
+            state,
+            harness: verification?.harness,
+            harnessDelivery: verification?.harnessDelivery,
+            error: null,
+          });
+          sendResponse({
+            success: true,
+            verification,
+            finalization,
+            pending: ['stopping', 'sealing', 'context', 'pending'].includes(state),
+            duplicate: true,
+          });
+          return;
+        }
+        await stageVerificationSeal(found.record, coordinates, request.stopResult);
+        try {
+          const result = await attemptPendingVerificationSeal(found.record, 20000);
+          const verification = await waitForVerificationHandoffStatus(
+            request.verificationId,
+            12000,
+          ).catch(() => null);
+          const state = loopFinalizationStateFromVerification(verification, 'product_ready');
+          const finalization = await persistLoopFinalization(coordinates, {
+            state,
+            harness: verification?.harness || null,
+            harnessDelivery: verification?.harnessDelivery || null,
+            error: null,
+          });
+          sendResponse({
+            success: true,
+            ...result,
+            verification,
+            finalization,
+            pending: false,
+          });
+        } catch (error) {
+          await scheduleVerificationSealRetry(found.record);
+          const finalization = await persistLoopFinalization(coordinates, {
+            state: 'pending',
+            error: error?.message || String(error),
+          });
+          sendResponse({
+            success: true,
+            pending: true,
+            finalization,
+            receipt: {
+              sessionId: found.record.pendingSeal?.sessionId,
+              sealedThrough: found.record.pendingSeal?.sealedThrough,
+              retryScheduled: true,
+            },
+          });
+        }
+      })().catch((error) =>
+        sendResponse({ success: false, error: error?.message || String(error) }),
+      );
+      return true;
+
+    case 'voidr:verificationHandoffStatus':
+      waitForVerificationHandoffStatus(request.verificationId, 1500)
+        .then(async (verification) => {
+          let finalization = null;
+          if (request.generation) {
+            finalization = await persistLoopFinalization(
+              {
+                verificationId: request.verificationId,
+                generation: request.generation,
+                loopId: request.loopId,
+                cycleId: request.cycleId,
+                cycleNumber: request.cycleNumber,
+              },
+              {
+                state: verification
+                  ? loopFinalizationStateFromVerification(verification, 'context')
+                  : undefined,
+                harness: verification?.harness || null,
+                harnessDelivery: verification?.harnessDelivery || null,
+                error: null,
+              },
+            );
+          }
+          sendResponse({ success: true, verification, finalization });
+        })
+        .catch((error) => sendResponse({ success: false, error: error?.message || String(error) }));
+      return true;
+
+    case 'voidr:dismissLoopFinalization':
+      chrome.storage.session
+        .remove([LOOP_FINALIZATION_STORAGE_KEY])
+        .then(() => sendResponse({ success: true }))
+        .catch((error) => sendResponse({ success: false, error: error?.message || String(error) }));
+      return true;
+
+    case 'voidr:stageLoopDeepLink':
+      loopBootstrapStaging
+        .stage(sender?.tab?.id, {
+          scenarioId: request.scenarioId,
+          token: request.token,
+          cycleId: request.cycleId,
+          transportVersion: request.transportVersion,
+        })
+        .then((staged) => sendResponse({ success: staged }))
+        .catch(() => sendResponse({ success: false }));
+      return true;
+
+    case 'voidr:consumeLoopDeepLink':
+      loopBootstrapStaging
+        .consume(sender?.tab?.id)
+        .then((staged) => sendResponse({ staged }))
+        .catch(() => sendResponse({ staged: null }));
+      return true;
+
+    case 'voidr:getRecordingState':
+      getSafeRecordingState()
+        .then(sendResponse)
+        .catch(() => sendResponse({ active: null, startupFailure: null }));
+      return true;
+
+    case 'voidr:loopStartupFailed':
+      Promise.all([
+        persistLoopStartupFailure(request.reason),
+        loopCapabilitySecrets.discardTab(sender?.tab?.id),
+      ])
+        .then(([failure]) => sendResponse({ success: true, failure }))
+        .catch((error) => sendResponse({ success: false, error: error?.message }));
+      return true;
+
+    case 'voidr:clearLoopStartupFailure':
+      clearLoopStartupFailure()
+        .then(() => sendResponse({ success: true }))
+        .catch((error) => sendResponse({ success: false, error: error?.message }));
+      return true;
+
     case 'voidr:injectCollectorAndInit':
       (async () => {
+        let targetTabId = sender?.tab?.id || lastActiveContentTabId;
+        let startupToken = null;
         try {
           // Decide target tab: prefer sender.tab.id, else lastActiveContentTabId, else find an http(s) tab
-          let targetTabId = sender?.tab?.id || lastActiveContentTabId;
           if (!targetTabId) {
             try {
               const wins = await chrome.windows.getAll({ populate: true, windowTypes: ['normal'] });
@@ -914,24 +2384,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
           // Antes de qualquer reload: garante que o content script volte sozinho.
           await ensureTargetContentScript(targetTabId);
-
-          // Strip CSP for the recording tab so collector can POST to voidr.co
-          // across navigations (auth providers like Microsoft B2C block connect-src
-          // to collector.voidr.co otherwise). Rule is removed on session stop.
-          await enableCspBypassForTab(targetTabId);
-
-          // Pages already open before the rule keep their document CSP — probe
-          // and reload once so the fresh document loads without those headers
-          // (generalização do PR #6, que fazia isso só para onboarding).
-          const reloadedForCsp = await tabBlocksCollectorConnects(
-            targetTabId,
-            API_CONFIG.collectorUrl,
-          );
-          if (reloadedForCsp) {
-            console.log('[Voidr] page CSP blocks the collector — reloading tab', targetTabId);
-            await reloadTabAndWaitForLoad(targetTabId);
-          }
-
           const canonicalSessionId =
             request.initOptions?.forcedSessionId || createRecordingSessionId();
           const initOptions = {
@@ -939,70 +2391,161 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             collectorUrl: API_CONFIG.collectorUrl,
             forcedSessionId: canonicalSessionId,
           };
+          const isLoopTest = request.initOptions?.meta?.mode === 'loop-test';
+          const isVerification = request.initOptions?.meta?.mode === 'verification';
+          const requestedGeneration =
+            (isLoopTest || isVerification) && typeof request.lifecycleGeneration === 'string'
+              ? request.lifecycleGeneration
+              : createLifecycleGeneration();
+          if (
+            isLoopTest &&
+            !(await loopCapabilitySecrets.has(
+              requestedGeneration,
+              targetTabId,
+              request.initOptions?.loopTest?.scenarioId,
+            ))
+          ) {
+            sendResponse({
+              success: false,
+              error: 'Loop Test recording authorization is unavailable or expired',
+            });
+            return;
+          }
 
-          // Stop a native collector before injecting the packaged one.
-          await teardownExistingCollectorInTab(targetTabId);
-          await injectCollectorInTab(targetTabId);
-          await initializeCollectorInTab(targetTabId, initOptions);
-          await armCollectorTakeoverWatchdog(targetTabId);
-
-          const sessionId = (await readCollectorSessionId(targetTabId)) || canonicalSessionId;
-
-          try {
-            chrome.runtime
-              .sendMessage({
-              action: 'voidr:sessionStarted',
-              sessionId,
-              testCaseName:
-                (request.initOptions &&
-                  request.initOptions.meta &&
-                  request.initOptions.meta.testCase) ||
-                null,
-              mode:
-                (request.initOptions &&
-                  request.initOptions.meta &&
-                  request.initOptions.meta.mode) ||
-                'test-case',
-            })
-              .catch(() => {});
-          } catch (_) {}
-
-          await setActiveRecording({
+          // Persist intent before the async collector boot. The target can
+          // navigate to an identity provider while init is authenticating;
+          // onUpdated must already know to resume the same canonical session.
+          const startingRecording = await claimActiveRecording({
             tabId: targetTabId,
             currentTabId: targetTabId,
             trackedTabIds: [targetTabId],
-            canonicalSessionId: sessionId,
+            canonicalSessionId,
             initOptions,
             testCaseName: request.initOptions?.meta?.testCase || 'Test Case',
             mode: request.initOptions?.meta?.mode || 'test-case',
             onboardingRunId: request.initOptions?.meta?.onboardingRunId,
             code: request.initOptions?.meta?.code || null,
             evidence: request.initOptions?.meta?.evidence || null,
+            loopTest: request.initOptions?.meta?.loopTest || null,
             flows: request.initOptions?.meta?.flows || [],
-            sessionIds: [sessionId],
+            sessionIds: [canonicalSessionId],
             startedAt: Date.now(),
+            lifecycle: 'starting',
+            lifecycleGeneration: requestedGeneration,
+            lifecycleVersion: 0,
           });
+          if (!startingRecording) {
+            if (isLoopTest && activeRecording?.lifecycleGeneration !== requestedGeneration) {
+              await loopCapabilitySecrets.discardGeneration(requestedGeneration);
+            }
+            sendResponse({
+              success: false,
+              error: 'A recording is already active',
+            });
+            return;
+          }
+          startupToken = VoidrRecordingLifecycle.lifecycleToken(startingRecording);
 
-          // Redesenha o painel sempre, nao so quando houve reload por CSP. Sem
-          // <all_urls> o content script entra tarde (injetado pelo fallback) e
-          // pode nao ter montado o painel — e sem painel nao ha botao Parar,
-          // entao a gravacao roda sem o usuario conseguir encerrar.
-          // sendResumeRecordingUi e idempotente: o content script remove os
-          // elementos antigos antes de montar.
-          if (activeRecording) {
-            await sendResumeRecordingUi(targetTabId, activeRecording);
-            console.log('[Voidr] painel de gravacao (re)desenhado', { reloadedForCsp });
+          // Enable CSP only after atomically claiming the active generation.
+          // A losing overlapping start must never inject or install a rule.
+          await enableCspBypassForTab(targetTabId);
+          const reloadedForCsp = await tabBlocksCollectorConnects(
+            targetTabId,
+            API_CONFIG.collectorUrl,
+          );
+          if (reloadedForCsp) {
+            await reloadTabAndWaitForLoad(targetTabId);
           }
 
+          if (isLoopTest) {
+            await clearLoopStartupFailure();
+          }
+
+          const resumed = await VoidrRecordingLifecycle.resumeCollectorWithLifecycleChecks({
+            token: startupToken,
+            isCurrent: (token) => isActiveLifecycleGenerationCurrent(token),
+            runIfCurrent: (token, operation) => runWithActiveLifecycleGeneration(token, operation),
+            fetchCollector: async () => null,
+            injectCollector: async () => {
+              await teardownExistingCollectorInTab(targetTabId);
+              return injectCollectorInTab(targetTabId);
+            },
+            initializeCollector: async () => {
+              const sessionId = await initializeCollectorInTab(targetTabId, initOptions);
+              await armCollectorTakeoverWatchdog(targetTabId);
+              return sessionId;
+            },
+          });
+          if (!resumed.resumed) {
+            const lifecycleError = new Error('Recording lifecycle changed during startup');
+            lifecycleError.code = 'RECORDING_LIFECYCLE_CHANGED';
+            throw lifecycleError;
+          }
+
+          const readyRecording = await updateActiveRecordingForGeneration(
+            startupToken.generation,
+            (current) => VoidrRecordingLifecycle.markRecordingReady(current, resumed.sessionId),
+            ['starting'],
+          );
+          if (!readyRecording) {
+            const lifecycleError = new Error('Recording lifecycle changed during startup');
+            lifecycleError.code = 'RECORDING_LIFECYCLE_CHANGED';
+            throw lifecycleError;
+          }
+          const sessionId = resumed.sessionId;
+          if (reloadedForCsp) {
+            await sendResumeRecordingUi(targetTabId, readyRecording, { showCountdown: true });
+          } else {
+            await sendResumeRecordingUi(targetTabId, readyRecording);
+          }
+          try {
+            chrome.runtime
+              .sendMessage({
+                action: 'voidr:sessionStarted',
+                sessionId,
+                testCaseName: request.initOptions?.meta?.testCase || null,
+                mode: request.initOptions?.meta?.mode || 'test-case',
+              })
+              .catch(() => {});
+          } catch (_) {}
           // Capture HttpOnly cookies (invisible to the page) for the environment
           // bundle when this recording opted in. Best-effort, non-blocking.
           if (request.initOptions?.captureEnvironmentBundle) {
             captureAndUploadCookies(sessionId, request.initOptions?.url);
           }
 
-          sendResponse({ success: true });
+          // A deep-link launch must land in the recorder state, not in the
+          // generic Session Capture home. Open/focus only after the collector
+          // is authoritative so popup initialization reads `recording`.
+          if (isLoopTest || isVerification) {
+            focusExistingAssistantWindow()
+              .then((existing) => (existing ? existing : openAssistantWindowAt()))
+              .catch(() => {});
+          }
+
+          sendResponse({
+            success: true,
+            lifecycleGeneration: readyRecording.lifecycleGeneration,
+            stopCapability: await stopCapabilitySecrets.issue(
+              readyRecording.lifecycleGeneration,
+              targetTabId,
+              readyRecording.canonicalSessionId,
+            ),
+          });
         } catch (e) {
           console.error('Collector injection error:', e);
+          const cleaned = startupToken
+            ? await cleanupFailedRecordingBootstrap(startupToken, targetTabId).catch(() => false)
+            : false;
+          if (
+            cleaned &&
+            e?.code !== 'RECORDING_LIFECYCLE_CHANGED' &&
+            request.initOptions?.meta?.mode === 'loop-test'
+          ) {
+            await persistLoopStartupFailure(
+              'Não foi possível preparar o gravador neste site. Atualize a página e tente novamente.',
+            ).catch(() => {});
+          }
           sendResponse({ success: false, error: e?.message || 'Unknown error' });
         }
       })();
@@ -1038,6 +2581,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       })();
       return true;
 
+    case 'getPlatformUrl':
+      sendResponse({ url: API_CONFIG.platformUrl });
+      break;
+
     case 'authCompleted':
       // Atualiza estado global quando auth é concluída
       globalAuthState = {
@@ -1052,7 +2599,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     case 'syncAuthFromPlatformTabs':
       (async () => {
         try {
-          await resyncAuthFromPlatformTabs();
+          const tabs = await chrome.tabs.query({ url: `${API_CONFIG.platformUrl}/*` });
+          for (const tab of tabs) {
+            try {
+              await syncAuthWithPlatform(tab.id);
+              if (globalAuthState.isAuthenticated) break;
+            } catch (_) {}
+          }
           sendResponse({
             isAuthenticated: globalAuthState.isAuthenticated,
             user: globalAuthState.user,
@@ -1122,6 +2675,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       sendResponse({ url: `${API_CONFIG.platformUrl}/auth/extension-connect` });
       break;
 
+    // Legacy backend path is intentionally isolated behind generic extension terminology.
+    case 'voidr:getRecordingByCode':
     case 'voidr:getOnboardingByCode':
       (async () => {
         const code = (request.code || '').trim().toUpperCase();
@@ -1130,24 +2685,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           return;
         }
 
-        /**
-         * Ensure we have a token:
-         * 1. Use the in-memory one, or:
-         * 2. Load the stored one, or:
-         * 3. Pull a fresh one from the platform Auth0 session
-         */
         if (!globalAuthState.token) await checkAuthenticationStatus();
-        if (!globalAuthState.token) await resyncAuthFromPlatformTabs();
         if (!globalAuthState.token) {
-          sendResponse({
-            context: null,
-            error: `Sessão do Voidr não encontrada. Abra e faça login em ${API_CONFIG.platformUrl} nesta janela e tente de novo.`,
-          });
+          sendResponse({ context: null, error: 'Not authenticated' });
           return;
         }
 
-        const doFetch = () =>
-          fetch(
+        try {
+          const res = await fetch(
             `${API_CONFIG.baseUrl}/onboarding/recording-sessions/code/${encodeURIComponent(code)}`,
             {
               headers: {
@@ -1156,42 +2701,17 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
               },
             },
           );
-
-        try {
-          let res = await doFetch();
-
-          /**
-           * Stale or unsynced token leads to 401 / 403
-           * Pull a fresh token and retry once
-           */
-          if (res.status === 401 || res.status === 403) {
-            const before = globalAuthState.token;
-            await resyncAuthFromPlatformTabs();
-            if (globalAuthState.token && globalAuthState.token !== before) {
-              res = await doFetch();
-            }
-          }
-
           if (!res.ok) {
-            let error;
-            if (res.status === 404) {
-              error = 'Código não encontrado. Verifique e tente novamente.';
-            } else if (res.status === 401 || res.status === 403) {
-              error = `Sessão do Voidr expirada ou não sincronizada. Abra/atualize ${API_CONFIG.platformUrl} (logado) nesta janela e tente de novo.`;
-            } else {
-              error = `Erro ${res.status} ao buscar o código. Tente novamente.`;
-            }
-            sendResponse({ context: null, error });
+            sendResponse({
+              context: null,
+              error: res.status === 404 ? 'Código não encontrado' : `Error ${res.status}`,
+            });
             return;
           }
-
           const json = await res.json();
           sendResponse({ context: json.data || null });
         } catch (e) {
-          sendResponse({
-            context: null,
-            error: e?.message || 'Erro de rede. Verifique sua conexão e tente novamente.',
-          });
+          sendResponse({ context: null, error: e?.message || 'Network error' });
         }
       })();
       return true;
@@ -1212,7 +2732,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         .then((r) => (r.ok ? r.json() : null))
         .then((json) => {
           if (json?.data) {
-            chrome.storage.session.set({ pendingOnboardingContext: json.data });
+            chrome.storage.session.set({ pendingRecordingCodeContext: json.data });
             chrome.action.setBadgeText({ text: 'REC' });
             chrome.action.setBadgeBackgroundColor({ color: '#ef4444' });
             try {
@@ -1235,14 +2755,127 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       sendResponse({ success: true });
       break;
 
+    case 'voidr:validateLoopRecordingToken':
+      (async () => {
+        const lifecycleGeneration = createLifecycleGeneration();
+        const startupCapability = request.token;
+        // The startup capability is transport-only. Never retain it in request
+        // state or generation-scoped session storage.
+        request.token = null;
+        try {
+          const tabId = sender?.tab?.id;
+          if (!Number.isInteger(tabId)) {
+            throw new Error('Loop Test recording authorization requires a content tab');
+          }
+          const response = await fetch(
+            `${API_CONFIG.baseUrl}/loop-test/scenarios/recording-token/validate`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                scenarioId: request.scenarioId,
+                token: startupCapability,
+                ...(request.cycleId ? { cycleId: request.cycleId } : {}),
+                lifecycleGeneration,
+              }),
+            },
+          );
+          if (!response.ok) {
+            const errorPayload = await response.json().catch(() => null);
+            const serverMessage =
+              errorPayload?.message ||
+              errorPayload?.error?.message ||
+              errorPayload?.data?.message;
+            throw new Error(
+              response.status === 402
+                ? 'Saldo de créditos insuficiente para iniciar este ciclo. Adicione créditos na Voidr e tente novamente; nenhuma gravação foi iniciada.'
+                : serverMessage ||
+                    `Loop Test recording authorization failed (HTTP ${response.status})`,
+            );
+          }
+          const json = await response.json();
+          const tabStillExists = await chrome.tabs
+            .get(tabId)
+            .then(() => true)
+            .catch(() => false);
+          if (!tabStillExists) {
+            throw new Error('Loop Test recording tab closed during authorization');
+          }
+          const validation = json?.data || json;
+          const attachCapability = validation?.attachToken;
+          if (typeof attachCapability !== 'string' || !attachCapability) {
+            throw new Error('Loop Test session attach authorization was not issued');
+          }
+          const staged = await loopCapabilitySecrets.stage(
+            lifecycleGeneration,
+            tabId,
+            request.scenarioId,
+            attachCapability,
+          );
+          if (!staged) throw new Error('Loop Test recording authorization could not be retained');
+          const cycle = validation?.verification;
+          const cycleCapability = validation?.verificationCapability;
+          if (
+            !cycle?.verificationId ||
+            !cycle?.generation ||
+            !cycleCapability?.token ||
+            !cycleCapability?.expiresAt
+          ) {
+            throw new Error('Loop cycle recording authorization was not issued');
+          }
+          await persistVerificationCapability({
+            verificationId: cycle.verificationId,
+            generation: cycle.generation,
+            bindingId: cycle.bindingId,
+            token: cycleCapability.token,
+            expiresAt: cycleCapability.expiresAt,
+            lifecycleVersion: cycle.lifecycleVersion,
+            createdAt: Date.now(),
+            pending: [],
+          });
+          const {
+            attachToken: _attachToken,
+            verificationCapability: _verificationCapability,
+            ...safeValidation
+          } = validation;
+          sendResponse({
+            success: true,
+            data: { ...safeValidation, lifecycleGeneration },
+          });
+        } catch (error) {
+          sendResponse({ success: false, error: error?.message || String(error) });
+        }
+      })();
+      return true;
+
     case 'apiRequest':
       // Faz requisições autenticadas para a API
       (async () => {
-        if (!globalAuthState.isAuthenticated || !globalAuthState.token) {
+        if (LOCAL_VERIFICATION_ADAPTER && request.endpoint === '/customer-configs') {
+          sendResponse({
+            success: true,
+            data: {
+              success: true,
+              data: { apiKey: LOCAL_VERIFICATION_COLLECTOR_KEY },
+            },
+          });
+          return;
+        }
+        const isLocalVerificationRequest =
+          LOCAL_VERIFICATION_ADAPTER &&
+          (request.endpoint === '/verifications' ||
+            request.endpoint?.startsWith('/verifications/'));
+        if (
+          !isLocalVerificationRequest &&
+          (!globalAuthState.isAuthenticated || !globalAuthState.token)
+        ) {
           await checkAuthenticationStatus();
         }
 
-        if (!globalAuthState.isAuthenticated || !globalAuthState.token) {
+        if (
+          !isLocalVerificationRequest &&
+          (!globalAuthState.isAuthenticated || !globalAuthState.token)
+        ) {
           sendResponse({ success: false, error: 'Not authenticated' });
           return;
         }
@@ -1294,6 +2927,199 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       })();
       return true;
 
+    case 'voidr:trackRecordingNote':
+      (async () => {
+        const recording = await hydrateActiveRecording();
+        const tabId = sender?.tab?.id ?? null;
+        const generation = String(request.lifecycleGeneration || '');
+        if (
+          !recording ||
+          !Number.isInteger(tabId) ||
+          !recording.trackedTabIds?.includes(tabId) ||
+          generation !== recording.lifecycleGeneration
+        ) {
+          sendResponse({
+            success: false,
+            error: 'A nota pertence a uma gravação que não está mais ativa.',
+          });
+          return;
+        }
+        const raw = request.input || {};
+        const note = String(raw.note || '')
+          .trim()
+          .slice(0, 1000);
+        if (!note) {
+          sendResponse({ success: false, error: 'Escreva uma nota antes de salvar.' });
+          return;
+        }
+        const allowedKinds = new Set(['element', 'region', 'screen']);
+        const numberOrNull = (value) =>
+          Number.isFinite(Number(value)) ? Math.max(0, Number(value)) : null;
+        const rect = raw.rect
+          ? {
+              x: numberOrNull(raw.rect.x),
+              y: numberOrNull(raw.rect.y),
+              width: numberOrNull(raw.rect.width),
+              height: numberOrNull(raw.rect.height),
+            }
+          : null;
+        const payload = {
+          version: 'SESSION-NOTE/1',
+          kind: allowedKinds.has(raw.kind) ? raw.kind : 'screen',
+          note,
+          pageUrl: String(raw.pageUrl || '').slice(0, 2048),
+          timestampMs: numberOrNull(raw.timestampMs) || 0,
+          selector: raw.selector ? String(raw.selector).slice(0, 500) : null,
+          rect,
+          viewport: raw.viewport
+            ? {
+                width: numberOrNull(raw.viewport.width),
+                height: numberOrNull(raw.viewport.height),
+              }
+            : null,
+        };
+        try {
+          await chrome.scripting.executeScript({
+            target: { tabId },
+            world: 'MAIN',
+            func: (sessionNote) => {
+              if (!window.VoidrCollector || typeof window.VoidrCollector.track !== 'function') {
+                throw new Error('Voidr Collector is unavailable');
+              }
+              window.VoidrCollector.track('voidr.note', sessionNote);
+            },
+            args: [payload],
+          });
+          sendResponse({ success: true });
+        } catch (error) {
+          sendResponse({
+            success: false,
+            error: error?.message || 'Não foi possível salvar a nota na sessão.',
+          });
+        }
+      })();
+      return true;
+
+    case 'voidr:trackRecordingVoice':
+      (async () => {
+        const recording = await hydrateActiveRecording();
+        const tabId = sender?.tab?.id ?? null;
+        const generation = String(request.lifecycleGeneration || '');
+        if (
+          !recording ||
+          !Number.isInteger(tabId) ||
+          !recording.trackedTabIds?.includes(tabId) ||
+          generation !== recording.lifecycleGeneration
+        ) {
+          sendResponse({
+            success: false,
+            error: 'A nota de voz pertence a uma gravação que não está mais ativa.',
+          });
+          return;
+        }
+        const raw = request.input || {};
+        const transcript = String(raw.transcript || '')
+          .trim()
+          .slice(0, 2000);
+        if (!transcript) {
+          sendResponse({ success: false, error: 'O transcript da nota de voz está vazio.' });
+          return;
+        }
+        const payload = {
+          version: 'SESSION-VOICE-NOTE/1',
+          transcript,
+          note: transcript,
+          state: 'saved',
+          segmentId: String(raw.segmentId || '').slice(0, 160) || null,
+          language: String(raw.language || '').slice(0, 32) || null,
+          pageUrl: String(raw.pageUrl || '').slice(0, 2048),
+          durationMs: Number.isFinite(Number(raw.durationMs))
+            ? Math.max(0, Number(raw.durationMs))
+            : null,
+          timestampMs: Number.isFinite(Number(raw.timestampMs))
+            ? Math.max(0, Number(raw.timestampMs))
+            : 0,
+        };
+        try {
+          await chrome.scripting.executeScript({
+            target: { tabId },
+            world: 'MAIN',
+            func: (voiceNote) => {
+              if (!window.VoidrCollector || typeof window.VoidrCollector.track !== 'function') {
+                throw new Error('Voidr Collector is unavailable');
+              }
+              window.VoidrCollector.track('voidr.voice', voiceNote);
+            },
+            args: [payload],
+          });
+          sendResponse({ success: true });
+        } catch (error) {
+          sendResponse({
+            success: false,
+            error: error?.message || 'Não foi possível vincular o transcript à sessão.',
+          });
+        }
+      })();
+      return true;
+
+    case 'voidr:getLiveRecordingContext':
+      (async () => {
+        const recording = await hydrateActiveRecording();
+        const tabId = sender?.tab?.id ?? null;
+        const generation = String(request.lifecycleGeneration || '');
+        if (
+          !recording ||
+          !Number.isInteger(tabId) ||
+          !recording.trackedTabIds?.includes(tabId) ||
+          generation !== recording.lifecycleGeneration
+        ) {
+          sendResponse({
+            success: false,
+            stale: generation !== recording?.lifecycleGeneration,
+            error: 'O contexto live pertence a uma gravação que não está mais ativa.',
+          });
+          return;
+        }
+        const allowedCategories = new Set([
+          'pages',
+          'clicks',
+          'requests',
+          'errors',
+          'notes',
+          'voiceNotes',
+        ]);
+        const category = allowedCategories.has(request.category) ? request.category : null;
+        const limit = Math.min(50, Math.max(1, Math.floor(Number(request.limit) || 20)));
+        try {
+          const result = await chrome.scripting.executeScript({
+            target: { tabId },
+            world: 'MAIN',
+            func: (options) => {
+              if (
+                !window.VoidrCollector ||
+                typeof window.VoidrCollector.getLiveContext !== 'function'
+              ) {
+                return null;
+              }
+              return window.VoidrCollector.getLiveContext(options);
+            },
+            args: [{ category, limit }],
+          });
+          const context = result?.[0]?.result || null;
+          sendResponse({
+            success: true,
+            degraded: !context,
+            context,
+          });
+        } catch (error) {
+          sendResponse({
+            success: false,
+            error: error?.message || 'Não foi possível ler o contexto da gravação.',
+          });
+        }
+      })();
+      return true;
+
     case 'voidr:pauseSession':
     case 'voidr:resumeSession': {
       const method = request.action === 'voidr:pauseSession' ? 'pause' : 'resume';
@@ -1322,38 +3148,65 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
     case 'voidr:discardSession':
       (async () => {
-        const tabId = sender?.tab?.id;
-        // End the collector session in the page so nothing else is sent.
-        try {
-          if (tabId) {
-            await chrome.scripting.executeScript({
-              target: { tabId },
-              world: 'MAIN',
-              func: () => {
-                try {
-                  window.VoidrCollector &&
-                    window.VoidrCollector.endSession &&
-                    window.VoidrCollector.endSession();
-                } catch (_) {}
-                // Wipe our session's keys so a native collector on the next
-                // navigation can't adopt (and pollute) the recorded session.
-                for (const k of ['voidr_jwt', 'voidr_session_id', 'voidr_user_id', 'voidr_last_activity']) {
-                  try {
-                    sessionStorage.removeItem(k);
-                  } catch (_) {}
-                }
-              },
-            });
-          }
-        } catch (_) {}
-        // Drop the active recording state — session is discarded, not saved.
-        try {
-          await clearActiveRecording();
-        } catch (_) {}
-        sendResponse({ success: true });
+        const recording = await hydrateActiveRecording();
+        const tabId = sender?.tab?.id ?? null;
+        const authorization = VoidrRecordingLifecycle.authorizeDiscardRequest(
+          recording,
+          request.lifecycleGeneration,
+          tabId,
+        );
+        if (!authorization.authorized) {
+          sendResponse({
+            success: false,
+            stale: authorization.reason === 'stale-generation',
+            busy: authorization.reason === 'stop-in-progress',
+            error:
+              authorization.reason === 'stop-in-progress'
+                ? 'Discard is unavailable while recording finalization is in progress. Wait for Stop to finish, then try again.'
+                : authorization.reason === 'untracked-tab'
+                  ? 'Discard rejected: sender tab is not tracked by this recording'
+                  : 'Discard rejected: recording generation is stale',
+          });
+          return;
+        }
+
+        const cleared = await clearActiveRecordingForGeneration(
+          request.lifecycleGeneration,
+          ['starting', 'recording'],
+          async (current) => {
+            for (const trackedTabId of current.trackedTabIds || []) {
+              try {
+                await chrome.scripting.executeScript({
+                  target: { tabId: trackedTabId },
+                  world: 'MAIN',
+                  func: () => {
+                    try {
+                      window.VoidrCollector?.endSession?.();
+                    } catch (_) {}
+                    for (const key of [
+                      'voidr_jwt',
+                      'voidr_session_id',
+                      'voidr_user_id',
+                      'voidr_last_activity',
+                    ]) {
+                      try {
+                        sessionStorage.removeItem(key);
+                      } catch (_) {}
+                    }
+                  },
+                });
+              } catch (_) {}
+              await disableCspBypassForTab(trackedTabId);
+            }
+          },
+        );
+        sendResponse({
+          success: cleared,
+          stale: !cleared,
+          error: cleared ? null : 'Discard rejected: recording generation changed',
+        });
       })();
       return true;
-
     case 'openFloatingPopup':
       // Persiste URL atual para manter contexto na janela flutuante
       chrome.tabs.query({ active: true, lastFocusedWindow: true }, async (tabs) => {
@@ -1527,101 +3380,341 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       })();
       return true;
 
+    case 'voidr:retryLoopAttach':
+      (async () => {
+        try {
+          if (!request?.sessionId || !request?.scenarioId || !request?.lifecycleGeneration) {
+            throw new Error('Missing sealed session attachment coordinates');
+          }
+          await attachLoopTestSession(
+            request.sessionId,
+            { scenarioId: request.scenarioId },
+            request.lifecycleGeneration,
+          );
+          sendResponse({ success: true, attached: true });
+        } catch (error) {
+          sendResponse({
+            success: false,
+            attached: false,
+            error: error?.message || String(error),
+          });
+        }
+      })();
+      return true;
+
     case 'voidr:sessionStopped':
       // On stop, try to retrieve the current sessionId from the page and broadcast all accumulated sessions
       (async () => {
+        let priorRecording = null;
+        let stopToken = null;
+        let recordingCleared = false;
+        let resolveStopRequest = sendResponse;
         try {
-          const priorRecording = await hydrateActiveRecording();
-          lastStoppedAt = Date.now();
-          const priorSessionIds = priorRecording?.sessionIds || [];
-
-          // Remove CSP bypass rules for every tab that was part of this recording.
-          const trackedForCleanup = priorRecording?.trackedTabIds || [];
-          for (const t of trackedForCleanup) {
-            await disableCspBypassForTab(t);
-          }
-
-          await clearActiveRecording();
-
-          let targetTabId =
-            sender?.tab?.id ||
-            priorRecording?.currentTabId ||
-            priorRecording?.tabId ||
-            lastActiveContentTabId;
-          if (!targetTabId) {
-            try {
-              const wins = await chrome.windows.getAll({ populate: true, windowTypes: ['normal'] });
-              const focused = wins.find((w) => w.focused);
-              const candidates = focused ? [focused, ...wins.filter((w) => w !== focused)] : wins;
-              for (const w of candidates) {
-                const activeTab = (w.tabs || []).find(
-                  (t) => t.active && t.url && /^https?:/i.test(t.url),
-                );
-                if (activeTab) {
-                  targetTabId = activeTab.id;
-                  break;
-                }
-              }
-            } catch (_) {}
-          }
-          if (!targetTabId) {
-            sendResponse({ success: false, error: 'No eligible tab to get sessionId' });
+          priorRecording = await hydrateActiveRecording();
+          if (!priorRecording) {
+            sendResponse({ success: false, error: 'No active recording to finalize' });
             return;
           }
+          const authorizationSenderTabId = isTrustedAssistantSender(sender)
+            ? null
+            : (sender?.tab?.id ?? null);
+          let stopAuthorization = VoidrRecordingLifecycle.authorizeStopRequest(
+            priorRecording,
+            request.lifecycleGeneration,
+            authorizationSenderTabId,
+          );
+          if (
+            !stopAuthorization.authorized &&
+            stopAuthorization.reason === 'untracked-tab' &&
+            Number.isInteger(sender?.tab?.id)
+          ) {
+            const senderSessionId = await readCollectorSessionId(sender.tab.id);
+            if (
+              VoidrRecordingLifecycle.canRecoverStopSender(
+                priorRecording,
+                sender.tab.id,
+                senderSessionId,
+              )
+            ) {
+              const recovered = await attachTrackedRecordingTab(sender.tab.id, {
+                makeCurrent: true,
+                expectedToken: VoidrRecordingLifecycle.lifecycleToken(priorRecording),
+              });
+              if (recovered) {
+                priorRecording = recovered;
+                stopAuthorization = VoidrRecordingLifecycle.authorizeStopRequest(
+                  priorRecording,
+                  request.lifecycleGeneration,
+                  sender.tab.id,
+                );
+              }
+            }
+          }
+          if (
+            !stopAuthorization.authorized &&
+            stopAuthorization.reason === 'untracked-tab' &&
+            Number.isInteger(sender?.tab?.id) &&
+            (await stopCapabilitySecrets.verify(
+              priorRecording.lifecycleGeneration,
+              sender.tab.id,
+              priorRecording.canonicalSessionId,
+              request.stopCapability,
+            ))
+          ) {
+            stopAuthorization = { authorized: true, reason: null };
+          }
+          if (!stopAuthorization.authorized) {
+            sendResponse({
+              success: false,
+              finalized: false,
+              stale: stopAuthorization.reason === 'stale-generation',
+              error:
+                stopAuthorization.reason === 'untracked-tab'
+                  ? 'Stop rejected: sender tab is not tracked by this recording'
+                  : 'Stop rejected: recording generation is stale',
+            });
+            return;
+          }
+          const stopRequest = stopRequestLatch.begin(priorRecording.lifecycleGeneration);
+          stopRequest.promise.then(sendResponse);
+          if (!stopRequest.isOwner) return;
+          resolveStopRequest = stopRequest.resolve;
+
+          const stoppingRecording = await updateActiveRecordingForGeneration(
+            priorRecording.lifecycleGeneration,
+            (recording) => ({ ...recording, lifecycle: 'stopping' }),
+            ['starting', 'recording'],
+          );
+          if (!stoppingRecording) {
+            resolveStopRequest({
+              success: false,
+              error: 'Recording lifecycle changed before stop could begin',
+            });
+            return;
+          }
+          stopToken = VoidrRecordingLifecycle.lifecycleToken(stoppingRecording);
+          const priorSessionIds = priorRecording?.sessionIds || [];
+
+          const senderTabId = sender?.tab?.id ?? null;
+          let targetTabId = isTrackedRecordingTab(priorRecording, senderTabId)
+            ? senderTabId
+            : priorRecording?.currentTabId || priorRecording?.tabId;
           const sessionId =
-            (await readCollectorSessionId(targetTabId)) ||
             priorRecording?.canonicalSessionId ||
+            (Number.isInteger(targetTabId) ? await readCollectorSessionId(targetTabId) : null) ||
             null;
           const activeRunId = request.onboardingRunId || null;
           // Evidence coordinates travel back with the captured session so the
           // platform can auto-attach it to the manual run without re-deriving.
           const evidenceMeta = priorRecording?.evidence || null;
+          // Loop-test coordinates too — but never the recording token, which
+          // must not leak into broadcast listeners.
+          const loopTestMeta = priorRecording?.loopTest
+            ? {
+                scenarioId: priorRecording.loopTest.scenarioId,
+                attemptIndex: priorRecording.loopTest.attemptIndex,
+              }
+            : null;
 
           // Merge current sessionId with all previously accumulated ones
           const allSessionIds = [...new Set([...priorSessionIds, sessionId].filter(Boolean))];
-
-          // Onboarding-code captures are cross-org: the session is stored under
-          // the code's org, not the recording user's org. Link each session to
-          // the code via the org-agnostic endpoint — this registers the recording
-          // against the onboarding code AND serves as the save confirmation (the
-          // org-scoped session lookup can't see cross-org sessions).
-          const onboardingCode =
-            priorRecording?.code || priorRecording?.initOptions?.meta?.code || null;
-          let captureConfirmed = false;
-          if (onboardingCode && globalAuthState.token) {
-            for (const sid of allSessionIds) {
-              try {
-                const res = await fetch(
-                  `${API_CONFIG.baseUrl}/onboarding/recording-sessions/code/${encodeURIComponent(onboardingCode)}/sessions`,
-                  {
-                    method: 'POST',
-                    headers: {
-                      Authorization: `Bearer ${globalAuthState.token}`,
-                      'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({ collectorSessionId: sid }),
-                  },
-                );
-                const json = await res.json().catch(() => null);
-                if (res.ok && json?.success && Array.isArray(json?.data?.sessions)) {
-                  captureConfirmed = json.data.sessions.includes(sid) || captureConfirmed;
-                }
-              } catch (_) {}
-            }
+          if (allSessionIds.length === 0) {
+            await updateActiveRecordingForGeneration(
+              stopToken.generation,
+              { ...priorRecording, lifecycle: 'recording' },
+              ['stopping'],
+            );
+            resolveStopRequest({ success: false, error: 'No sessionId available to finalize' });
+            return;
           }
 
-          // Persist a marker so the popup can show a success screen when reopened.
-          // Onboarding-code captures pass `confirmed` from the link above so the
-          // popup skips the org-scoped (cross-org: always-failing) lookup.
+          const trackedTabIds = [
+            ...new Set(
+              [
+                ...(priorRecording?.trackedTabIds || []),
+                ...(priorRecording?.unacknowledgedRemovals || []).map((removal) => removal.tabId),
+                Number.isInteger(targetTabId) ? targetTabId : null,
+              ].filter(Number.isInteger),
+            ),
+          ];
+          if (trackedTabIds.length === 0) {
+            await updateActiveRecordingForGeneration(
+              stopToken.generation,
+              { ...priorRecording, lifecycle: 'recording' },
+              ['stopping'],
+            );
+            resolveStopRequest({
+              success: false,
+              sessionId,
+              sessionIds: allSessionIds,
+              finalized: false,
+              error: 'No tracked recording tabs are available to quiesce',
+            });
+            return;
+          }
+
+          // Quiesce every tab, then group by the sessionId each collector
+          // actually stopped. Tabs may have rotated independently.
+          const removalByTabId = new Map(
+            (priorRecording?.unacknowledgedRemovals || []).map((removal) => [
+              removal.tabId,
+              removal,
+            ]),
+          );
+          const quiescence = await VoidrSessionStopHelpers.finalizeTrackedTabs({
+            tabIds: trackedTabIds,
+            stopTab: async (tabId) => {
+              const tombstone = removalByTabId.get(tabId);
+              if (tombstone) {
+                return {
+                  sessionId: tombstone.sessionId || sessionId,
+                  ok: false,
+                  flushed: false,
+                  removed: true,
+                  unacknowledged: true,
+                  error: 'Tracked tab closed before collector flush acknowledgement',
+                };
+              }
+              try {
+                return await quiesceCollectorInTab(tabId);
+              } catch (error) {
+                const tabStillExists = await chrome.tabs
+                  .get(tabId)
+                  .then(() => true)
+                  .catch(() => false);
+                if (!tabStillExists) {
+                  return {
+                    sessionId,
+                    ok: false,
+                    flushed: false,
+                    removed: true,
+                    error: 'Tracked tab closed before collector flush acknowledgement',
+                  };
+                }
+                throw error;
+              }
+            },
+            sealSession: async ({
+              sessionId: stoppedSessionId,
+              finalizedThrough,
+              compatibilityResults,
+            }) => {
+              const compatibilityReason =
+                compatibilityResults.length > 0
+                  ? 'One or more tabs used the legacy collector compatibility path'
+                  : null;
+              return finalizeSessionDirect(stoppedSessionId, priorRecording?.initOptions, {
+                reason: compatibilityReason,
+                finalizedThrough,
+              });
+            },
+          });
+          const finalizations = quiescence.finalizations || {};
+          const finalizedSessionIds = [...new Set(quiescence.successfulSessionIds || [])];
+          const primarySessionId =
+            (finalizedSessionIds.includes(sessionId) && sessionId) ||
+            finalizedSessionIds[finalizedSessionIds.length - 1] ||
+            sessionId;
+          let attachmentError = null;
+          const retryPlan = VoidrRecordingLifecycle.reconcileRemovedTabsForRetry(
+            priorRecording,
+            quiescence.results,
+          );
+
+          if (finalizedSessionIds.length > 0 && priorRecording?.initOptions?.loopTest) {
+            try {
+              await attachLoopTestSession(
+                primarySessionId,
+                priorRecording.initOptions.loopTest,
+                stopToken.generation,
+              );
+            } catch (error) {
+              attachmentError = error?.message || String(error);
+            }
+          }
+          const stopOutcome = VoidrSessionStopHelpers.classifyStopOutcome({
+            quiescencePartialFailure: quiescence.partialFailure,
+            finalizedSessionIds,
+            attachmentError,
+          });
+
+          // Recording lifecycle is governed exclusively by the authoritative
+          // collector seal. An attach failure happens after the seal and must
+          // never reactivate the recorder or append chunks to a sealed session.
+          if (!stopOutcome.sealFailed) {
+            recordingCleared = await clearActiveRecordingForGeneration(
+              stopToken.generation,
+              ['stopping'],
+              async () => {
+                for (const t of trackedTabIds) {
+                  await disableCspBypassForTab(t);
+                }
+              },
+              { preserveLoopCapability: stopOutcome.attachmentPending },
+            );
+          } else if (retryPlan.policy === 'retry' && retryPlan.recording) {
+            // Only a failed seal is retryable. Restore a coherent recording state so
+            // the existing retry controls can deliberately start another stop.
+            // Tabs confirmed removed are excluded so retries cannot loop on
+            // dead tab ids. Their missing flush remains a failure in this run.
+            await updateActiveRecordingForGeneration(
+              stopToken.generation,
+              { ...retryPlan.recording, lifecycle: 'recording' },
+              ['stopping'],
+            );
+          } else {
+            // No collector tab remains. There is nothing a retry can quiesce,
+            // so terminate this generation without claiming the missing ACK.
+            recordingCleared = await clearActiveRecordingForGeneration(
+              stopToken.generation,
+              ['stopping'],
+              async () => {
+                for (const t of trackedTabIds) await disableCspBypassForTab(t);
+              },
+            );
+          }
+
+          // Cookie upload is best-effort, but it must happen after the final
+          // recording chunk/seal and before consumers hear sessionCaptured.
+          if (
+            priorRecording?.initOptions?.captureEnvironmentBundle &&
+            finalizedSessionIds.includes(primarySessionId)
+          ) {
+            try {
+              const tab = Number.isInteger(targetTabId)
+                ? await chrome.tabs.get(targetTabId).catch(() => null)
+                : null;
+              await withTimeout(
+                captureAndUploadCookies(primarySessionId, tab?.url),
+                COOKIE_UPLOAD_TIMEOUT_MS,
+                `Cookie upload timed out after ${COOKIE_UPLOAD_TIMEOUT_MS}ms`,
+              );
+            } catch (_) {}
+          }
+
+          // Onboarding-code captures can belong to another org. Link only
+          // durably finalized sessions through the code-scoped endpoint.
+          const onboardingLink = await linkOnboardingSessions(priorRecording, finalizedSessionIds);
+
+          // Persist a marker so the popup can show a success screen when reopened
+          // and trust the code-scoped confirmation for cross-org captures.
           try {
-            const latestSid = sessionId || allSessionIds[allSessionIds.length - 1] || null;
-            if (latestSid && (!activeRunId || onboardingCode)) {
+            const latestSid = primarySessionId || null;
+            const isLoopCycleCapture = Boolean(
+              priorRecording?.loopTest || priorRecording?.initOptions?.meta?.verification,
+            );
+            if (
+              latestSid &&
+              !isLoopCycleCapture &&
+              (!activeRunId || onboardingLink.code) &&
+              !stopOutcome.sealFailed
+            ) {
               await chrome.storage.session.set({
                 voidrLastCapture: {
                   sessionId: latestSid,
                   capturedAt: Date.now(),
-                  confirmed: captureConfirmed,
-                  code: onboardingCode || undefined,
+                  confirmed: onboardingLink.confirmed,
+                  code: onboardingLink.code || undefined,
                 },
               });
               // Reopen the assistant popup so the success screen shows automatically.
@@ -1632,16 +3725,25 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             }
           } catch (_) {}
 
-          // Broadcast voidr:sessionCaptured for EACH accumulated sessionId
-          for (const sid of allSessionIds) {
+          // Broadcast only sessions whose own authoritative seal succeeded.
+          // The array preserves the existing accumulated-session attachment
+          // contract without claiming failed siblings as captured.
+          for (const sid of finalizedSessionIds) {
+            // Loop consumers must not observe a session before its scenario
+            // binding exists. The content controller performs one safe,
+            // idempotent attach retry before it broadcasts.
+            if (loopTestMeta && stopOutcome.attachmentPending) continue;
             const capturedPayload = {
               action: 'voidr:sessionCaptured',
               sessionId: sid,
               onboardingRunId: activeRunId,
               evidence: evidenceMeta || undefined,
+              loopTest: loopTestMeta || undefined,
+              finalization: finalizations[sid],
+              lifecycleGeneration: stopToken.generation,
             };
             try {
-              chrome.runtime.sendMessage(capturedPayload);
+              chrome.runtime.sendMessage(capturedPayload).catch(() => {});
             } catch (_) {}
 
             try {
@@ -1671,6 +3773,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                         sessionId: sid,
                         onboardingRunId: activeRunId,
                         evidence: evidenceMeta || undefined,
+                        loopTest: loopTestMeta || undefined,
+                        finalization: finalizations[sid],
+                        lifecycleGeneration: stopToken.generation,
                       },
                     ],
                   })
@@ -1679,46 +3784,135 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             } catch (_) {}
           }
 
-          // Refresh HttpOnly cookies for the environment bundle with the FINAL
-          // state before ending the session (cookies may have changed mid-run).
-          if (priorRecording?.initOptions?.captureEnvironmentBundle && sessionId) {
-            try {
-              const tab = await chrome.tabs.get(targetTabId).catch(() => null);
-              await captureAndUploadCookies(sessionId, tab?.url);
-            } catch (_) {}
-          }
-
-          // After broadcasting, request the collector to end the session
-          try {
-            await chrome.scripting.executeScript({
-              target: { tabId: targetTabId },
-              world: 'MAIN',
-              func: () => {
-                try {
-                  window.VoidrCollector &&
-                    window.VoidrCollector.endSession &&
-                    window.VoidrCollector.endSession();
-                } catch (_) {}
-                // Wipe our session's keys so a native collector on the next
-                // navigation can't adopt (and pollute) the recorded session.
-                for (const k of ['voidr_jwt', 'voidr_session_id', 'voidr_user_id', 'voidr_last_activity']) {
-                  try {
-                    sessionStorage.removeItem(k);
-                  } catch (_) {}
+          const verificationCoordinates = safeVerificationCoordinates(priorRecording);
+          const stopResponse = {
+            success: stopOutcome.success,
+            sessionId: primarySessionId,
+            sessionIds: finalizedSessionIds,
+            loopTest: priorRecording?.loopTest
+              ? {
+                  scenarioId: priorRecording.loopTest.scenarioId,
+                  cycleId: priorRecording.loopTest.cycleId,
+                  cycleNumber: priorRecording.loopTest.cycleNumber,
                 }
-              },
-            });
-          } catch (_) {}
-
-          sendResponse({ success: true, sessionId, sessionIds: allSessionIds });
+              : null,
+            lifecycleGeneration: stopToken.generation,
+            verification: verificationCoordinates,
+            finalized: stopOutcome.finalized,
+            partial: stopOutcome.partial,
+            attachmentPending: stopOutcome.attachmentPending,
+            attachmentError,
+            retryable: stopOutcome.sealFailed && retryPlan.policy === 'retry',
+            terminal: stopOutcome.sealFailed && retryPlan.policy === 'terminal',
+            degraded:
+              stopOutcome.sealFailed ||
+              stopOutcome.attachmentPending ||
+              Object.values(finalizations).some((result) => result?.degraded === true),
+            finalizations,
+            error: stopOutcome.sealFailed
+              ? [
+                  ...quiescence.failures.map((failure) => `tab ${failure.tabId}: ${failure.error}`),
+                  ...quiescence.finalizationFailures.map(
+                    (failure) =>
+                      `${failure.sessionId ? `session ${failure.sessionId}` : `tab ${failure.tabId}`}: ${failure.error}`,
+                  ),
+                ].join('; ') || 'No session seal was confirmed'
+              : null,
+            warning: stopOutcome.attachmentPending
+              ? `Session sealed, but Loop attachment is pending: ${attachmentError}`
+              : null,
+            tabResults: quiescence.results,
+          };
+          // Queue the Verification seal before acknowledging Stop. The popup or
+          // in-page controller may disappear as soon as the user clicks Finish;
+          // the MV3 alarm is the durable owner that keeps the Cursor/MCP handoff
+          // moving even with no UI connected.
+          if (stopOutcome.finalized && verificationCoordinates) {
+            try {
+              const found = await readVerificationCapability(
+                verificationCoordinates.verificationId,
+                verificationCoordinates.generation,
+              );
+              if (!found) throw new Error('Verification capability is expired or revoked');
+              await stageVerificationSeal(found.record, verificationCoordinates, stopResponse);
+              await scheduleVerificationSealRetry(found.record);
+            } catch (error) {
+              await persistLoopFinalization(verificationCoordinates, {
+                state: 'failed',
+                sessionId: primarySessionId,
+                error: error?.message || String(error),
+              }).catch(() => undefined);
+              stopResponse.verificationError = error?.message || String(error);
+            }
+          }
+          await chrome.storage.session.set({
+            voidrLastStopResult: { ...stopResponse, stoppedAt: Date.now() },
+          });
+          resolveStopRequest(stopResponse);
         } catch (e) {
-          sendResponse({
+          if (priorRecording && stopToken && !recordingCleared) {
+            await updateActiveRecordingForGeneration(
+              stopToken.generation,
+              { ...priorRecording, lifecycle: 'recording' },
+              ['stopping'],
+            ).catch(() => {});
+          }
+          resolveStopRequest({
             success: false,
             error: e?.message || 'Failed to retrieve sessionId on stop',
           });
         }
       })();
       return true;
+    case 'voidr:openLoop': {
+      const scenarioId = encodeURIComponent(String(request.scenarioId || ''));
+      if (!scenarioId) {
+        sendResponse({ success: false, error: 'Loop coordinates are missing' });
+        break;
+      }
+      chrome.tabs
+        .create({ url: `${API_CONFIG.platformUrl}/loops/${scenarioId}`, active: true })
+        .then(() => sendResponse({ success: true }))
+        .catch((error) =>
+          sendResponse({ success: false, error: error?.message || 'Could not open Loop' }),
+        );
+      return true;
+    }
+    case 'voidr:openLoopCycle': {
+      const scenarioId = encodeURIComponent(String(request.scenarioId || ''));
+      const cycleId = encodeURIComponent(String(request.cycleId || ''));
+      if (!scenarioId || !cycleId) {
+        sendResponse({ success: false, error: 'Loop cycle coordinates are missing' });
+        break;
+      }
+      chrome.tabs
+        .create({
+          url: `${API_CONFIG.platformUrl}/loops/${scenarioId}/cycles/${cycleId}`,
+          active: true,
+        })
+        .then((tab) => sendResponse({ success: true, tabId: tab.id }))
+        .catch((error) => sendResponse({ success: false, error: error?.message || String(error) }));
+      return true;
+    }
+    case 'voidr:openLoopHandoff': {
+      try {
+        const path = VoidrLoopBootstrap.buildLoopCodeHandoffPath({
+          scenarioId: request.scenarioId,
+          cycleId: request.cycleId,
+          agent: request.agent,
+        });
+        chrome.tabs
+          .create({ url: `${API_CONFIG.platformUrl}${path}`, active: true })
+          .then((tab) => sendResponse({ success: true, tabId: tab.id }))
+          .catch((error) =>
+            sendResponse({ success: false, error: error?.message || String(error) }),
+          );
+      } catch (error) {
+        sendResponse({ success: false, error: error?.message || String(error) });
+      }
+      return true;
+    }
+
     case 'focusOrOpenPopup':
       (async () => {
         try {
@@ -1783,24 +3977,39 @@ chrome.tabs.onActivated.addListener((activeInfo) => {
 // Faz requisições autenticadas para a API
 async function makeAuthenticatedRequest(endpoint, method = 'GET', data = null) {
   try {
-    console.log('[API] →', method, endpoint, data ? JSON.stringify(data).slice(0, 500) : '');
+    const isLocalVerificationRequest =
+      LOCAL_VERIFICATION_ADAPTER &&
+      (endpoint === '/verifications' || endpoint.startsWith('/verifications/'));
+    console.log(
+      '[API] →',
+      method,
+      endpoint,
+      data ? (isLocalVerificationRequest ? '[sensitive body redacted]' : '[body]') : '',
+    );
     const options = {
       method: method,
-      headers: {
-        Authorization: `Bearer ${globalAuthState.token}`,
-        'Content-Type': 'application/json',
-      },
+      headers: isLocalVerificationRequest
+        ? {
+            'Content-Type': 'application/json',
+            'x-voidr-dev-key': LOCAL_VERIFICATION_KEY,
+            'x-voidr-organization-id': LOCAL_VERIFICATION_ORGANIZATION,
+          }
+        : {
+            Authorization: `Bearer ${globalAuthState.token}`,
+            'Content-Type': 'application/json',
+          },
     };
 
     if (data && (method === 'POST' || method === 'PUT' || method === 'PATCH')) {
       options.body = JSON.stringify(data);
     }
 
-    const url = `${API_CONFIG.baseUrl}${endpoint}`;
+    const resolvedEndpoint = isLocalVerificationRequest ? `/verification-dev${endpoint}` : endpoint;
+    const url = `${API_CONFIG.baseUrl}${resolvedEndpoint}`;
     const response = await fetch(url, options);
 
     if (!response.ok) {
-      if (response.status === 401) {
+      if (response.status === 401 && !isLocalVerificationRequest) {
         // Token expirado, limpa autenticação
         console.log('Token expired (401), clearing authentication...');
         globalAuthState = {
@@ -1825,8 +4034,18 @@ async function makeAuthenticatedRequest(endpoint, method = 'GET', data = null) {
       try {
         bodyText = await response.text();
       } catch (_) {}
-      console.warn('[API] ←', method, endpoint, response.status, response.statusText, bodyText);
-      throw new Error(`API request failed: ${response.status} ${response.statusText}`);
+      let errorPayload = null;
+      try {
+        errorPayload = bodyText ? JSON.parse(bodyText) : null;
+      } catch (_) {}
+      const serverMessage =
+        errorPayload?.message || errorPayload?.error?.message || errorPayload?.data?.message;
+      console.warn('[API] ←', method, endpoint, response.status, response.statusText);
+      throw new Error(
+        response.status === 402
+          ? 'Saldo de créditos insuficiente para iniciar este ciclo. Adicione créditos na Voidr e tente novamente.'
+          : serverMessage || `API request failed: ${response.status} ${response.statusText}`,
+      );
     }
 
     const json = await response.json();
@@ -1855,27 +4074,6 @@ chrome.action.onClicked.addListener(() => {
       await chrome.storage.local.set({ lastActiveContentUrl: url });
     } catch (_) {}
 
-    // If the floating button was docked/hidden, just bring it back — don't also
-    // open the capture window (avoids opening both at once).
-    let wasHidden = false;
-    try {
-      const s = await chrome.storage.local.get(['voidr_fab_hidden']);
-      wasHidden = !!s.voidr_fab_hidden;
-    } catch (_) {}
-    if (wasHidden) {
-      try {
-        await chrome.storage.local.set({ voidr_fab_hidden: false });
-        if (t && t.id != null && url) {
-          chrome.tabs.sendMessage(
-            t.id,
-            { action: 'voidr:restoreFab' },
-            () => void chrome.runtime.lastError,
-          );
-        }
-      } catch (_) {}
-      return;
-    }
-
     const existingId = await focusExistingAssistantWindow();
     if (existingId) return;
     await openAssistantWindowAt();
@@ -1890,14 +4088,17 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   if (
     changeInfo.status === 'complete' &&
     recording &&
+    VoidrRecordingLifecycle.shouldResumeOnNavigation(recording) &&
     isTrackedRecordingTab(recording, tabId) &&
     tab.url &&
-    /^https?:/i.test(tab.url) &&
-    Date.now() - lastStoppedAt > 2000
+    /^https?:/i.test(tab.url)
   ) {
-    try {
-      await resumeActiveRecordingInTab(tabId);
-    } catch (_) {}
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        if (await resumeActiveRecordingInTab(tabId)) break;
+      } catch (_) {}
+      await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
+    }
   }
 
   if (changeInfo.status === 'complete' && tab.url && tab.url.startsWith(API_CONFIG.platformUrl)) {
@@ -1934,7 +4135,12 @@ chrome.tabs.onCreated.addListener((tab) => {
   if (!activeRecording && !chrome?.storage?.local) return;
 
   hydrateActiveRecording().then((recording) => {
-    if (!recording || !isTrackedRecordingTab(recording, tab.openerTabId)) return;
+    if (
+      !recording ||
+      recording.lifecycle === 'stopping' ||
+      !isTrackedRecordingTab(recording, tab.openerTabId)
+    )
+      return;
     attachTrackedRecordingTab(tab.id, { makeCurrent: true });
   });
 });
@@ -1942,27 +4148,21 @@ chrome.tabs.onCreated.addListener((tab) => {
 chrome.tabs.onRemoved.addListener((tabId) => {
   // Always remove the CSP bypass rule for a closed tab — idempotent.
   disableCspBypassForTab(tabId).catch(() => {});
+  loopBootstrapStaging.discard(tabId).catch(() => {});
+  loopCapabilitySecrets.discardTab(tabId).catch(() => {});
+  stopCapabilitySecrets.discardTab(tabId).catch(() => {});
 
   hydrateActiveRecording().then(async (recording) => {
-    if (!recording || !isTrackedRecordingTab(recording, tabId)) return;
-
-    const nextTabIds = recording.trackedTabIds.filter((id) => id !== tabId);
-    if (nextTabIds.length === 0) {
-      await clearActiveRecording();
-      return;
-    }
-
-    await setActiveRecording({
-      ...recording,
-      tabId: nextTabIds[0],
-      currentTabId: recording.currentTabId === tabId ? nextTabIds[0] : recording.currentTabId,
-      trackedTabIds: nextTabIds,
-    });
+    if (!recording) return;
+    const lifecycleToken = VoidrRecordingLifecycle.lifecycleToken(recording);
+    const removal = VoidrRecordingLifecycle.planTrackedTabRemoval(recording, tabId);
+    if (removal.action === 'ignore') return;
+    await updateActiveRecordingIfCurrent(lifecycleToken, removal.recording);
   });
 });
 
 /**
- * 
+ *
  * @returns Resync auth reading Auth0 token from platform
  */
 async function resyncAuthFromPlatformTabs() {
@@ -1977,7 +4177,6 @@ async function resyncAuthFromPlatformTabs() {
   } catch (_) {}
   return false;
 }
-
 // Sincroniza autenticação com a plataforma
 async function syncAuthWithPlatform(tabId) {
   try {

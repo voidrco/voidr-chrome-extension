@@ -1,0 +1,8 @@
+{
+  "contract": "Verification",
+  "hil": "HIL/1",
+  "vap": "VAP/1",
+  "hilSchemaSha256": "23f385388be2dff13e3d161124cef6140af9e30d96ba7ff431840872fe8da83b",
+  "vapSchemaSha256": "31d624c0a7210fcc7e5f10ec75176858c49819d5393ee7dd22adc0b6805e8b39",
+  "fixtureSha256": "3559c9a83300c4114942288f388c82b63f465c52925c5cf52bd5cf3498d11534"
+}

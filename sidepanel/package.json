@@ -1,0 +1,22 @@
+{
+  "name": "voidr-loop-test-sidepanel",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Voidr Loop Test side panel — quick-run UI + in-extension runner (playwright-crx)",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "playwright-crx": "0.15.0",
+    "preact": "^10.24.0"
+  },
+  "devDependencies": {
+    "@preact/preset-vite": "^2.9.0",
+    "@types/chrome": "^0.2.2",
+    "typescript": "^5.6.0",
+    "vite": "^5.4.0"
+  }
+}

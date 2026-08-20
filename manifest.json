@@ -1,13 +1,16 @@
 {
   "manifest_version": 3,
-  "name": "Voidr Testing Assistant",
+  "name": "Voidr Capture",
   "version": "1.0.3",
-  "description": "Capture user sessions for onboarding test generation",
+  "description": "Record Loop baselines, test sessions, and linked Voidr captures",
   "permissions": [
     "storage",
     "scripting",
     "declarativeNetRequest",
-    "cookies"
+    "cookies",
+    "debugger",
+    "alarms",
+    "offscreen"
   ],
   "host_permissions": [
     "https://*.voidr.co/*"
@@ -17,7 +20,7 @@
     "https://*/*"
   ],
   "action": {
-    "default_title": "Voidr Testing Assistant",
+    "default_title": "Voidr Capture",
     "default_icon": {
       "16": "icons/icon16.png",
       "32": "icons/icon32.png",
@@ -26,18 +29,6 @@
     }
   },
   "content_scripts": [
-    {
-      "matches": [
-        "https://*.voidr.co/*"
-      ],
-      "js": [
-        "content/content.js"
-      ],
-      "css": [
-        "content/content.css"
-      ],
-      "run_at": "document_end"
-    },
     {
       "matches": [
         "https://*.voidr.co/*"

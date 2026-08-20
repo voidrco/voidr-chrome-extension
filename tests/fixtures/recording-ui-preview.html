@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Voidr Capture preview</title>
+    <link rel="stylesheet" href="../../shared/voidr-design-system.css" />
+    <link rel="stylesheet" href="../../content/content.css" />
+    <script src="../../assets/lucide-icons.js"></script>
+    <style>
+      body {
+        min-height: 100vh;
+        margin: 0;
+        color: var(--text-primary);
+        background: var(--background);
+        font-family: var(--font-sans);
+      }
+      .fixture-app {
+        max-width: 960px;
+        margin: 0 auto;
+        padding: 72px 32px 160px;
+      }
+      .fixture-kicker {
+        color: var(--text-tertiary);
+        font: var(--text-xs);
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      .fixture-title {
+        max-width: 620px;
+        margin: 16px 0 8px;
+        font-size: var(--text-lg);
+      }
+      .fixture-copy {
+        max-width: 560px;
+        color: var(--text-secondary);
+        font: var(--text-sm);
+      }
+      .fixture-card {
+        height: 240px;
+        margin-top: 40px;
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-panel);
+        background: var(--background-secondary);
+      }
+    </style>
+  </head>
+  <body>
+    <main class="fixture-app">
+      <span class="fixture-kicker">Checkout · ambiente local</span>
+      <h1 class="fixture-title">Confirme o pagamento depois de uma falha transitória.</h1>
+      <p class="fixture-copy">
+        Preview isolado para validar hierarquia, contraste e densidade da experiência de captura.
+      </p>
+      <div class="fixture-card"></div>
+    </main>
+    <script>
+      const icon = (name, size = 14) => globalThis.getIcon(name, size);
+      const panel = document.createElement('div');
+      panel.className = 'voidr-rec-panel voidr-rec-panel--verification';
+      panel.setAttribute('data-voidr-verification-overlay', 'true');
+      panel.innerHTML = `
+        <div class="voidr-rec-brand" aria-label="Voidr"><img src="../../assets/logo-light.svg" alt="" /></div>
+        <div class="voidr-rec-live" aria-label="Gravação ativa"><span class="voidr-rec-live-dot"></span><span>02:41</span></div>
+        <div class="voidr-rec-title">Ciclo 1 · Checkout retry</div>
+        <div class="voidr-rec-actions">
+          <div class="voidr-rec-tool-wrap">
+            <button class="voidr-rec-btn voidr-rec-capture" aria-expanded="false">${icon('Activity')}<span>Capturando</span></button>
+            <section class="voidr-rec-signal-panel" aria-label="Captura automática" hidden>
+              <header><strong>Captura automática</strong><small>Sem configurar nada</small></header>
+              <div class="voidr-rec-signal-summary" data-evidence-view="summary">
+                <div class="voidr-rec-signal-grid">
+                  <button class="voidr-rec-signal" data-evidence-category="pages">${icon('Globe2', 13)}<span>Páginas</span><b>3</b>${icon('ChevronRight', 11)}</button>
+                  <button class="voidr-rec-signal" data-evidence-category="clicks">${icon('MousePointer', 13)}<span>Cliques</span><b>18</b>${icon('ChevronRight', 11)}</button>
+                  <button class="voidr-rec-signal" data-evidence-category="requests">${icon('Network', 13)}<span>Requests</span><b>42</b>${icon('ChevronRight', 11)}</button>
+                  <button class="voidr-rec-signal" data-evidence-category="errors">${icon('Terminal', 13)}<span>Erros</span><b>1</b>${icon('ChevronRight', 11)}</button>
+                  <button class="voidr-rec-signal" data-evidence-category="notes">${icon('MessageSquare', 13)}<span>Notas</span><b>2</b>${icon('ChevronRight', 11)}</button>
+                  <button class="voidr-rec-signal" data-evidence-category="voiceNotes">${icon('Mic', 13)}<span>Voz</span><b>1</b>${icon('ChevronRight', 11)}</button>
+                </div>
+                <p>O Loop guarda a evidência completa. O agente recebe apenas o contexto necessário.</p>
+              </div>
+              <section class="voidr-live-evidence" data-evidence-view="detail" data-state="live" hidden>
+                <header class="voidr-live-evidence-head">
+                  <button class="voidr-live-evidence-back" aria-label="Voltar">${icon('ArrowLeft', 14)}</button>
+                  <div><strong>Requests</strong><small><span class="voidr-live-dot"></span>Ao vivo</small></div>
+                  <span class="voidr-live-evidence-count">42</span>
+                </header>
+                <div class="voidr-live-evidence-layout">
+                  <div class="voidr-live-evidence-feed">
+                    <div class="voidr-live-evidence-feed-head"><span>Mais recentes</span><small>contexto seguro</small></div>
+                    <div class="voidr-live-evidence-list" role="list">
+                      <div role="listitem"><button class="voidr-live-evidence-item" aria-pressed="true"><span class="voidr-live-evidence-tone is-danger"></span><span class="voidr-live-evidence-item-copy"><small>POST · 502</small><strong>/api/checkout/retry</strong><span>2.4 s · application/json · 1st party</span></span><time>02:36</time></button></div>
+                      <div role="listitem"><button class="voidr-live-evidence-item"><span class="voidr-live-evidence-tone is-success"></span><span class="voidr-live-evidence-item-copy"><small>GET · 200</small><strong>/api/cart</strong><span>84 ms · application/json · 1st party</span></span><time>02:32</time></button></div>
+                      <div role="listitem"><button class="voidr-live-evidence-item"><span class="voidr-live-evidence-tone is-warning"></span><span class="voidr-live-evidence-item-copy"><small>POST · 409</small><strong>/api/order/confirm</strong><span>311 ms · application/json · 1st party</span></span><time>02:29</time></button></div>
+                    </div>
+                  </div>
+                  <article class="voidr-live-evidence-detail">
+                    <div class="voidr-live-evidence-detail-head"><span class="voidr-live-evidence-tone is-danger"></span><div><small>POST · 502</small><h3>/api/checkout/retry</h3></div></div>
+                    <div class="voidr-live-evidence-fields">
+                      <div class="voidr-live-evidence-field is-inline"><span>Status</span><strong>502 Bad Gateway</strong></div>
+                      <div class="voidr-live-evidence-field is-inline"><span>Duração</span><strong>2.4 s</strong></div>
+                      <details class="voidr-live-evidence-field" open><summary>URL</summary><pre>http://localhost:8080/api/checkout/retry</pre></details>
+                      <details class="voidr-live-evidence-field"><summary>Response body · preview seguro</summary><pre>{ "code": "UPSTREAM_TIMEOUT" }</pre></details>
+                      <details class="voidr-live-evidence-field"><summary>Timing</summary><pre>{ "ttfb": 2230, "download": 170 }</pre></details>
+                    </div>
+                  </article>
+                </div>
+                <footer>${icon('Layers', 12)}<span>O evento completo permanece no replay e no ClickHouse.</span></footer>
+              </section>
+            </section>
+          </div>
+          <button class="voidr-rec-btn accent" id="voidr-verification-annotate">${icon('MessageSquare')}<span>Nota</span><span class="voidr-rec-count-badge">2</span></button>
+          <button class="voidr-rec-btn voidr-rec-voice" aria-pressed="false">${icon('Mic')}<span>Voz</span></button>
+          <button class="voidr-rec-btn voidr-rec-finish">${icon('Square', 13)}Finalizar</button>
+        </div>`;
+      document.documentElement.appendChild(panel);
+      const capture = panel.querySelector('.voidr-rec-capture');
+      const signals = panel.querySelector('.voidr-rec-signal-panel');
+      const summary = signals.querySelector('[data-evidence-view="summary"]');
+      const detail = signals.querySelector('[data-evidence-view="detail"]');
+      capture.addEventListener('click', () => {
+        signals.hidden = !signals.hidden;
+        capture.setAttribute('aria-expanded', String(!signals.hidden));
+      });
+      signals.querySelector('[data-evidence-category="requests"]').addEventListener('click', () => {
+        summary.hidden = true;
+        detail.hidden = false;
+        signals.classList.add('is-inspecting');
+      });
+      signals.querySelector('.voidr-live-evidence-back').addEventListener('click', () => {
+        summary.hidden = false;
+        detail.hidden = true;
+        signals.classList.remove('is-inspecting');
+      });
+    </script>
+  </body>
+</html>

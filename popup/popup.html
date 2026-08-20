@@ -1,15 +1,24 @@
-<!DOCTYPE html>
-<html lang="en">
+<!doctype html>
+<html lang="pt-BR">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Voidr Session Capture</title>
+    <title>Voidr Capture</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&display=swap"
+    />
+    <link rel="stylesheet" href="../shared/voidr-design-system.css" />
     <link rel="stylesheet" href="popup.css" />
     <script src="../config/env.js"></script>
     <!-- Dev-only overrides (gitignored) — loaded only if the file exists,
          so production consoles stay free of ERR_FILE_NOT_FOUND noise -->
     <script src="../config/env-local-loader.js"></script>
     <script src="../assets/lucide-icons.js"></script>
+    <script src="../shared/recording-ux-helpers.js"></script>
+    <script src="../shared/verification-handoff-ux.js"></script>
   </head>
   <body>
     <div class="extension-container">
@@ -22,7 +31,7 @@
       <div class="extension-content" id="main-extension-content"></div>
 
       <div class="extension-footer">
-        <div class="version">v1.0.0</div>
+        <div class="version">Voidr Capture · v1.0.0</div>
       </div>
     </div>
 
