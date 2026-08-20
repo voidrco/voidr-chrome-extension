@@ -605,6 +605,24 @@ async function armCollectorTakeoverWatchdog(tabId) {
 // O manifest declarava js E css juntos; executeScript injeta so o js. Sem o css
 // o painel e montado no DOM mas fica sem position/z-index/fundo — invisivel, e
 // sem nenhum erro, porque do ponto de vista do JS deu tudo certo.
+// Diagnostico do erro de acesso: sem isso "Cannot access contents of the page"
+// nao diz QUAL aba nem quais origens estao concedidas, e cada rodada custa um
+// ciclo de teste so para descobrir onde olhar.
+async function contextoDeAcesso(tabId) {
+  let url = '(desconhecida)';
+  try {
+    const t = await chrome.tabs.get(tabId);
+    url = t?.url || '(oculta — sem permissao)';
+  } catch (e) {
+    url = '(tabs.get falhou: ' + (e?.message || e) + ')';
+  }
+  let origins = [];
+  try {
+    origins = (await chrome.permissions.getAll()).origins || [];
+  } catch (_) {}
+  return `aba=${tabId} url=${url} origens=${JSON.stringify(origins)}`;
+}
+
 async function ensureContentCss(tabId) {
   try {
     await chrome.scripting.insertCSS({ target: { tabId }, files: ['content/content.css'] });
@@ -1396,7 +1414,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           } catch (e) {}
         }
         if (!targetTabId) {
-          sendResponse({ success: false, error: 'No content tab to forward to' });
+          sendResponse({
+            success: false,
+            error: `Nenhuma aba alvo encontrada [targetHost=${targetHost} origens=${JSON.stringify(((await chrome.permissions.getAll().catch(() => ({}))).origins) || [])}]`,
+          });
           return;
         }
         try {
@@ -1414,7 +1435,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             await chrome.tabs.sendMessage(targetTabId, payload);
             sendResponse({ success: true, forwarded: true, injected: true, tabId: targetTabId });
           } catch (e2) {
-            sendResponse({ success: false, error: e2?.message || 'Failed to send message' });
+            sendResponse({
+              success: false,
+              error: `${e2?.message || 'Failed to send message'} [${await contextoDeAcesso(targetTabId)}]`,
+            });
           }
         }
       })();
@@ -1495,7 +1519,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           }
           sendResponse({ success: true, tabId: targetTabId });
         } catch (e) {
-          sendResponse({ success: false, error: e?.message || 'Failed to forward to target tab' });
+          sendResponse({
+            success: false,
+            error: `${e?.message || 'Failed to forward to target tab'} [${await contextoDeAcesso(targetTabId)}]`,
+          });
         }
       })();
       return true;

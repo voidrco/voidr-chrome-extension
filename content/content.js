@@ -664,9 +664,10 @@ async function startVoidrSessionRecording(testCaseName, options = {}) {
       const activeRunId = options.onboardingRunId || undefined;
       let sessionId = null;
       let allSessionIds = [];
+      let result = null;
 
       try {
-        const result = await Promise.race([
+        result = await Promise.race([
           new Promise((resolve) => {
             chrome.runtime.sendMessage(
               { action: 'voidr:sessionStopped', onboardingRunId: activeRunId },
@@ -676,7 +677,7 @@ async function startVoidrSessionRecording(testCaseName, options = {}) {
             );
           }),
           new Promise((resolve) =>
-            setTimeout(() => resolve({ success: false, timeout: true }), 5000),
+            setTimeout(() => resolve({ success: false, timeout: true }), 20000),
           ),
         ]);
         sessionId = result.sessionId || null;
@@ -721,6 +722,11 @@ async function startVoidrSessionRecording(testCaseName, options = {}) {
       document.querySelectorAll('.voidr-rec-countdown').forEach((n) => n.remove());
       if (validated) {
         showOnboardingDoneBanner(mode);
+      } else if (result?.timeout) {
+        // Estourar o tempo do stop nao e o mesmo que nao ter capturado nada: o
+        // flush pode estar em andamento. Tratar como pendente evita dizer que
+        // falhou uma gravacao que salvou — o que acontecia em app pesado.
+        showCapturePendingBanner(mode);
       } else if (allSessionIds.length > 0) {
         /**
          * Session captured and send to collector

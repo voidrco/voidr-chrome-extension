@@ -432,10 +432,24 @@ function showRecordingSetupView(app) {
 // Pede a permissao de host da aba alvo no clique do usuario. Precisa rodar antes
 // de qualquer await: o gesto expira e o Chrome recusa o prompt depois disso.
 function ensureHostPermission(originPattern) {
-  if (!originPattern) return Promise.resolve(true);
+  // Pede o padrao amplo, nao so o dominio cadastrado do app.
+  //
+  // Apps atras de autenticacao (Blip via Microsoft B2C, por exemplo) redirecionam:
+  // a aba termina num dominio de login, nao no que esta cadastrado. Pedindo so o
+  // cadastrado, tabs.query nao acha a aba e executeScript devolve "Cannot access
+  // contents of the page" — foi o que quebrou a 1.0.0 em uso real.
+  //
+  // Nao da para ser mais preciso: sem permissao o Chrome esconde a URL da aba,
+  // entao nao ha como descobrir o dominio final para pedir so ele.
+  //
+  // O ganho de politica que sobra e o que importa para a analise: nada e
+  // concedido na instalacao, e a concessao acontece depois do aviso de captura.
+  const origins = originPattern
+    ? [originPattern, 'http://*/*', 'https://*/*']
+    : ['http://*/*', 'https://*/*'];
   // Sem await antes daqui: qualquer um consome o gesto do usuario e o Chrome
   // recusa o prompt. request() ja resolve true na hora se a permissao existe.
-  return chrome.permissions.request({ origins: [originPattern] }).catch(() => false);
+  return chrome.permissions.request({ origins }).catch(() => false);
 }
 
 function hostOf(url) {
@@ -755,7 +769,21 @@ async function handleStartOnboardingRecording() {
   const alvo = hostOf(onboardingRecordingContext.targetUrl);
   const concedida = await ensureHostPermission(alvo);
   if (!concedida) {
-    showNotification(`Sem permissao para ${alvo || '(alvo desconhecido)'} — gravacao cancelada.`, 'error', 6000);
+    showNotification(
+      `Permissao negada para ${alvo || 'o site alvo'} — sem ela a Voidr nao consegue gravar. Clique novamente e escolha Permitir.`,
+      'error',
+      8000,
+    );
+    return;
+  }
+  // request() pode resolver true sem o dominio pedido em casos de borda; conferir
+  // antes de seguir evita o erro opaco do background.
+  if (!(await chrome.permissions.contains({ origins: ['https://*/*'] }).catch(() => true))) {
+    showNotification(
+      'A Voidr precisa de acesso ao site para gravar. Clique novamente e escolha Permitir.',
+      'error',
+      8000,
+    );
     return;
   }
   const btn = document.getElementById('onboarding-start-btn');
