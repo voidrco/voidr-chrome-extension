@@ -1,4 +1,5 @@
 export const VOIDR_VERSION = '1.17.1';
+export const VERIFICATION_OVERLAY_SELECTOR = '[data-voidr-verification-overlay]';
 
 // Default configuration for the collector
 export const DEFAULT_CONFIG = {
@@ -23,7 +24,7 @@ export const DEFAULT_CONFIG = {
   dataMasking: {
     text: false,
     inputs: false,
-    blockSelectors: ['[data-sensitivity="block"]'],
+    blockSelectors: ['[data-sensitivity="block"]', VERIFICATION_OVERLAY_SELECTOR],
   },
   // Coarse privacy level applied on top of dataMasking:
   // 'mask' | 'mask-user-input' | 'allow' | null (null = dataMasking only)
@@ -118,6 +119,10 @@ export const CAPTURABLE_CONTENT_TYPES = [
   'text/plain',
   'application/graphql',
   'application/graphql+json',
+  // Keep completed streamed responses available for bounded HAR replay.
+  'text/event-stream',
+  'application/x-ndjson',
+  'application/stream+json',
 ];
 
 // Request headers that carry a trace/correlation id (checked when captureTraceId

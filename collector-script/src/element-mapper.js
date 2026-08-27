@@ -18,6 +18,7 @@ import {
   isRecorderUi,
   nameFromHref,
 } from './utils/interactive-element.js';
+import { VERIFICATION_OVERLAY_SELECTOR } from './constants.js';
 
 const MAX_LABEL_LENGTH = 120;
 const MAX_TEXT_LENGTH = 50;
@@ -877,6 +878,7 @@ export class ElementMapper {
   }
 
   _isVisible(element) {
+    if (element.closest?.(VERIFICATION_OVERLAY_SELECTOR)) return false;
     if (element.hidden) return false;
     if (element.getAttribute('aria-hidden') === 'true') return false;
     const style = element.style;

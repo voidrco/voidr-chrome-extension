@@ -1,5 +1,5 @@
 import { state } from '../state.js';
-import { isTasy, TASY_MASK_SELECTORS } from '../constants.js';
+import { isTasy, TASY_MASK_SELECTORS, VERIFICATION_OVERLAY_SELECTOR } from '../constants.js';
 import { generateSelector, getTextContent, throttle, truncate } from '../utils/helpers.js';
 import {
   getAccessibleLabel,
@@ -7,19 +7,42 @@ import {
   isRecorderUi,
   resolveInteractiveTarget,
 } from '../utils/interactive-element.js';
+import { recordLiveContext } from '../live-context.js';
 
 const TASY_MASK_SELECTOR = TASY_MASK_SELECTORS.join(', ');
 
 let installed = false;
 let listeners = [];
 
-function shouldIgnore(element) {
-  if (!element?.closest) return false;
-  const selectors = [
+function blockSelector() {
+  return [
     '[data-sensitivity="block"]',
+    VERIFICATION_OVERLAY_SELECTOR,
     ...(state.config.dataMasking.blockSelectors || []),
   ].join(',');
-  return Boolean(element.closest(selectors));
+}
+
+function shouldIgnore(element) {
+  if (!element?.closest) return false;
+  try {
+    return Boolean(element.closest(blockSelector()));
+  } catch {
+    return false;
+  }
+}
+
+function containsBlockedContent(element) {
+  if (!element?.querySelector) return false;
+  try {
+    return Boolean(element.querySelector(blockSelector()));
+  } catch {
+    return false;
+  }
+}
+
+function eventOrigin(event) {
+  const origin = event?.composedPath?.()[0] ?? event?.target;
+  return origin?.nodeType === 1 ? origin : (origin?.parentElement ?? event?.target);
 }
 
 function isTasyMasked(element) {
@@ -34,9 +57,59 @@ function isTasyMasked(element) {
 const isMaskedInput = (element) =>
   isTasyMasked(element) ||
   state.config.dataMasking.inputs === true ||
+  state.config.privacyLevel === 'mask' ||
+  state.config.privacyLevel === 'mask-user-input' ||
+  containsBlockedContent(element) ||
   element?.type === 'password' ||
   element?.autocomplete === 'current-password' ||
   element?.autocomplete === 'new-password';
+
+const FORM_CONTROL_TAGS = new Set(['INPUT', 'TEXTAREA', 'SELECT']);
+const REPLAYABLE_KEYS = new Set(['Enter', 'Tab', 'Escape']);
+
+export function resolveEditableTarget(element) {
+  if (!element || typeof element !== 'object') return element;
+  if (FORM_CONTROL_TAGS.has(element.tagName)) return element;
+  try {
+    return (
+      element.closest?.(
+        '[contenteditable="true"], [contenteditable=""], [contenteditable="plaintext-only"]',
+      ) || element
+    );
+  } catch {
+    return element;
+  }
+}
+
+export function readEditableValue(element) {
+  if (FORM_CONTROL_TAGS.has(element?.tagName)) {
+    return typeof element.value === 'string' ? element.value : '';
+  }
+  if (element?.isContentEditable) {
+    return element.innerText ?? element.textContent ?? '';
+  }
+  if (element?.value !== undefined) return element.value;
+  return '';
+}
+
+export function replayKeyFromEvent(event) {
+  if (
+    !event ||
+    event.repeat ||
+    event.isComposing ||
+    event.keyCode === 229 ||
+    !REPLAYABLE_KEYS.has(event.key)
+  ) {
+    return null;
+  }
+  const modifiers = [];
+  if (event.ctrlKey) modifiers.push('Control');
+  if (event.altKey) modifiers.push('Alt');
+  if (event.metaKey) modifiers.push('Meta');
+  if (event.shiftKey) modifiers.push('Shift');
+  modifiers.push(event.key);
+  return modifiers.join('+');
+}
 
 function addListener(target, type, handler, options) {
   target.addEventListener(type, handler, options);
@@ -44,8 +117,8 @@ function addListener(target, type, handler, options) {
 }
 
 function pushInputEvent(event, plugin) {
-  if (state.isPaused || shouldIgnore(event.target)) return;
-  const target = event.target;
+  const target = resolveEditableTarget(eventOrigin(event));
+  if (state.isPaused || shouldIgnore(target)) return;
   state.events.push({
     type: 5,
     timestamp: Date.now(),
@@ -54,12 +127,35 @@ function pushInputEvent(event, plugin) {
       payload: {
         selector: generateSelector(target),
         tag: target.tagName,
-        value: isMaskedInput(target) ? '***' : truncate(target.value, 100),
+        value: isMaskedInput(target) ? '***' : truncate(readEditableValue(target), 100),
         type: target.type,
       },
     },
   });
   state.elementMapper?.onInteraction(target, plugin === 'user.input' ? 'input' : 'change');
+}
+
+function pushPressEvent(event) {
+  const key = replayKeyFromEvent(event);
+  if (state.isPaused || !key) return;
+  const target = resolveEditableTarget(eventOrigin(event));
+  if (!target || shouldIgnore(target)) return;
+  const tag = target.tagName;
+  const editable = tag === 'INPUT' || tag === 'TEXTAREA' || target.isContentEditable === true;
+  if (!editable) return;
+
+  state.events.push({
+    type: 5,
+    timestamp: Date.now(),
+    data: {
+      plugin: 'user.press',
+      payload: {
+        selector: generateSelector(target),
+        tag,
+        key,
+      },
+    },
+  });
 }
 
 function pushClickEvent(event) {
@@ -81,21 +177,27 @@ function pushClickEvent(event) {
   const href = typeof target.getAttribute === 'function' ? target.getAttribute('href') : null;
   const role = typeof target.getAttribute === 'function' ? target.getAttribute('role') : null;
 
+  const timestamp = Date.now();
+  const payload = {
+    selector: generateSelector(target),
+    tag: target.tagName,
+    text: isTasyMasked(target) ? '***' : truncate(label, 100),
+    ...(href ? { href } : {}),
+    ...(role ? { role } : {}),
+    clickId: event.__voidrClickId || null,
+    position: { x: event.clientX, y: event.clientY },
+  };
   state.events.push({
     type: 5,
-    timestamp: Date.now(),
+    timestamp,
     data: {
       plugin: 'user.click',
-      payload: {
-        selector: generateSelector(target),
-        tag: target.tagName,
-        text: isTasyMasked(target) ? '***' : truncate(label, 100),
-        ...(href ? { href } : {}),
-        ...(role ? { role } : {}),
-        clickId: event.__voidrClickId || null,
-        position: { x: event.clientX, y: event.clientY },
-      },
+      payload,
     },
+  });
+  recordLiveContext('clicks', payload, {
+    id: payload.clickId || undefined,
+    timestamp,
   });
   state.elementMapper?.onInteraction(target, 'click');
 }
@@ -105,6 +207,7 @@ export function initEventListeners() {
   installed = true;
   addListener(document, 'input', (event) => pushInputEvent(event, 'user.input'));
   addListener(document, 'change', (event) => pushInputEvent(event, 'user.change'));
+  addListener(document, 'keydown', pushPressEvent, { capture: true });
   addListener(document, 'click', pushClickEvent, { capture: true });
   addListener(
     window,

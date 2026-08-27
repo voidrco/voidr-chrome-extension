@@ -3,10 +3,7 @@ import serveStatic from 'serve-static';
 import { resolve } from 'node:path';
 
 export default defineConfig({
-  // esbuild default (charset utf8) deixa passar caracteres nao-ASCII crus. O
-  // bundle carregava dois U+FFFE literais (noncharacters, vindos do check de BOM
-  // do PostCSS) e o Chrome recusa carregar o arquivo via
-  // chrome.scripting.executeScript({files}) com "It isn't UTF-8 encoded".
+  // Chrome rejects raw noncharacters that esbuild's UTF-8 output may preserve.
   esbuild: { charset: 'ascii' },
   define: {
     __VOIDR_COLLECTOR_URL__: JSON.stringify(

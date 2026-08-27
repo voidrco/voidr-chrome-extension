@@ -1,5 +1,6 @@
 import { state } from '../state.js';
 import { generateSelector } from '../utils/helpers.js';
+import { updateLiveContext } from '../live-context.js';
 
 // Interaction settlement: for every click, observe the page for a short window
 // and report which effect signals followed (DOM mutation, scroll, navigation,
@@ -94,6 +95,7 @@ function settle(click) {
       payload,
     },
   });
+  updateLiveContext('clicks', click.clickId, { effects: payload });
 }
 
 function onClick(e) {

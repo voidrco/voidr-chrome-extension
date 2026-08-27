@@ -1062,9 +1062,9 @@ async function attachLoopTestSession(sessionId, loopTest, lifecycleGeneration) {
 
 async function linkOnboardingSessions(recording, sessionIds) {
   const code = recording?.code || recording?.initOptions?.meta?.code || null;
-  if (!code || !globalAuthState.token) return { code, confirmed: false };
+  if (!code || !globalAuthState.token) return { code, confirmedSessionIds: [] };
 
-  let confirmed = false;
+  const confirmedSessionIds = new Set();
   for (const sessionId of sessionIds) {
     try {
       const res = await fetch(
@@ -1080,11 +1080,16 @@ async function linkOnboardingSessions(recording, sessionIds) {
       );
       const json = await res.json().catch(() => null);
       if (res.ok && json?.success && Array.isArray(json?.data?.sessions)) {
-        confirmed = json.data.sessions.includes(sessionId) || confirmed;
+        const linked = json.data.sessions.some((session) =>
+          typeof session === 'string'
+            ? session === sessionId
+            : session?.collectorSessionId === sessionId,
+        );
+        if (linked) confirmedSessionIds.add(sessionId);
       }
     } catch (_) {}
   }
-  return { code, confirmed };
+  return { code, confirmedSessionIds: [...confirmedSessionIds] };
 }
 
 async function sendResumeRecordingUi(tabId, recording, { showCountdown = false } = {}) {
@@ -1098,6 +1103,7 @@ async function sendResumeRecordingUi(tabId, recording, { showCountdown = false }
     testCaseName: recording.testCaseName,
     mode: recording.mode,
     onboardingRunId: recording.onboardingRunId,
+    code: recording.code,
     evidence: recording.evidence || null,
     loopTest: recording.loopTest || null,
     verification: recording.initOptions?.meta?.verification || null,
@@ -3713,7 +3719,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 voidrLastCapture: {
                   sessionId: latestSid,
                   capturedAt: Date.now(),
-                  confirmed: onboardingLink.confirmed,
+                  confirmed: onboardingLink.confirmedSessionIds.includes(latestSid),
                   code: onboardingLink.code || undefined,
                 },
               });
@@ -3736,6 +3742,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             const capturedPayload = {
               action: 'voidr:sessionCaptured',
               sessionId: sid,
+              code: onboardingLink.code || undefined,
+              confirmed: onboardingLink.confirmedSessionIds.includes(sid),
               onboardingRunId: activeRunId,
               evidence: evidenceMeta || undefined,
               loopTest: loopTestMeta || undefined,
@@ -3771,6 +3779,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                       {
                         type: 'voidr:sessionCaptured',
                         sessionId: sid,
+                        code: onboardingLink.code || undefined,
+                        confirmed: onboardingLink.confirmedSessionIds.includes(sid),
                         onboardingRunId: activeRunId,
                         evidence: evidenceMeta || undefined,
                         loopTest: loopTestMeta || undefined,
@@ -3789,6 +3799,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             success: stopOutcome.success,
             sessionId: primarySessionId,
             sessionIds: finalizedSessionIds,
+            confirmedSessionIds: onboardingLink.confirmedSessionIds,
             loopTest: priorRecording?.loopTest
               ? {
                   scenarioId: priorRecording.loopTest.scenarioId,

@@ -51,9 +51,15 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     } else if (request?.action === 'voidr:sessionCaptured' && request.sessionId) {
       if (currentView === 'code-recording' && recordingCodeContext) {
+        const eventCode = request.code?.trim().toUpperCase();
+        const currentCode = recordingCodeContext.code?.trim().toUpperCase();
         if (
-          !request.onboardingRunId ||
-          request.onboardingRunId === recordingCodeContext.onboardingRunId
+          eventCode &&
+          currentCode &&
+          eventCode === currentCode &&
+          request.confirmed === true &&
+          (!request.onboardingRunId ||
+            request.onboardingRunId === recordingCodeContext.onboardingRunId)
         ) {
           showNotification(
             'Gravação selada. A indexação continuará em segundo plano.',
@@ -1753,6 +1759,7 @@ async function handleStartCodeRecording() {
         mode: 'onboarding',
         slug: recordingCodeContext.applicationId || recordingCodeContext.appId,
         applicationId: recordingCodeContext.applicationId || recordingCodeContext.appId,
+        environmentSlug: recordingCodeContext.environmentSlug,
         apiKey: recordingCodeContext.apiKey,
         onboardingRunId: recordingCodeContext.onboardingRunId,
         code: recordingCodeContext.code,

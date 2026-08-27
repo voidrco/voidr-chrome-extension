@@ -11,7 +11,9 @@ import {
   syncScreenMap,
   syncScreenMapBeacon,
   finalizeSessionBeacon,
+  finalizeSessionExplicit,
   scheduleTokenRefresh,
+  logNetworkEvent,
 } from './transport.js';
 import { initCaptureInfrastructure, startRecording, startRrwebOnly } from './recording.js';
 import { sendEnvironmentBundle } from './environment-bundle.js';
@@ -26,6 +28,8 @@ import { stopEventListeners } from './listeners/events.js';
 import { captureRouteOnResume, stopRoutingCapture } from './listeners/routing.js';
 import { captureManualError, stopTracking } from './listeners/tracking.js';
 import { armBufferMode, disarmBufferMode } from './buffer-mode.js';
+import { recordLiveContext, snapshotLiveContext } from './live-context.js';
+import { sanitizeExternalNetworkEvent } from './network/external-capture.js';
 
 const isLifecycleActive = (lifecycleId) =>
   state.lifecycleId === lifecycleId && state.isInitialized && !state.forceStop;
@@ -623,65 +627,128 @@ export function createCollector() {
       state.config = { ...state.config, ...updates };
     },
 
+    // Keep extension Stop single-flight through endSession's lifecycle latch.
+    stopAndFlush() {
+      return api.endSession();
+    },
+
+    // Preserve callers that adopted the draft name before stopAndFlush.
+    stopAndFinalize() {
+      return api.endSession();
+    },
+
     /**
      * End the current session.
      * Stops recording, clears intervals, removes sessionStorage data,
      * and restores intercepted originals.
      */
     endSession() {
-      // Clear main interval
-      if (state.eventsInterval) {
-        clearInterval(state.eventsInterval);
-        state.eventsInterval = null;
+      const lifecycleId = state.lifecycleId;
+      if (state.stopInFlight?.lifecycleId === lifecycleId) {
+        return state.stopInFlight.promise;
       }
+      const task = { lifecycleId, promise: null };
+      state.stopInFlight = task;
+      task.promise = (async () => {
+        const sessionId = state.sessionId;
+        if (state.eventsInterval) {
+          clearInterval(state.eventsInterval);
+          state.eventsInterval = null;
+        }
 
-      // Clear screen map sync interval
-      if (state.screenMapInterval) {
-        clearInterval(state.screenMapInterval);
-        state.screenMapInterval = null;
-      }
+        if (state.screenMapInterval) {
+          clearInterval(state.screenMapInterval);
+          state.screenMapInterval = null;
+        }
 
-      unregisterLifecycleHandlers();
+        unregisterLifecycleHandlers();
 
-      // Stop idle detection
-      stopIdleWatch();
+        stopIdleWatch();
 
-      stopCaptureInfrastructure();
-      disarmBufferMode();
-      if (state.sessionCapTimer) {
-        clearTimeout(state.sessionCapTimer);
-        state.sessionCapTimer = null;
-      }
+        stopCaptureInfrastructure();
+        disarmBufferMode();
+        if (state.sessionCapTimer) {
+          clearTimeout(state.sessionCapTimer);
+          state.sessionCapTimer = null;
+        }
 
-      // Flush any trailing buffered events, then signal session completion so the
-      // collector indexes the recording into ClickHouse promptly. Both run while
-      // sessionId/state are still set (resetState() clears them below).
-      try {
-        handleUnload();
-      } catch (e) {
-        // Best-effort flush
-      }
-      finalizeSessionBeacon();
+        // Do not manufacture a session when initialization produced no evidence.
+        if (state.initializationInFlight && !state.captureReady) {
+          try {
+            sessionStorage.removeItem('voidr_jwt');
+            sessionStorage.removeItem('voidr_session_id');
+            sessionStorage.removeItem('voidr_user_id');
+            sessionStorage.removeItem('voidr_last_activity');
+          } catch {
+          }
+          resetState();
+          return {
+            sessionId,
+            drained: true,
+            ok: false,
+            flushed: true,
+            confirmed: false,
+            sealed: false,
+            sealedThrough: null,
+            cancelled: true,
+            code: 'INITIALIZATION_CANCELLED',
+          };
+        }
 
-      // Refresh the environment bundle with the FINAL page state (storage/cookies
-      // may have changed during the session). Fire-and-forget BEFORE resetState;
-      // sendEnvironmentBundle snapshots the config/token synchronously.
-      sendEnvironmentBundle();
+        // A lifecycle-scoped marker gives short captures a durable watermark without duplicating retries.
+        if (state.stopBarrierLifecycleId !== lifecycleId) {
+          state.events.push({
+            type: 5,
+            timestamp: Date.now(),
+            data: {
+              plugin: 'voidr.session.stop',
+              payload: { mode: 'explicit-stop' },
+            },
+          });
+          state.stopBarrierLifecycleId = lifecycleId;
+        }
+        const drained = await flushEvents();
+        const seal = drained
+          ? await finalizeSessionExplicit({ lifecycleId, sessionId })
+          : { sealed: false, code: 'DRAIN_INCOMPLETE' };
 
-      // Clear sessionStorage
-      try {
-        sessionStorage.removeItem('voidr_jwt');
-        sessionStorage.removeItem('voidr_session_id');
-        sessionStorage.removeItem('voidr_user_id');
-        sessionStorage.removeItem('voidr_last_activity');
-      } catch (e) {
-        // Ignore sessionStorage errors
-      }
+        const sealedThrough = seal.sealedThrough ?? seal.finalChunkSeq ?? null;
+        const sealed = seal.sealed === true && Number.isInteger(sealedThrough) && sealedThrough > 0;
+        const result = {
+          sessionId,
+          drained,
+          confirmed: sealed,
+          legacy: false,
+          finalChunkSeq: sealedThrough,
+          ...seal,
+          ok: drained && sealed,
+          flushed: drained,
+          sealed,
+          sealedThrough,
+        };
 
-      // Reset all state variables
-      resetState();
+        // Preserve failed seals so Stop can retry the same evidence.
+        if (!result.ok) return result;
 
-      console.log('VoidrCollector: Session ended');
+        // Snapshot the final environment state before resetState clears its credentials.
+        sendEnvironmentBundle();
+
+        try {
+          sessionStorage.removeItem('voidr_jwt');
+          sessionStorage.removeItem('voidr_session_id');
+          sessionStorage.removeItem('voidr_user_id');
+          sessionStorage.removeItem('voidr_last_activity');
+        } catch (e) {
+        }
+
+        resetState();
+
+        console.log('VoidrCollector: Session ended');
+        return result;
+      })().finally(() => {
+        if (state.stopInFlight === task) state.stopInFlight = null;
+      });
+      return task.promise;
     },
 
     /**
@@ -800,6 +867,17 @@ export function createCollector() {
           payload: { name: String(name).slice(0, 200), properties: props },
         },
       });
+      if (name === 'voidr.note') {
+        recordLiveContext('notes', properties);
+      } else if (name === 'voidr.voice') {
+        recordLiveContext('voiceNotes', properties);
+      }
+    },
+
+    // Expose only bounded, sanitized live context; durable sessions remain authoritative.
+    getLiveContext(options = {}) {
+      if (!state.isInitialized || state.forceStop) return null;
+      return snapshotLiveContext(options);
     },
 
     /**
@@ -810,6 +888,23 @@ export function createCollector() {
     captureException(error, context = {}) {
       if (!state.isInitialized) return;
       captureManualError(error, context);
+    },
+
+    // Trusted hosts may add network facts only after privacy sanitization.
+    captureNetwork(input) {
+      if (
+        !state.isInitialized ||
+        state.forceStop ||
+        state.isPaused ||
+        state.config.networkCapture === false
+      )
+        return false;
+      const event = sanitizeExternalNetworkEvent(input);
+      if (!event) return false;
+      logNetworkEvent(event);
+      // Flush failures immediately so Stop cannot race the periodic batch.
+      if (event.status >= 400 || event.type.endsWith('Error')) sendNetworkEvents();
+      return true;
     },
 
     /**
