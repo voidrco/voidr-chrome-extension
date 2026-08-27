@@ -1,14 +1,5 @@
 import { DEFAULT_CONFIG } from './constants.js';
 
-function createLiveContextState() {
-  const categories = ['pages', 'clicks', 'requests', 'errors', 'notes', 'voiceNotes'];
-  return {
-    sequence: 0,
-    counts: Object.fromEntries(categories.map((category) => [category, 0])),
-    categories: Object.fromEntries(categories.map((category) => [category, []])),
-  };
-}
-
 export const state = {
   config: { ...DEFAULT_CONFIG },
   events: [],
@@ -59,13 +50,8 @@ export const state = {
   bufferUpgradeInFlight: false,
   bufferUpgradeToken: null,
   sessionRotationInFlight: false,
-  lastAcknowledgedChunkSeq: 0,
-  stopBarrierLifecycleId: null,
-  permanentTransportError: null,
-  stopInFlight: null,
   onSessionExpired: null,
   featureFlags: {},
-  liveContext: createLiveContextState(),
 };
 
 /**
@@ -131,11 +117,6 @@ export function resetState() {
   state.bufferUpgradeInFlight = false;
   state.bufferUpgradeToken = null;
   state.sessionRotationInFlight = false;
-  state.lastAcknowledgedChunkSeq = 0;
-  state.stopBarrierLifecycleId = null;
-  state.permanentTransportError = null;
-  state.stopInFlight = null;
   // Keep onSessionExpired — wired once by createCollector for the instance lifetime.
   state.featureFlags = {};
-  state.liveContext = createLiveContextState();
 }

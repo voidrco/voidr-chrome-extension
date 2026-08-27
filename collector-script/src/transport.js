@@ -4,7 +4,6 @@ import { safeStringify } from './utils/helpers.js';
 import { compressEventsBase64 } from './utils/image-compression.js';
 import { TOKEN_REFRESH_MARGIN_MS, decodeJwtExp } from './utils/jwt.js';
 import { notifyBufferTrigger } from './buffer-mode.js';
-import { recordLiveContext } from './live-context.js';
 import {
   DEFAULT_CHUNK_TARGET_BYTES,
   isNetworkBatchEvent,
@@ -223,8 +222,6 @@ export function logNetworkEvent(data) {
     }
   }
 
-  recordLiveContext('requests', data, { id: data.requestId, timestamp: data.timestamp });
-
   const bodyBytes = ['requestBody', 'responseBody', 'response'].reduce(
     (total, field) => total + (typeof data[field] === 'string' ? data[field].length * 2 : 0),
     2048,
@@ -343,17 +340,7 @@ async function transmitChunk(item, context, { allowPaused, authToken }) {
   if (await handleSessionExpiredResponse(response, context.lifecycleId, context.sessionId)) {
     return { outcome: 'expired', authToken: token };
   }
-  if (response.ok) {
-    const acknowledgedSequence = Number(response.headers?.get?.('x-voidr-chunk-seq'));
-    return {
-      outcome: 'sent',
-      authToken: token,
-      acknowledgedSequence:
-        Number.isInteger(acknowledgedSequence) && acknowledgedSequence >= 1
-          ? acknowledgedSequence
-          : null,
-    };
-  }
+  if (response.ok) return { outcome: 'sent', authToken: token };
   if (response.status === 413) return { outcome: 'oversized', response, authToken: token };
   if (isNonRetryableStatus(response.status)) {
     return { outcome: 'dropped', response, authToken: token };
@@ -441,12 +428,6 @@ async function deliverBatch(batch, context, { allowPaused = false } = {}) {
       const result = await transmitChunk(queue[0], context, { allowPaused, authToken });
       authToken = result.authToken || authToken;
       if (result.outcome === 'sent') {
-        if (result.acknowledgedSequence != null) {
-          state.lastAcknowledgedChunkSeq = Math.max(
-            state.lastAcknowledgedChunkSeq,
-            result.acknowledgedSequence,
-          );
-        }
         queue.shift();
         continue;
       }
@@ -499,9 +480,6 @@ function completeBatch({ batch, context, result, logErrors }) {
     state.events.unshift(...(result.requeue || batch));
   }
   if (result.outcome === 'dropped') {
-    state.permanentTransportError = `Collector rejected a session chunk with HTTP ${
-      result.response?.status ?? 'unknown'
-    }`;
     console.debug('VoidrCollector: chunk rejected by collector, dropping batch', {
       status: result.response?.status,
       events: result.droppedEvents ?? batch.length,
@@ -543,7 +521,7 @@ export async function flushEvents({ allowRotation = false } = {}) {
   const isCurrentSession = () =>
     state.lifecycleId === lifecycleId && state.sessionId === sessionId && !state.forceStop;
   const rotationBlocks = () => state.sessionRotationInFlight && !allowRotation;
-  if (state.forceStop || rotationBlocks() || state.permanentTransportError) return false;
+  if (state.forceStop || rotationBlocks()) return false;
 
   while (state.isSending && isCurrentSession()) {
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -564,14 +542,9 @@ export async function flushEvents({ allowRotation = false } = {}) {
       state.isSending = false;
       state.sendingToken = null;
     }
-    if (result.outcome !== 'sent') break;
+    if (result.outcome !== 'sent' && result.outcome !== 'dropped') break;
   }
-  return (
-    state.events.length === 0 &&
-    !state.isSending &&
-    !state.permanentTransportError &&
-    isCurrentSession()
-  );
+  return state.events.length === 0 && !state.isSending && isCurrentSession();
 }
 
 /**
@@ -737,7 +710,6 @@ export function finalizeSessionBeacon() {
     apiKey: state.config.apiKey,
     sessionId,
     endedAt: Date.now(),
-    finalizationMode: 'unload-beacon',
   });
 
   try {
@@ -746,61 +718,6 @@ export function finalizeSessionBeacon() {
   } catch {
     // Best-effort — nothing more we can do during unload.
   }
-}
-
-// Seal only through the highest contiguous server-acknowledged chunk.
-export async function finalizeSessionExplicit({
-  lifecycleId = state.lifecycleId,
-  sessionId = state.sessionId,
-  maxAttempts = 3,
-} = {}) {
-  if (!sessionId || state.lifecycleId !== lifecycleId) {
-    return { sealed: false, code: 'STALE_SESSION' };
-  }
-  const finalizedThrough = state.lastAcknowledgedChunkSeq;
-  if (!Number.isInteger(finalizedThrough) || finalizedThrough < 1) {
-    return { sealed: false, code: 'FINAL_WATERMARK_UNAVAILABLE' };
-  }
-  const collectorUrl = state.config.collectorUrl;
-  let authToken = state.authToken;
-  let lastError = null;
-  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    try {
-      const response = await fetch(
-        `${collectorUrl}/sessions/${encodeURIComponent(sessionId)}/finalize`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
-          },
-          body: safeStringify({
-            sessionId,
-            endedAt: Date.now(),
-            finalizationMode: 'explicit-stop',
-            finalizedThrough,
-            finalChunkSeq: finalizedThrough,
-          }),
-        },
-      );
-      if (response.status === 401 && attempt === 0) {
-        authToken = await refreshAuthToken(lifecycleId, sessionId);
-        continue;
-      }
-      const data = await response.json().catch(() => ({}));
-      if (response.ok && data.sealed === true) return data;
-      if (response.status >= 400 && response.status < 500 && response.status !== 409) {
-        return { sealed: false, status: response.status, ...data };
-      }
-      lastError = { status: response.status, ...data };
-    } catch (error) {
-      lastError = { error: error instanceof Error ? error.message : String(error) };
-    }
-    if (attempt < maxAttempts - 1) {
-      await new Promise((resolve) => setTimeout(resolve, 250 * 2 ** attempt));
-    }
-  }
-  return { sealed: false, code: 'FINALIZE_RETRY_EXHAUSTED', ...(lastError || {}) };
 }
 
 /**

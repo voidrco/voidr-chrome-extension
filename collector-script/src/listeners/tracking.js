@@ -2,7 +2,6 @@ import { record } from 'rrweb';
 import { state } from '../state.js';
 import { truncate } from '../utils/helpers.js';
 import { notifyBufferTrigger } from '../buffer-mode.js';
-import { recordLiveContext } from '../live-context.js';
 
 const MAX_ERRORS_PER_SESSION = 500;
 const REPEAT_REPORT_EVERY = 10;
@@ -35,7 +34,6 @@ function pushError(plugin, payload, dedupKey) {
   const entry = seenErrors.get(hash);
   if (entry) {
     entry.count += 1;
-    recordLiveContext('errors', { plugin, ...payload, hash, occurrence: entry.count });
     if (entry.count % REPEAT_REPORT_EVERY === 0) {
       state.events.push({
         type: 5,
@@ -51,7 +49,6 @@ function pushError(plugin, payload, dedupKey) {
 
   seenErrors.set(hash, { count: 1 });
   errorCount += 1;
-  recordLiveContext('errors', { plugin, ...payload, hash, occurrence: 1 });
   state.events.push({
     type: 5,
     timestamp: Date.now(),

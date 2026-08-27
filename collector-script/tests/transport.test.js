@@ -127,7 +127,6 @@ describe('chunk send retry semantics', () => {
     assert.equal(requestCount, 1);
     assert.equal(state.events.length, 0);
     assert.equal(state.isSending, false);
-    assert.match(state.permanentTransportError, /HTTP 422/);
   });
 
   it('requeues the batch on 5xx', async () => {
@@ -162,7 +161,7 @@ describe('chunk send retry semantics', () => {
     assert.equal(state.isSending, false);
   });
 
-  it('flushEvents refuses to seal after a permanently rejected batch', async () => {
+  it('flushEvents skips a 4xx-rejected batch and keeps flushing the rest', async () => {
     const statuses = [422, 200];
     let requestCount = 0;
     globalThis.fetch = async () => {
@@ -172,12 +171,10 @@ describe('chunk send retry semantics', () => {
     };
 
     fillEvents(150);
-    const drained = await flushEvents();
+    await flushEvents();
 
-    assert.equal(requestCount, 1);
-    assert.equal(drained, false);
-    assert.equal(state.events.length, 50);
-    assert.match(state.permanentTransportError, /HTTP 422/);
+    assert.equal(requestCount, 2);
+    assert.equal(state.events.length, 0);
     assert.equal(state.isSending, false);
   });
 

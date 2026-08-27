@@ -1,7 +1,6 @@
 import { record } from 'rrweb';
 import { state } from '../state.js';
 import { scheduleScreenMapSync } from '../transport.js';
-import { recordLiveContext } from '../live-context.js';
 
 let installed = false;
 let listeners = [];
@@ -38,13 +37,11 @@ function routeKey(url) {
 function capturePageView({ url, from = null, trigger }) {
   lastCapturedUrl = url;
   const title = document.title || '';
-  const timestamp = Date.now();
   state.events.push({
     type: 5,
-    timestamp,
+    timestamp: Date.now(),
     data: { plugin: 'page.view', payload: { url, title, from, trigger } },
   });
-  recordLiveContext('pages', { url, title, from, trigger }, { timestamp });
 }
 
 export function captureRouteOnResume() {
