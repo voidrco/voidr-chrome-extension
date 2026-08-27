@@ -1753,6 +1753,7 @@ async function handleStartCodeRecording() {
         mode: 'onboarding',
         slug: recordingCodeContext.applicationId || recordingCodeContext.appId,
         applicationId: recordingCodeContext.applicationId || recordingCodeContext.appId,
+        environmentSlug: recordingCodeContext.environmentSlug,
         apiKey: recordingCodeContext.apiKey,
         onboardingRunId: recordingCodeContext.onboardingRunId,
         code: recordingCodeContext.code,
