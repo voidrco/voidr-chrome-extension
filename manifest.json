@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Voidr Testing Assistant",
+  "name": "Voidr Capture",
   "version": "1.0.3",
   "description": "Record Loop baselines, test sessions, and linked Voidr captures",
   "permissions": [
@@ -20,7 +20,7 @@
     "https://*/*"
   ],
   "action": {
-    "default_title": "Voidr Testing Assistant",
+    "default_title": "Voidr Capture",
     "default_icon": {
       "16": "icons/icon16.png",
       "32": "icons/icon32.png",

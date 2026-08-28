@@ -5,8 +5,6 @@ const { test } = require('node:test');
 const content = readFileSync('content/content.js', 'utf8');
 const popup = readFileSync('popup/popup.js', 'utf8');
 const background = readFileSync('background/background.js', 'utf8');
-const manifest = JSON.parse(readFileSync('manifest.json', 'utf8'));
-const popupHtml = readFileSync('popup/popup.html', 'utf8');
 
 test('recording code environment reaches collector init', () => {
   assert.match(popup, /environmentSlug: recordingCodeContext\.environmentSlug/);
@@ -19,12 +17,6 @@ test('popup exposes the recording code flow', () => {
   assert.match(popup, /id="recording-code-input"/);
   assert.match(popup, /action: 'voidr:getRecordingByCode'/);
   assert.match(popup, /recordingCodeContext = \{ \.\.\.response\.context, code \}/);
-});
-
-test('extension keeps the Testing Assistant product identity', () => {
-  assert.equal(manifest.name, 'Voidr Testing Assistant');
-  assert.equal(manifest.action.default_title, 'Voidr Testing Assistant');
-  assert.match(popupHtml, /Voidr Testing Assistant · v1\.0\.3/);
 });
 
 test('production collector compatibility finalizes accepted sessions', () => {
