@@ -74,7 +74,7 @@ test('a tab closed during Stop is a failed flush and never an ACK', async () => 
   assert.match(result.finalizationFailures[0].error, /failed to flush/);
 });
 
-test('legacy tabs stay unconfirmed when finalize lacks a server-authoritative watermark', async () => {
+test('legacy tabs accept a successful compatibility finalization', async () => {
   const result = await finalizeTrackedTabs({
     tabIds: [5, 6],
     stopTab: async (tabId) =>
@@ -94,12 +94,12 @@ test('legacy tabs stay unconfirmed when finalize lacks a server-authoritative wa
   });
 
   assert.equal(result.failures.length, 0);
-  assert.equal(result.finalizations.canonical.sealed, false);
-  assert.equal(result.finalizations.canonical.finalized, false);
-  assert.equal(result.finalizations.canonical.degraded, true);
+  assert.equal(result.finalizations.canonical.sealed, true);
+  assert.equal(result.finalizations.canonical.finalized, true);
+  assert.deepEqual(result.successfulSessionIds, ['canonical']);
 });
 
-test('legacy tabs stay unconfirmed even after stable server observations', async () => {
+test('legacy tabs retain a successful server finalization result', async () => {
   const result = await finalizeTrackedTabs({
     tabIds: [5],
     stopTab: async () => ({
@@ -120,10 +120,10 @@ test('legacy tabs stay unconfirmed even after stable server observations', async
     },
   });
 
-  assert.equal(result.finalization.sealed, false);
-  assert.equal(result.finalization.finalized, false);
+  assert.equal(result.finalization.sealed, true);
+  assert.equal(result.finalization.finalized, true);
   assert.equal(result.finalization.degraded, true);
-  assert.match(result.finalization.error, /no acknowledged final chunk watermark/);
+  assert.deepEqual(result.successfulSessionIds, ['canonical']);
 });
 
 test('groups rotated tabs by returned sessionId and never crosses ACK watermarks', async () => {

@@ -91,7 +91,7 @@ test('sanitized active state never exposes capability or collector secrets', () 
   assert.doesNotMatch(JSON.stringify(sanitized), /secret|session-id|trackedTabIds|apiKey|token/);
 });
 
-test('popup home exposes the two product-native capture intents while active controls stay available', () => {
+test('popup home exposes capture intents and the assistant recording code', () => {
   const popup = fs.readFileSync(path.join(root, 'popup/popup.js'), 'utf8');
   const content = fs.readFileSync(path.join(root, 'content/content.js'), 'utf8');
   const background = fs.readFileSync(path.join(root, 'background/background.js'), 'utf8');
@@ -104,10 +104,9 @@ test('popup home exposes the two product-native capture intents while active con
   assert.match(mainView, /Iniciar Loop/);
   assert.match(mainView, /showSelectProductView/);
   assert.match(mainView, /showLoopListView/);
-  assert.doesNotMatch(
-    mainView,
-    /Abra o link enviado pelo seu harness|Loop Test|Código de gravação/,
-  );
+  assert.match(mainView, /Código de gravação/);
+  assert.match(mainView, /voidr:getRecordingByCode/);
+  assert.doesNotMatch(mainView, /Abra o link enviado pelo seu harness|Loop Test/);
   assert.match(popup, /Gravando ciclo/);
   assert.match(popup, /Finalizar gravação/);
   assert.match(popup, /voidr:getRecordingState/);

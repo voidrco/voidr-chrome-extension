@@ -94,16 +94,7 @@
           compatibilityResults,
           results: sessionResults,
         });
-        finalizations[sessionId] =
-          compatibilityResults.length > 0
-            ? {
-                ...finalization,
-                sealed: false,
-                finalized: false,
-                degraded: true,
-                error: 'Legacy collector has no acknowledged final chunk watermark',
-              }
-            : finalization;
+        finalizations[sessionId] = finalization;
       } catch (error) {
         finalizations[sessionId] = {
           sessionId,
