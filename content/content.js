@@ -1950,6 +1950,8 @@ async function startVoidrSessionRecording(testCaseName, options = {}) {
               activeRunId,
               options.evidence,
               loopTestBroadcastPayload(options.loopTest),
+              options.code,
+              stopResult.confirmedSessionIds?.includes(sid),
             );
           }
         }
@@ -2128,7 +2130,14 @@ function showRecordingDoneBanner(mode) {
   }, 15000);
 }
 
-function broadcastSessionToOnboarding(sessionId, onboardingRunId, evidence, loopTest) {
+function broadcastSessionToOnboarding(
+  sessionId,
+  onboardingRunId,
+  evidence,
+  loopTest,
+  code,
+  confirmed,
+) {
   try {
     // Post straight from the content script: BroadcastChannel is origin-scoped
     // (the auto-connect listener below already relies on it), and injecting an
@@ -2140,6 +2149,8 @@ function broadcastSessionToOnboarding(sessionId, onboardingRunId, evidence, loop
     bc.postMessage({
       type: 'voidr:sessionCaptured',
       sessionId,
+      code: code || undefined,
+      confirmed: confirmed === true,
       onboardingRunId: onboardingRunId || undefined,
       // In evidence mode, carry the manual-run coordinates back to the platform
       // so it can auto-attach this session as evidence without re-deriving them.
@@ -2201,6 +2212,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         mode: request.mode,
         slug: request.applicationId,
         applicationId: request.applicationId,
+        code: request.code,
         onboardingRunId: request.onboardingRunId,
         flows: request.flows || [],
         evidence: request.evidence,
@@ -2240,12 +2252,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             request.onboardingRunId,
             request.evidence,
             request.loopTest,
+            request.code,
+            request.confirmed,
           );
         }
         // Loop-test stops render their own banner (with the next-session action)
         // in the recording tab — skip the generic one here.
         if (!request.loopTest) {
-          showRecordingDoneBanner(request.evidence ? 'evidence' : undefined);
+          showRecordingDoneBanner(
+            request.evidence ? 'evidence' : request.code ? 'onboarding' : undefined,
+          );
         }
       }
       break;

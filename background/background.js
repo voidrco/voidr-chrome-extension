@@ -964,8 +964,10 @@ async function quiesceCollectorInTab(tabId) {
           finalChunkSeq: null,
         };
       }
+      const sessionId = collector.getSessionId?.() || null;
       if (typeof collector.stopAndFlush === 'function') {
-        return await collector.stopAndFlush({ deadlineMs });
+        const result = await collector.stopAndFlush({ deadlineMs });
+        return { ...result, sessionId: result?.sessionId || sessionId };
       }
 
       // Compatibility with pre-barrier collectors. Their endSession() starts
@@ -975,8 +977,10 @@ async function quiesceCollectorInTab(tabId) {
       if (typeof collector.endSession !== 'function') {
         throw new Error('Collector stop API is unavailable');
       }
+      if (typeof collector.flush === 'function') await collector.flush();
       const legacyResult = await collector.endSession();
       return {
+        sessionId,
         ok: legacyResult?.sealed !== false,
         // Legacy collectors provide no awaited chunk ACK. Keep this explicitly
         // unconfirmed until finalize derives a durable server watermark.
@@ -1034,11 +1038,21 @@ async function finalizeSessionDirect(
       signal: controller.signal,
     });
     if (!res.ok) throw new Error(`Direct finalize failed (HTTP ${res.status})`);
-    const seal = await res.json();
+    if (res.status === 204 && reason) {
+      return {
+        sessionId,
+        sealed: true,
+        finalized: true,
+        degraded: true,
+        fallback: 'compatibility',
+      };
+    }
+    const seal = await res.json().catch(() => null);
     if (seal?.sealed !== true) throw new Error('Direct finalize returned no durable seal');
     return {
       ...seal,
       sessionId,
+      finalized: seal.finalized !== false,
       degraded: Boolean(reason),
       error: reason,
       fallback: reason ? 'compatibility' : undefined,
@@ -1062,9 +1076,9 @@ async function attachLoopTestSession(sessionId, loopTest, lifecycleGeneration) {
 
 async function linkOnboardingSessions(recording, sessionIds) {
   const code = recording?.code || recording?.initOptions?.meta?.code || null;
-  if (!code || !globalAuthState.token) return { code, confirmed: false };
+  if (!code || !globalAuthState.token) return { code, confirmedSessionIds: [] };
 
-  let confirmed = false;
+  const confirmedSessionIds = new Set();
   for (const sessionId of sessionIds) {
     try {
       const res = await fetch(
@@ -1080,11 +1094,16 @@ async function linkOnboardingSessions(recording, sessionIds) {
       );
       const json = await res.json().catch(() => null);
       if (res.ok && json?.success && Array.isArray(json?.data?.sessions)) {
-        confirmed = json.data.sessions.includes(sessionId) || confirmed;
+        const linked = json.data.sessions.some((session) =>
+          typeof session === 'string'
+            ? session === sessionId
+            : session?.collectorSessionId === sessionId,
+        );
+        if (linked) confirmedSessionIds.add(sessionId);
       }
     } catch (_) {}
   }
-  return { code, confirmed };
+  return { code, confirmedSessionIds: [...confirmedSessionIds] };
 }
 
 async function sendResumeRecordingUi(tabId, recording, { showCountdown = false } = {}) {
@@ -1098,6 +1117,7 @@ async function sendResumeRecordingUi(tabId, recording, { showCountdown = false }
     testCaseName: recording.testCaseName,
     mode: recording.mode,
     onboardingRunId: recording.onboardingRunId,
+    code: recording.code,
     evidence: recording.evidence || null,
     loopTest: recording.loopTest || null,
     verification: recording.initOptions?.meta?.verification || null,
@@ -2732,7 +2752,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         .then((r) => (r.ok ? r.json() : null))
         .then((json) => {
           if (json?.data) {
-            chrome.storage.session.set({ pendingRecordingCodeContext: json.data });
+            chrome.storage.session.set({
+              pendingRecordingCodeContext: { ...json.data, code: autoCode },
+            });
             chrome.action.setBadgeText({ text: 'REC' });
             chrome.action.setBadgeBackgroundColor({ color: '#ef4444' });
             try {
@@ -3713,7 +3735,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 voidrLastCapture: {
                   sessionId: latestSid,
                   capturedAt: Date.now(),
-                  confirmed: onboardingLink.confirmed,
+                  confirmed: onboardingLink.confirmedSessionIds.includes(latestSid),
                   code: onboardingLink.code || undefined,
                 },
               });
@@ -3736,6 +3758,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             const capturedPayload = {
               action: 'voidr:sessionCaptured',
               sessionId: sid,
+              code: onboardingLink.code || undefined,
+              confirmed: onboardingLink.confirmedSessionIds.includes(sid),
               onboardingRunId: activeRunId,
               evidence: evidenceMeta || undefined,
               loopTest: loopTestMeta || undefined,
@@ -3771,6 +3795,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                       {
                         type: 'voidr:sessionCaptured',
                         sessionId: sid,
+                        code: onboardingLink.code || undefined,
+                        confirmed: onboardingLink.confirmedSessionIds.includes(sid),
                         onboardingRunId: activeRunId,
                         evidence: evidenceMeta || undefined,
                         loopTest: loopTestMeta || undefined,
@@ -3789,6 +3815,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             success: stopOutcome.success,
             sessionId: primarySessionId,
             sessionIds: finalizedSessionIds,
+            confirmedSessionIds: onboardingLink.confirmedSessionIds,
             loopTest: priorRecording?.loopTest
               ? {
                   scenarioId: priorRecording.loopTest.scenarioId,

@@ -51,9 +51,15 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     } else if (request?.action === 'voidr:sessionCaptured' && request.sessionId) {
       if (currentView === 'code-recording' && recordingCodeContext) {
+        const eventCode = request.code?.trim().toUpperCase();
+        const currentCode = recordingCodeContext.code?.trim().toUpperCase();
         if (
-          !request.onboardingRunId ||
-          request.onboardingRunId === recordingCodeContext.onboardingRunId
+          eventCode &&
+          currentCode &&
+          eventCode === currentCode &&
+          request.confirmed === true &&
+          (!request.onboardingRunId ||
+            request.onboardingRunId === recordingCodeContext.onboardingRunId)
         ) {
           showNotification(
             'Gravação selada. A indexação continuará em segundo plano.',
@@ -265,6 +271,22 @@ function showMainView() {
         </button>
       </div>
 
+      <div class="separator">
+        <span class="separator-line"></span>
+        <span class="separator-text">ou use o código do assistente</span>
+        <span class="separator-line"></span>
+      </div>
+
+      <div class="code-card">
+        <div class="code-label">Código de gravação</div>
+        <div class="code-input-row">
+          <input type="text" id="recording-code-input" class="code-input" placeholder="Ex: VDR-A7X3K2" />
+          <button id="recording-code-btn" class="btn-primary btn-sm">Conectar</button>
+        </div>
+        <p class="code-hint">Cole o código exibido no assistente Voidr.</p>
+        <div id="recording-code-error" class="code-error"></div>
+      </div>
+
       <button id="open-loops-btn" class="btn-link">
         ${getIcon('ExternalLink', 14)}
         Ver Loops na Voidr
@@ -274,6 +296,37 @@ function showMainView() {
 
   document.getElementById('record-session-btn')?.addEventListener('click', showSelectProductView);
   document.getElementById('record-loop-btn')?.addEventListener('click', showLoopListView);
+
+  const codeInput = document.getElementById('recording-code-input');
+  const codeButton = document.getElementById('recording-code-btn');
+  const codeError = document.getElementById('recording-code-error');
+  const submitRecordingCode = () => {
+    const code = (codeInput?.value || '').trim().toUpperCase();
+    if (!code || codeButton?.disabled) return;
+    codeButton.disabled = true;
+    codeButton.textContent = '...';
+    if (codeError) codeError.style.display = 'none';
+
+    chrome.runtime.sendMessage({ action: 'voidr:getRecordingByCode', code }, (response) => {
+      if (chrome.runtime.lastError || !response?.context) {
+        codeButton.disabled = false;
+        codeButton.textContent = 'Conectar';
+        if (codeError) {
+          codeError.textContent =
+            response?.error || 'Código não encontrado. Verifique e tente novamente.';
+          codeError.style.display = 'block';
+        }
+        return;
+      }
+      recordingCodeContext = { ...response.context, code };
+      showCodeRecordingView(recordingCodeContext);
+    });
+  };
+
+  codeButton?.addEventListener('click', submitRecordingCode);
+  codeInput?.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') submitRecordingCode();
+  });
 
   document.getElementById('open-loops-btn')?.addEventListener('click', () => {
     chrome.tabs.create({ url: `${API_CONFIG.platformUrl}/loops`, active: true }, () => {
