@@ -15,7 +15,9 @@
     "extension:build:minified": "npm run extension:minify:js && npm run extension:minify:css && npm run extension:build",
     "collector:build": "cd collector-script && npm run build && cd .. && cp collector-script/dist/recorder.min.js vendor/recorder.min.js",
     "collector:setup": "cd collector-script && npm ci",
+    "ci:check-version": "node scripts/check-extension-version.mjs",
     "verify": "node scripts/verify-package.mjs",
+    "webstore:publish": "node scripts/publish-chrome-web-store.mjs",
     "e2e": "node tests/e2e-flow.mjs"
   },
   "devDependencies": {

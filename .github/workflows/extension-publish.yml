@@ -1,0 +1,59 @@
+name: Publish Chrome extension
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: chrome-web-store-production
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish Chrome Web Store package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run extension:build
+      - name: Check whether the package changed
+        id: release
+        env:
+          BASE_SHA: ${{ github.event.before }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            echo "package_changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ "$BASE_SHA" == "0000000000000000000000000000000000000000" || -z "$BASE_SHA" ]]; then
+            BASE_SHA="HEAD^"
+          fi
+          node scripts/check-extension-version.mjs "$BASE_SHA" HEAD
+      - name: Authenticate to Google Cloud
+        if: steps.release.outputs.package_changed == 'true'
+        id: auth
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_CHROME_WEBSTORE_SERVICE_ACCOUNT }}
+          token_format: access_token
+          access_token_scopes: https://www.googleapis.com/auth/chromewebstore
+      - name: Upload and publish
+        if: steps.release.outputs.package_changed == 'true'
+        env:
+          CHROME_WEBSTORE_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+          CHROME_WEBSTORE_PUBLISHER_ID: ${{ vars.CHROME_WEBSTORE_PUBLISHER_ID }}
+          CHROME_WEBSTORE_EXTENSION_ID: fdkbhgmcalkifcajaggkifcfoegaocpl
+        run: node scripts/publish-chrome-web-store.mjs
