@@ -44,6 +44,13 @@ const apiGet = (endpoint) => apiRequest(endpoint, 'GET');
 const apiPost = (endpoint, data) => apiRequest(endpoint, 'POST', data);
 
 document.addEventListener('DOMContentLoaded', async () => {
+  const version = chrome.runtime.getManifest().version;
+  const versionLabel = document.querySelector('.version');
+  if (versionLabel) versionLabel.textContent = `Voidr Capture · v${version}`;
+  const logoutIcon = document.querySelector('.header-logout-icon');
+  if (logoutIcon) logoutIcon.innerHTML = getIcon('LogOut', 15);
+  document.getElementById('auth-logout-btn')?.addEventListener('click', handleAuthLogout);
+
   chrome.runtime.onMessage.addListener((request) => {
     if (request?.action === 'voidr:sessionStarted') {
       if (['loop-test', 'verification'].includes(request.mode) || currentView === 'active-loop') {
@@ -176,10 +183,28 @@ function getAuthStatus() {
   });
 }
 
+function setCurrentView(view) {
+  currentView = view;
+  const logoutButton = document.getElementById('auth-logout-btn');
+  if (logoutButton) logoutButton.hidden = view !== 'main';
+}
+
+async function handleAuthLogout() {
+  const logoutButton = document.getElementById('auth-logout-btn');
+  if (logoutButton) logoutButton.disabled = true;
+  const response = await sendRuntimeMessage({ action: 'authLogout' });
+  if (logoutButton) logoutButton.disabled = false;
+  if (!response?.success) {
+    showNotification('Não foi possível sair. Tente novamente.', 'error', 4000);
+    return;
+  }
+  showAuthRequired();
+}
+
 function showAuthRequired() {
   const contentDiv = document.getElementById('main-extension-content');
   if (!contentDiv) return;
-  currentView = 'auth';
+  setCurrentView('auth');
 
   contentDiv.innerHTML = `
     <div class="auth-view">
@@ -240,7 +265,7 @@ function showMainView() {
   }
   const contentDiv = document.getElementById('main-extension-content');
   if (!contentDiv) return;
-  currentView = 'main';
+  setCurrentView('main');
 
   contentDiv.innerHTML = `
     <div class="main-view">
@@ -357,7 +382,7 @@ function sendRuntimeMessage(message) {
 function showLoopListView() {
   const contentDiv = document.getElementById('main-extension-content');
   if (!contentDiv) return;
-  currentView = 'loop-list';
+  setCurrentView('loop-list');
   contentDiv.innerHTML = `
     <div class="select-product-view">
       <div class="view-header">
@@ -473,7 +498,7 @@ async function loadLoopScenarios() {
 function showCreateLoopView() {
   const contentDiv = document.getElementById('main-extension-content');
   if (!contentDiv) return;
-  currentView = 'create-loop';
+  setCurrentView('create-loop');
   loopCreationState = { applications: [], environments: [] };
   contentDiv.innerHTML = `
     <div class="select-product-view loop-create-view">
@@ -791,7 +816,7 @@ function showActiveLoopView(active) {
   if (!contentDiv) return;
   if (activeLoopTimer) clearInterval(activeLoopTimer);
   activeLoopTimer = null;
-  currentView = 'active-loop';
+  setCurrentView('active-loop');
   const startedAt = active.startedAt || Date.now();
   const lifecycle = active.status || 'recording';
   const isStarting = lifecycle === 'starting';
@@ -963,7 +988,7 @@ async function openLoopCodeHandoff(loopTest) {
 function showLoopFinalizationView(finalization) {
   const contentDiv = document.getElementById('main-extension-content');
   if (!contentDiv || !globalThis.VoidrVerificationHandoffUx) return;
-  currentView = 'loop-finalization';
+  setCurrentView('loop-finalization');
   const state = finalization.state || 'stopping';
   const view = globalThis.VoidrVerificationHandoffUx.viewModel(state, finalization.harness, {
     cycleNumber: finalization.cycleNumber,
@@ -1084,7 +1109,7 @@ async function monitorLoopFinalization(finalization) {
 function showLoopStartupFailureView(failure) {
   const contentDiv = document.getElementById('main-extension-content');
   if (!contentDiv) return;
-  currentView = 'loop-startup-failure';
+  setCurrentView('loop-startup-failure');
   contentDiv.innerHTML = `
     <div class="summary-view">
       <div class="summary-icon-wrap summary-icon-wrap--error">${getIcon('AlertCircle', 36)}</div>
@@ -1106,7 +1131,7 @@ function showLoopStartupFailureView(failure) {
 function showSelectProductView() {
   const contentDiv = document.getElementById('main-extension-content');
   if (!contentDiv) return;
-  currentView = 'select-product';
+  setCurrentView('select-product');
 
   contentDiv.innerHTML = `
     <div class="select-product-view">
@@ -1204,7 +1229,7 @@ async function loadProducts() {
 function showRecordingSetupView(app) {
   const contentDiv = document.getElementById('main-extension-content');
   if (!contentDiv) return;
-  currentView = 'recording-setup';
+  setCurrentView('recording-setup');
   sessionCreationState = { environments: [] };
 
   contentDiv.innerHTML = `
@@ -1496,7 +1521,7 @@ async function handleStartTestCaseRecording(app) {
     targetUrl,
   };
 
-  currentView = 'test-case-recording';
+  setCurrentView('test-case-recording');
 
   chrome.runtime.sendMessage(
     {
@@ -1521,7 +1546,7 @@ async function handleStartTestCaseRecording(app) {
           btn.textContent = 'Concordo e iniciar';
           btn.disabled = false;
         }
-        currentView = 'recording-setup';
+        setCurrentView('recording-setup');
         testCaseRecordingContext = null;
         return;
       }
@@ -1535,7 +1560,7 @@ async function handleStartTestCaseRecording(app) {
 function showSessionSummaryView(sessionId, scenarioName, appName, preConfirmed = false) {
   const contentDiv = document.getElementById('main-extension-content');
   if (!contentDiv) return;
-  currentView = 'session-summary';
+  setCurrentView('session-summary');
 
   const shortId = sessionId ? sessionId.slice(-12) : '—';
 
@@ -1646,7 +1671,7 @@ function showSessionSummaryView(sessionId, scenarioName, appName, preConfirmed =
 function showCodeRecordingView(context) {
   const contentDiv = document.getElementById('main-extension-content');
   if (!contentDiv) return;
-  currentView = 'code-recording';
+  setCurrentView('code-recording');
 
   const flows = Array.isArray(context.criticalFlows || context.flows)
     ? context.criticalFlows || context.flows

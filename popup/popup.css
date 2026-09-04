@@ -80,6 +80,38 @@ body {
   width: auto;
 }
 
+.header-logout-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  font: 500 12px/1 var(--font);
+  cursor: pointer;
+  transition:
+    background var(--motion-fast) var(--motion-easing),
+    color var(--motion-fast) var(--motion-easing),
+    border-color var(--motion-fast) var(--motion-easing);
+}
+
+.header-logout-button:hover:not(:disabled) {
+  border-color: var(--color-error-border);
+  background: var(--color-error-surface);
+  color: var(--color-error-light);
+}
+
+.header-logout-button:disabled {
+  cursor: wait;
+  opacity: 0.5;
+}
+
+.header-logout-button[hidden] {
+  display: none;
+}
+
 .extension-content {
   flex: 1 1 auto;
   display: flex;

@@ -28,6 +28,11 @@ try {
   importScripts('recording-lifecycle-helpers.js');
 }
 try {
+  importScripts('background/auth-candidate.js');
+} catch (_) {
+  importScripts('auth-candidate.js');
+}
+try {
   importScripts('shared/recording-ux-helpers.js');
 } catch (_) {
   importScripts('../shared/recording-ux-helpers.js');
@@ -100,6 +105,16 @@ let lastPopupWindowId = null;
 let lastActiveContentTabId = null;
 
 const ACTIVE_RECORDING_STORAGE_KEY = 'voidrActiveRecording';
+const AUTH_SYNC_SUPPRESSED_KEY = 'voidrAuthSyncSuppressed';
+
+async function isAuthSyncSuppressed() {
+  const stored = await chrome.storage.local.get([AUTH_SYNC_SUPPRESSED_KEY]);
+  return stored[AUTH_SYNC_SUPPRESSED_KEY] === true;
+}
+
+async function resumeAuthSync() {
+  await chrome.storage.local.remove([AUTH_SYNC_SUPPRESSED_KEY]);
+}
 const LOOP_STARTUP_FAILURE_STORAGE_KEY = 'voidrLoopStartupFailure';
 const LOOP_FINALIZATION_STORAGE_KEY = 'voidrLastLoopFinalization';
 const loopBootstrapStaging = VoidrLoopBootstrap.createStagingStore(chrome.storage.session);
@@ -1272,6 +1287,10 @@ chrome.runtime.onInstalled.addListener((details) => {
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName !== 'local') return;
 
+  if (changes[AUTH_SYNC_SUPPRESSED_KEY]?.newValue === true) {
+    globalAuthState = { isAuthenticated: false, user: null, token: null };
+  }
+
   if (changes.voidrAuth) {
     const newAuth = changes.voidrAuth.newValue;
     if (newAuth && newAuth.token && newAuth.expiresAt > Date.now()) {
@@ -1295,8 +1314,14 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 // Verifica status de autenticação
 async function checkAuthenticationStatus() {
   try {
-    const result = await chrome.storage.local.get(['voidrAuth']);
+    const result = await chrome.storage.local.get(['voidrAuth', AUTH_SYNC_SUPPRESSED_KEY]);
     const authData = result.voidrAuth;
+
+    if (result[AUTH_SYNC_SUPPRESSED_KEY] === true) {
+      await chrome.storage.local.remove(['voidrAuth']);
+      globalAuthState = { isAuthenticated: false, user: null, token: null };
+      return;
+    }
 
     if (authData && authData.token && authData.expiresAt > Date.now()) {
       // Valida o token antes de considerar autenticado
@@ -2606,15 +2631,19 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       break;
 
     case 'authCompleted':
-      // Atualiza estado global quando auth é concluída
-      globalAuthState = {
-        isAuthenticated: request.authData.isAuthenticated,
-        user: request.authData.user,
-        token: request.authData.token,
-      };
-      console.log('Authentication completed for:', globalAuthState.user?.email);
-      sendResponse({ success: true });
-      break;
+      (async () => {
+        if (await isAuthSyncSuppressed()) {
+          sendResponse({ success: false, ignored: true });
+          return;
+        }
+        globalAuthState = {
+          isAuthenticated: request.authData.isAuthenticated,
+          user: request.authData.user,
+          token: request.authData.token,
+        };
+        sendResponse({ success: true });
+      })().catch(() => sendResponse({ success: false }));
+      return true;
 
     case 'syncAuthFromPlatformTabs':
       (async () => {
@@ -2640,51 +2669,40 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     case 'validateAndStoreToken':
       (async () => {
         try {
-          globalAuthState = {
-            isAuthenticated: true,
-            user: null,
+          const authData = await VoidrAuthCandidate.validateAndCommit({
             token: request.token,
-          };
-          await chrome.storage.local.set({
-            voidrAuth: {
-              token: request.token,
-              user: null,
-              expiresAt: Date.now() + 24 * 60 * 60 * 1000,
-              isAuthenticated: true,
-            },
-          });
-
-          try {
-            const isValid = await validateTokenInBackground(request.token);
-            if (isValid?.user) {
-              globalAuthState.user = isValid.user;
+            validate: validateTokenInBackground,
+            isSuppressed: isAuthSyncSuppressed,
+            commit: async ({ token, user }) => {
+              globalAuthState = {
+                isAuthenticated: true,
+                user,
+                token,
+              };
               await chrome.storage.local.set({
                 voidrAuth: {
-                  token: request.token,
-                  user: isValid.user,
+                  token,
+                  user,
                   expiresAt: Date.now() + 24 * 60 * 60 * 1000,
                   isAuthenticated: true,
                 },
               });
-            }
-          } catch (_) {}
+            },
+          });
+
+          if (!authData.isAuthenticated) {
+            sendResponse(authData);
+            return;
+          }
 
           chrome.runtime
             .sendMessage({
               action: 'authStateUpdated',
-              authData: {
-                isAuthenticated: true,
-                user: globalAuthState.user,
-                token: request.token,
-              },
+              authData,
             })
             .catch(() => {});
 
-          sendResponse({
-            isAuthenticated: true,
-            user: globalAuthState.user,
-            token: request.token,
-          });
+          sendResponse(authData);
         } catch (e) {
           sendResponse({ isAuthenticated: false });
         }
@@ -2692,8 +2710,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       return true;
 
     case 'getAuthConnectUrl':
-      sendResponse({ url: `${API_CONFIG.platformUrl}/auth/extension-connect` });
-      break;
+      (async () => {
+        await resumeAuthSync();
+        sendResponse({ url: `${API_CONFIG.platformUrl}/auth/extension-connect` });
+      })();
+      return true;
 
     // Legacy backend path is intentionally isolated behind generic extension terminology.
     case 'voidr:getRecordingByCode':
@@ -2767,15 +2788,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     }
 
     case 'authLogout':
-      // Limpa estado global no logout
-      globalAuthState = {
-        isAuthenticated: false,
-        user: null,
-        token: null,
-      };
-      console.log('User logged out');
-      sendResponse({ success: true });
-      break;
+      (async () => {
+        await chrome.storage.local.set({ [AUTH_SYNC_SUPPRESSED_KEY]: true });
+        await chrome.storage.local.remove(['voidrAuth']);
+        globalAuthState = { isAuthenticated: false, user: null, token: null };
+        sendResponse({ success: true });
+      })().catch(() => sendResponse({ success: false }));
+      return true;
 
     case 'voidr:validateLoopRecordingToken':
       (async () => {
@@ -4194,6 +4213,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
  */
 async function resyncAuthFromPlatformTabs() {
   try {
+    if (await isAuthSyncSuppressed()) return false;
     const tabs = await chrome.tabs.query({ url: `${API_CONFIG.platformUrl}/*` });
     for (const tab of tabs) {
       try {
@@ -4207,6 +4227,7 @@ async function resyncAuthFromPlatformTabs() {
 // Sincroniza autenticação com a plataforma
 async function syncAuthWithPlatform(tabId) {
   try {
+    if (await isAuthSyncSuppressed()) return false;
     const result = await chrome.scripting.executeScript({
       target: { tabId: tabId },
       func: (cacheKey) => {
@@ -4235,7 +4256,7 @@ async function syncAuthWithPlatform(tabId) {
       // Valida o token encontrado
       const isValid = await validateTokenInBackground(platformAuth.token);
 
-      if (isValid) {
+      if (isValid && !(await isAuthSyncSuppressed())) {
         // Atualiza estado global
         globalAuthState = {
           isAuthenticated: true,
