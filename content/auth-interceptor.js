@@ -11,6 +11,21 @@
   window.__voidrAuthInterceptorInstalled = true;
 
   var lastPublished = null;
+  var xhrUrls = new WeakMap();
+
+  function isVoidrApiRequest(input) {
+    try {
+      var rawUrl = typeof input === 'string' || input instanceof URL ? input : input && input.url;
+      var url = new URL(rawUrl, window.location.href);
+      return (
+        url.protocol === 'https:' &&
+        (url.hostname === 'api.voidr.co' ||
+          (url.hostname.startsWith('api-') && url.hostname.endsWith('.voidr.co')))
+      );
+    } catch (_) {
+      return false;
+    }
+  }
 
   function publish(headerValue) {
     if (!headerValue || typeof headerValue !== 'string') return;
@@ -52,18 +67,34 @@
   if (typeof origFetch === 'function') {
     window.fetch = function (input, init) {
       try {
-        var auth = readAuthHeader(init && init.headers);
-        if (!auth && input && typeof input === 'object') auth = readAuthHeader(input.headers);
-        publish(auth);
+        if (isVoidrApiRequest(input)) {
+          var auth = readAuthHeader(init && init.headers);
+          if (!auth && input && typeof input === 'object') auth = readAuthHeader(input.headers);
+          publish(auth);
+        }
       } catch (_) {}
       return origFetch.apply(this, arguments);
     };
   }
 
+  var origOpen = XMLHttpRequest.prototype.open;
+  XMLHttpRequest.prototype.open = function (method, url) {
+    try {
+      xhrUrls.set(this, url);
+    } catch (_) {}
+    return origOpen.apply(this, arguments);
+  };
+
   var origSetRequestHeader = XMLHttpRequest.prototype.setRequestHeader;
   XMLHttpRequest.prototype.setRequestHeader = function (name, value) {
     try {
-      if (name && String(name).toLowerCase() === 'authorization') publish(value);
+      if (
+        name &&
+        String(name).toLowerCase() === 'authorization' &&
+        isVoidrApiRequest(xhrUrls.get(this))
+      ) {
+        publish(value);
+      }
     } catch (_) {}
     return origSetRequestHeader.apply(this, arguments);
   };
