@@ -4,12 +4,12 @@ Este repo é a **fonte de verdade do que vai publicado na Chrome Web Store**.
 Ele não substitui [`voidr-chrome-extension`](https://github.com/voidrco/voidr-chrome-extension),
 que continua sendo o repo de desenvolvimento e do build interno (unpacked).
 
-| | |
-|---|---|
-| Item | Voidr Testing Assistant |
-| ID | `fdkbhgmcalkifcajaggkifcfoegaocpl` |
+|           |                                                |
+| --------- | ---------------------------------------------- |
+| Item      | Voidr Testing Assistant                        |
+| ID        | `fdkbhgmcalkifcajaggkifcfoegaocpl`             |
 | Publisher | Voidr — `de27263a-f10e-4aa2-8e65-4f2f0f5eb22d` |
-| Baseline | pacote enviado como rascunho em 2026-08-04 |
+| Baseline  | pacote enviado como rascunho em 2026-08-04     |
 
 ## Por que existe
 
@@ -99,3 +99,22 @@ e o `activeTab`. Portar arquivo a arquivo.
 - [ ] `npm run extension:build` e conferir `unzip -l dist/voidr-extension.zip`
 - [ ] smoke unpacked: gravar uma sessão ponta a ponta e confirmar que o collector injetou
 - [ ] **Instruções de teste** preenchidas no console (conta de review + passo do código VDR)
+
+## Publicacao automatica
+
+PRs que alteram arquivos do pacote precisam aumentar `version` em `manifest.json` e
+`package.json`. O check `Extension release guard` compara a versao da PR com a `main` e
+deve ser obrigatorio na protecao da branch.
+
+Depois do merge, `.github/workflows/extension-publish.yml` gera o ZIP, envia a nova
+versao para revisao e pede publicacao automatica quando o Google aprovar. Mudancas apenas
+em documentacao, testes ou CI nao geram uma nova submissao.
+
+O repositorio precisa destas variaveis em **Settings > Secrets and variables > Actions**:
+
+- `GCP_WORKLOAD_IDENTITY_PROVIDER`: provider que aceita tokens somente deste repo e da `main`.
+- `GCP_CHROME_WEBSTORE_SERVICE_ACCOUNT`: e-mail da conta de servico adicionada ao publisher.
+- `CHROME_WEBSTORE_PUBLISHER_ID`: `de27263a-f10e-4aa2-8e65-4f2f0f5eb22d`.
+
+A Chrome Web Store API precisa estar habilitada no projeto Google Cloud. A conta de servico
+tambem precisa ser adicionada em **Chrome Web Store Developer Dashboard > Account**.
