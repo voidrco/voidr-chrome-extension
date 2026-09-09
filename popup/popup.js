@@ -737,15 +737,7 @@ async function submitNewLoop(event) {
     );
     const scenarioId = loop?.id || loop?.scenarioId;
     if (!scenarioId) throw new Error('A Voidr não retornou o Loop criado.');
-    const recording = recordingUx.unwrapApiData(
-      await apiPost(`/loop-test/scenarios/${encodeURIComponent(scenarioId)}/recording-url`),
-    );
-    const recordingUrl = recording?.recordingUrl || recording?.url;
-    if (!recordingUx.isSafeHttpUrl(recordingUrl)) {
-      throw new Error('A Voidr retornou um endereço de gravação inválido.');
-    }
-    await chrome.tabs.create({ url: recordingUrl, active: true });
-    window.close();
+    await prepareAndOpenLoopCapture(scenarioId);
   } catch (error) {
     if (errorDiv) errorDiv.textContent = loopErrorMessage(error);
     if (submit) {
@@ -753,6 +745,15 @@ async function submitNewLoop(event) {
       submit.textContent = 'Criar e iniciar';
     }
   }
+}
+
+async function prepareAndOpenLoopCapture(scenarioId) {
+  const payload = await apiPost(`/loop-test/scenarios/${encodeURIComponent(scenarioId)}/capture`, {
+    idempotencyKey: crypto.randomUUID(),
+  });
+  const capture = recordingUx.normalizeLoopCapturePreparation(payload);
+  if (!capture) throw new Error('A Voidr retornou uma preparação de captura inválida.');
+  window.open(capture.launchUrl, '_self');
 }
 
 function formatLoopStatus(status) {
@@ -794,16 +795,7 @@ async function startLoopRecording(scenarioId, button) {
   button.disabled = true;
   button.classList.add('loading');
   try {
-    const payload = await apiPost(
-      `/loop-test/scenarios/${encodeURIComponent(scenarioId)}/recording-url`,
-    );
-    const result = recordingUx.unwrapApiData(payload) || {};
-    const recordingUrl = result.recordingUrl || result.url;
-    if (!recordingUx.isSafeHttpUrl(recordingUrl)) {
-      throw new Error('A Voidr retornou um endereço de gravação inválido.');
-    }
-    await chrome.tabs.create({ url: recordingUrl, active: true });
-    window.close();
+    await prepareAndOpenLoopCapture(scenarioId);
   } catch (error) {
     button.disabled = false;
     button.classList.remove('loading');

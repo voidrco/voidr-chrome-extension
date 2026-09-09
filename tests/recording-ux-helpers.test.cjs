@@ -6,7 +6,9 @@ const { test } = require('node:test');
 const {
   isLoopScenarioEligible,
   isAllowedLoopTarget,
+  isSafeLoopCaptureLaunchUrl,
   isSafeHttpUrl,
+  normalizeLoopCapturePreparation,
   normalizeLoopScenarios,
   sanitizeActiveRecording,
   unwrapApiData,
@@ -64,6 +66,44 @@ test('Loop targets allow HTTP only for local development', () => {
   assert.equal(isAllowedLoopTarget('http://checkout.local'), true);
   assert.equal(isAllowedLoopTarget('http://checkout.example.com'), false);
   assert.equal(isAllowedLoopTarget('ftp://localhost/file'), false);
+});
+
+test('accepts only secret-free Voidr Capture Loop launches', () => {
+  const launchUrl =
+    'voidr://capture/loops/lts_checkout/cycles/88ad0919-9754-4787-8a43-fc4bf79e52bd?organization=org_itau&surface=web&deployment=production&v=1';
+  assert.equal(isSafeLoopCaptureLaunchUrl(launchUrl), true);
+  assert.equal(isSafeLoopCaptureLaunchUrl('voidr://capture/loops/lts_checkout'), false);
+  assert.equal(
+    isSafeLoopCaptureLaunchUrl(
+      'voidr://capture/loops/lts_checkout/cycles/cycle-1?token=capability-secret',
+    ),
+    false,
+  );
+  assert.equal(isSafeLoopCaptureLaunchUrl('https://capture.voidr.co/loops/lts_checkout'), false);
+  assert.equal(isSafeLoopCaptureLaunchUrl('javascript:alert(1)'), false);
+
+  assert.deepEqual(
+    normalizeLoopCapturePreparation({
+      success: true,
+      data: { captureAdapter: 'voidr_app', launchUrl },
+    }),
+    { launchUrl },
+  );
+  assert.equal(
+    normalizeLoopCapturePreparation({
+      success: true,
+      data: { captureAdapter: 'browser_extension', launchUrl },
+    }),
+    null,
+  );
+});
+
+test('popup prepares Loop cycles through Capture V2', () => {
+  const popup = fs.readFileSync(path.join(root, 'popup/popup.js'), 'utf8');
+  assert.match(popup, /\/loop-test\/scenarios\/\$\{encodeURIComponent\(scenarioId\)\}\/capture/);
+  assert.match(popup, /normalizeLoopCapturePreparation/);
+  assert.match(popup, /window\.open\(capture\.launchUrl, '_self'\)/);
+  assert.doesNotMatch(popup, /\/recording-url/);
 });
 
 test('sanitized active state never exposes capability or collector secrets', () => {
