@@ -692,6 +692,16 @@ export function createCollector() {
       return state.sessionId;
     },
 
+    isCaptureReady() {
+      return Boolean(
+        state.isInitialized &&
+          state.captureReady &&
+          state.authToken &&
+          state.sessionId &&
+          !state.forceStop,
+      );
+    },
+
     /**
      * Force-flush all buffered events immediately.
      * Returns a Promise that resolves when all events have been sent to the server.

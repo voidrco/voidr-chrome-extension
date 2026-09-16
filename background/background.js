@@ -128,7 +128,9 @@ const stopCapabilitySecrets = VoidrRecordingLifecycle.createStopCapabilityStore(
 // Active recording state — persisted because MV3 service workers are ephemeral
 let activeRecording = null;
 const runWithRecordingStateLock = VoidrRecordingLifecycle.createSerializedExecutor();
+const runCollectorBootstrapOnce = VoidrRecordingLifecycle.createKeyedSingleFlightExecutor();
 const stopRequestLatch = VoidrRecordingLifecycle.createKeyedSingleFlightLatch();
+const lastCollectorStartupFailure = new Map();
 
 function isTrustedAssistantSender(sender) {
   const popupRoot = chrome.runtime.getURL('popup/');
@@ -815,7 +817,10 @@ async function initializeCollectorInTab(tabId, initOptions) {
         } catch (_) {}
         return {
           ready:
-            Boolean(sessionId) && hasAuthenticatedSession && authenticatedSessionId === sessionId,
+            window.VoidrCollector.isCaptureReady?.() === true &&
+            Boolean(sessionId) &&
+            hasAuthenticatedSession &&
+            authenticatedSessionId === sessionId,
           sessionId,
         };
       } catch (e) {
@@ -826,10 +831,120 @@ async function initializeCollectorInTab(tabId, initOptions) {
     args: [initOptions],
   });
   const readiness = results?.[0]?.result;
-  if (!VoidrRecordingLifecycle.isCollectorReadinessConfirmed(readiness)) {
-    throw new Error('Collector did not confirm an authenticated recording session');
+  if (
+    !VoidrRecordingLifecycle.isCollectorReadinessConfirmed(
+      readiness,
+      initOptions.forcedSessionId,
+    )
+  ) {
+    const competingCollector =
+      readiness?.sessionId && readiness.sessionId !== initOptions.forcedSessionId;
+    const error = new Error(
+      competingCollector
+        ? 'O gravador da página substituiu a gravação da extensão.'
+        : 'O Collector não confirmou uma sessão autenticada.',
+    );
+    error.code = competingCollector
+      ? 'COLLECTOR_SESSION_MISMATCH'
+      : 'COLLECTOR_AUTH_UNCONFIRMED';
+    throw error;
   }
   return readiness.sessionId;
+}
+
+function bootstrapCollectorInTab(tabId, initOptions, lifecycleToken) {
+  const key = `${lifecycleToken.generation}:${tabId}`;
+  return runCollectorBootstrapOnce(key, async () => {
+    if (await isAuthenticatedExtensionCollectorInTab(tabId, initOptions.forcedSessionId)) {
+      return { resumed: true, sessionId: initOptions.forcedSessionId };
+    }
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        return await VoidrRecordingLifecycle.resumeCollectorWithLifecycleChecks({
+          token: lifecycleToken,
+          isCurrent: (token) => isActiveLifecycleGenerationCurrent(token),
+          runIfCurrent: (token, operation) => runWithActiveLifecycleGeneration(token, operation),
+          fetchCollector: async () => null,
+          injectCollector: async () => {
+            await teardownExistingCollectorInTab(tabId);
+            return injectCollectorInTab(tabId);
+          },
+          initializeCollector: async () => {
+            const sessionId = await initializeCollectorInTab(tabId, initOptions);
+            await armCollectorTakeoverWatchdog(tabId);
+            return sessionId;
+          },
+        });
+      } catch (error) {
+        if (
+          !['COLLECTOR_SESSION_MISMATCH', 'COLLECTOR_AUTH_UNCONFIRMED'].includes(error?.code) ||
+          attempt > 0
+        ) {
+          throw error;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      }
+    }
+  });
+}
+
+async function isAuthenticatedExtensionCollectorInTab(tabId, expectedSessionId) {
+  const result = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    func: (sessionId) => {
+      try {
+        return (
+          window.VoidrCollector === window.__voidrExtCollector &&
+          window.VoidrCollector.isCaptureReady?.() === true &&
+          window.VoidrCollector?.getSessionId?.() === sessionId &&
+          window.sessionStorage.getItem('voidr_session_id') === sessionId &&
+          Boolean(window.sessionStorage.getItem('voidr_jwt'))
+        );
+      } catch (_) {
+        return false;
+      }
+    },
+    args: [expectedSessionId],
+  }).catch(() => null);
+  return result?.[0]?.result === true;
+}
+
+async function isRecordingPanelVisibleInTab(tabId, lifecycleGeneration) {
+  const result = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: (generation) =>
+      [...document.querySelectorAll('.voidr-rec-panel')].some(
+        (panel) => panel.dataset.voidrLifecycleGeneration === generation,
+      ),
+    args: [lifecycleGeneration],
+  }).catch(() => null);
+  return result?.[0]?.result === true;
+}
+
+async function waitForCollectorStartup(tabId, startedAfter, timeoutMs = 30000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const failure = lastCollectorStartupFailure.get(tabId);
+    if (failure && failure.at >= startedAfter) {
+      return { success: false, error: failure.error };
+    }
+    const recording = await hydrateActiveRecording();
+    if (
+      recording?.lifecycle === 'recording' &&
+      recording.startedAt >= startedAfter &&
+      recording.trackedTabIds?.includes(tabId)
+    ) {
+      if (
+        (await isAuthenticatedExtensionCollectorInTab(tabId, recording.canonicalSessionId)) &&
+        (await isRecordingPanelVisibleInTab(tabId, recording.lifecycleGeneration))
+      ) {
+        return { success: true, tabId };
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  return { success: false, error: 'A gravação não confirmou o início em 30 segundos.' };
 }
 
 async function readCollectorSessionId(tabId) {
@@ -1122,6 +1237,7 @@ async function linkOnboardingSessions(recording, sessionIds) {
 }
 
 async function sendResumeRecordingUi(tabId, recording, { showCountdown = false } = {}) {
+  if (await isRecordingPanelVisibleInTab(tabId, recording.lifecycleGeneration)) return true;
   const stopCapability = await stopCapabilitySecrets.issue(
     recording.lifecycleGeneration,
     tabId,
@@ -1145,9 +1261,14 @@ async function sendResumeRecordingUi(tabId, recording, { showCountdown = false }
 
   await ensureContentCss(tabId);
   let lastError = null;
+  let receiverResponded = false;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      await chrome.tabs.sendMessage(tabId, payload);
+      const response = await chrome.tabs.sendMessage(tabId, payload);
+      receiverResponded = Boolean(response);
+      if (response?.success !== true) {
+        throw new Error(response?.error || 'O painel de gravação não confirmou a abertura.');
+      }
       return true;
     } catch (error) {
       lastError = error;
@@ -1155,6 +1276,7 @@ async function sendResumeRecordingUi(tabId, recording, { showCountdown = false }
     }
   }
 
+  if (receiverResponded) return false;
   try {
     await chrome.scripting.insertCSS({
       target: { tabId },
@@ -1172,7 +1294,10 @@ async function sendResumeRecordingUi(tabId, recording, { showCountdown = false }
       ],
     });
     await new Promise((resolve) => setTimeout(resolve, 300));
-    await chrome.tabs.sendMessage(tabId, payload);
+    const response = await chrome.tabs.sendMessage(tabId, payload);
+    if (response?.success !== true) {
+      throw new Error(response?.error || 'O painel de gravação não confirmou a abertura.');
+    }
     return true;
   } catch (error) {
     lastError = error;
@@ -1188,7 +1313,7 @@ async function cleanupFailedRecordingBootstrap(startupToken, fallbackTabId) {
   const stopping = await updateActiveRecordingForGeneration(
     startupToken.generation,
     (recording) => ({ ...recording, lifecycle: 'stopping' }),
-    ['starting', 'recording'],
+    ['starting'],
   );
   if (!stopping) return false;
 
@@ -1213,21 +1338,7 @@ async function resumeActiveRecordingInTab(tabId) {
   if (!tab?.url || !isHttpUrl(tab.url)) return false;
 
   await ensureTargetContentScript(tabId);
-  const resumed = await VoidrRecordingLifecycle.resumeCollectorWithLifecycleChecks({
-    token: lifecycleToken,
-    isCurrent: (token) => isActiveLifecycleGenerationCurrent(token),
-    runIfCurrent: (token, operation) => runWithActiveLifecycleGeneration(token, operation),
-    fetchCollector: async () => null,
-    injectCollector: async () => {
-      await teardownExistingCollectorInTab(tabId);
-      return injectCollectorInTab(tabId);
-    },
-    initializeCollector: async () => {
-      const sessionId = await initializeCollectorInTab(tabId, recording.initOptions);
-      await armCollectorTakeoverWatchdog(tabId);
-      return sessionId;
-    },
-  });
+  const resumed = await bootstrapCollectorInTab(tabId, recording.initOptions, lifecycleToken);
   if (!resumed.resumed) return false;
 
   const attached = await attachTrackedRecordingTab(tabId, {
@@ -1242,9 +1353,7 @@ async function resumeActiveRecordingInTab(tabId) {
     ['starting', 'recording'],
   );
   if (!ready) return false;
-  await sendResumeRecordingUi(tabId, ready);
-
-  return true;
+  return sendResumeRecordingUi(tabId, ready);
 }
 
 // Hydrate auth state whenever the service worker starts up
@@ -2506,21 +2615,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             await clearLoopStartupFailure();
           }
 
-          const resumed = await VoidrRecordingLifecycle.resumeCollectorWithLifecycleChecks({
-            token: startupToken,
-            isCurrent: (token) => isActiveLifecycleGenerationCurrent(token),
-            runIfCurrent: (token, operation) => runWithActiveLifecycleGeneration(token, operation),
-            fetchCollector: async () => null,
-            injectCollector: async () => {
-              await teardownExistingCollectorInTab(targetTabId);
-              return injectCollectorInTab(targetTabId);
-            },
-            initializeCollector: async () => {
-              const sessionId = await initializeCollectorInTab(targetTabId, initOptions);
-              await armCollectorTakeoverWatchdog(targetTabId);
-              return sessionId;
-            },
-          });
+          const resumed = await bootstrapCollectorInTab(targetTabId, initOptions, startupToken);
           if (!resumed.resumed) {
             const lifecycleError = new Error('Recording lifecycle changed during startup');
             lifecycleError.code = 'RECORDING_LIFECYCLE_CHANGED';
@@ -2530,7 +2625,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           const readyRecording = await updateActiveRecordingForGeneration(
             startupToken.generation,
             (current) => VoidrRecordingLifecycle.markRecordingReady(current, resumed.sessionId),
-            ['starting'],
+            ['starting', 'recording'],
           );
           if (!readyRecording) {
             const lifecycleError = new Error('Recording lifecycle changed during startup');
@@ -2539,9 +2634,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           }
           const sessionId = resumed.sessionId;
           if (reloadedForCsp) {
-            await sendResumeRecordingUi(targetTabId, readyRecording, { showCountdown: true });
-          } else {
-            await sendResumeRecordingUi(targetTabId, readyRecording);
+            const uiReady = await sendResumeRecordingUi(targetTabId, readyRecording, {
+              showCountdown: true,
+            });
+            if (!uiReady) throw new Error('O painel de gravação não confirmou a abertura.');
           }
           try {
             chrome.runtime
@@ -2579,6 +2675,40 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           });
         } catch (e) {
           console.error('Collector injection error:', e);
+          const recoveredRecording = startupToken ? await hydrateActiveRecording() : null;
+          if (
+            recoveredRecording?.lifecycleGeneration === startupToken?.generation &&
+            recoveredRecording.lifecycle === 'recording' &&
+            recoveredRecording.trackedTabIds?.includes(targetTabId) &&
+            (await isAuthenticatedExtensionCollectorInTab(
+              targetTabId,
+              recoveredRecording.canonicalSessionId,
+            )) &&
+            (await isRecordingPanelVisibleInTab(
+              targetTabId,
+              recoveredRecording.lifecycleGeneration,
+            ))
+          ) {
+            const stopCapability = await stopCapabilitySecrets.issue(
+              recoveredRecording.lifecycleGeneration,
+              targetTabId,
+              recoveredRecording.canonicalSessionId,
+            ).catch(() => null);
+            if (stopCapability) {
+              sendResponse({
+                success: true,
+                lifecycleGeneration: recoveredRecording.lifecycleGeneration,
+                stopCapability,
+              });
+              return;
+            }
+          }
+          if (Number.isInteger(targetTabId)) {
+            lastCollectorStartupFailure.set(targetTabId, {
+              at: Date.now(),
+              error: e?.message || 'Não foi possível iniciar o Collector.',
+            });
+          }
           const cleaned = startupToken
             ? await cleanupFailedRecordingBootstrap(startupToken, targetTabId).catch(() => false)
             : false;
@@ -3400,16 +3530,41 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             return;
           }
 
+          const startedAfter = Date.now();
+          lastCollectorStartupFailure.delete(targetTabId);
+          let targetResponse;
           try {
-            await chrome.tabs.sendMessage(targetTabId, payload);
-          } catch (_) {
+            targetResponse = await chrome.tabs.sendMessage(targetTabId, payload);
+          } catch (error) {
+            if (
+              payload?.action === 'voidr:startSessionRecording' &&
+              !/Receiving end does not exist|Could not establish connection/i.test(
+                error?.message || '',
+              )
+            ) {
+              sendResponse(await waitForCollectorStartup(targetTabId, startedAfter));
+              return;
+            }
             await chrome.scripting.executeScript({
               target: { tabId: targetTabId },
               files: ['content/content.js'],
             });
             await ensureContentCss(targetTabId);
             await new Promise((r) => setTimeout(r, 100));
-            await chrome.tabs.sendMessage(targetTabId, payload);
+            try {
+              targetResponse = await chrome.tabs.sendMessage(targetTabId, payload);
+            } catch (retryError) {
+              if (payload?.action !== 'voidr:startSessionRecording') throw retryError;
+              sendResponse(await waitForCollectorStartup(targetTabId, startedAfter));
+              return;
+            }
+          }
+          if (payload?.action === 'voidr:startSessionRecording' && targetResponse?.success !== true) {
+            sendResponse({
+              success: false,
+              error: targetResponse?.error || 'O gravador não confirmou o início da sessão.',
+            });
+            return;
           }
           sendResponse({ success: true, tabId: targetTabId });
         } catch (e) {
@@ -4192,6 +4347,7 @@ chrome.tabs.onCreated.addListener((tab) => {
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+  lastCollectorStartupFailure.delete(tabId);
   // Always remove the CSP bypass rule for a closed tab — idempotent.
   disableCspBypassForTab(tabId).catch(() => {});
   loopBootstrapStaging.discard(tabId).catch(() => {});

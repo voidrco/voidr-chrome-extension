@@ -30,6 +30,37 @@
     );
   }
 
+  function isSafeLoopCaptureLaunchUrl(value) {
+    if (typeof value !== 'string' || !value.trim()) return false;
+    try {
+      const parsed = new URL(value);
+      return (
+        parsed.protocol === 'voidr:' &&
+        parsed.hostname === 'capture' &&
+        /^\/loops\/[^/]+\/cycles\/[^/]+$/.test(parsed.pathname) &&
+        !parsed.username &&
+        !parsed.password &&
+        !parsed.hash &&
+        ![...parsed.searchParams.keys()].some((key) => /token|secret|key/i.test(key))
+      );
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function normalizeLoopCapturePreparation(payload) {
+    const data = unwrapApiData(payload);
+    if (
+      !data ||
+      typeof data !== 'object' ||
+      data.captureAdapter !== 'voidr_app' ||
+      !isSafeLoopCaptureLaunchUrl(data.launchUrl)
+    ) {
+      return null;
+    }
+    return { launchUrl: data.launchUrl };
+  }
+
   function normalizeLoopScenarios(payload) {
     const data = unwrapApiData(payload);
     if (!Array.isArray(data)) return [];
@@ -86,6 +117,8 @@
     unwrapApiData,
     isSafeHttpUrl,
     isAllowedLoopTarget,
+    isSafeLoopCaptureLaunchUrl,
+    normalizeLoopCapturePreparation,
     normalizeLoopScenarios,
     isLoopScenarioEligible,
     sanitizeActiveRecording,

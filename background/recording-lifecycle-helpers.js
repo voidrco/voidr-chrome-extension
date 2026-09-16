@@ -5,11 +5,12 @@
 })(
   typeof globalThis !== 'undefined' ? globalThis : this,
   function createRecordingLifecycleHelpers() {
-    function isCollectorReadinessConfirmed(readiness) {
+    function isCollectorReadinessConfirmed(readiness, expectedSessionId = null) {
       return Boolean(
         readiness?.ready === true &&
           typeof readiness.sessionId === 'string' &&
-          readiness.sessionId.trim(),
+          readiness.sessionId.trim() &&
+          (!expectedSessionId || readiness.sessionId === expectedSessionId),
       );
     }
 
@@ -266,6 +267,22 @@
       };
     }
 
+    function createKeyedSingleFlightExecutor() {
+      const inFlightByKey = new Map();
+      return (key, operation) => {
+        const existing = inFlightByKey.get(key);
+        if (existing) return existing;
+        const promise = Promise.resolve().then(operation);
+        inFlightByKey.set(key, promise);
+        promise
+          .finally(() => {
+            if (inFlightByKey.get(key) === promise) inFlightByKey.delete(key);
+          })
+          .catch(() => {});
+        return promise;
+      };
+    }
+
     function createSerializedExecutor() {
       let queue = Promise.resolve();
       return function runSerialized(task) {
@@ -364,6 +381,7 @@
       canRecoverStopSender,
       cleanupFailedCollectorBootstrap,
       createStopCapabilityStore,
+      createKeyedSingleFlightExecutor,
       createKeyedSingleFlightLatch,
       createSerializedExecutor,
       createSingleFlightLatch,
