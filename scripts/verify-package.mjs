@@ -21,6 +21,7 @@ const bad = [...recorder].filter((c) => {
 });
 check(bad.length === 0, `vendor/recorder.min.js tem ${bad.length} noncharacter(s) — Chrome nao carrega. Rebuild com esbuild charset:'ascii'.`);
 check(recorder.includes('window.VoidrCollector='), 'vendor/recorder.min.js nao expoe window.VoidrCollector');
+check(recorder.includes('isCaptureReady'), 'vendor/recorder.min.js nao confirma prontidao da captura');
 
 // Politica de codigo remoto: nada pode ser baixado e executado.
 check(!sources.includes('fetchCollectorCode'), 'fetchCollectorCode presente — codigo remoto');

@@ -15,6 +15,7 @@ const {
   authorizeStopRequest,
   canRecoverStopSender,
   cleanupFailedCollectorBootstrap,
+  createKeyedSingleFlightExecutor,
   createKeyedSingleFlightLatch,
   createSerializedExecutor,
   createSingleFlightLatch,
@@ -472,9 +473,59 @@ test('collector readiness rejects a forced ID without authenticated initializati
     false,
   );
   assert.equal(
-    isCollectorReadinessConfirmed({ ready: true, sessionId: 'forced-session-id' }),
+    isCollectorReadinessConfirmed(
+      { ready: true, sessionId: 'forced-session-id' },
+      'forced-session-id',
+    ),
     true,
   );
+  assert.equal(
+    isCollectorReadinessConfirmed(
+      { ready: true, sessionId: 'page-collector-session' },
+      'forced-session-id',
+    ),
+    false,
+  );
+});
+
+test('collector bootstrap is single-flight for one recording generation and tab', async () => {
+  const runOnce = createKeyedSingleFlightExecutor();
+  let release;
+  let executions = 0;
+  const first = runOnce('generation-a:42', async () => {
+    executions += 1;
+    await new Promise((resolve) => {
+      release = resolve;
+    });
+    return 'session-a';
+  });
+  const second = runOnce('generation-a:42', async () => {
+    executions += 1;
+    return 'session-b';
+  });
+  assert.strictEqual(first, second);
+  await Promise.resolve();
+  assert.equal(executions, 1);
+  release();
+  assert.deepEqual(await Promise.all([first, second]), ['session-a', 'session-a']);
+  assert.equal(await runOnce('generation-a:42', async () => 'session-c'), 'session-c');
+});
+
+test('failed collector bootstrap releases its key for a retry', async () => {
+  const runOnce = createKeyedSingleFlightExecutor();
+  let executions = 0;
+  const failed = runOnce('generation-a:42', async () => {
+    executions += 1;
+    throw new Error('collector unavailable');
+  });
+  const joined = runOnce('generation-a:42', async () => {
+    executions += 1;
+    return 'unexpected';
+  });
+  assert.strictEqual(failed, joined);
+  await assert.rejects(failed, /collector unavailable/);
+  assert.equal(executions, 1);
+  assert.equal(await runOnce('generation-a:42', async () => 'session-a'), 'session-a');
 });
 
 test('confirmed readiness performs the starting to recording transition', () => {

@@ -2016,6 +2016,7 @@ async function startVoidrSessionRecording(testCaseName, options = {}) {
       }
     };
     panel.querySelector('#voidr-rec-stop')?.addEventListener('click', finishRecording);
+    return { success: true };
   } catch (e) {
     console.error('Voidr session recording error:', e);
     document
@@ -2026,6 +2027,7 @@ async function startVoidrSessionRecording(testCaseName, options = {}) {
         'Não foi possível preparar o gravador neste site. Atualize a página e tente novamente.',
       );
     }
+    return { success: false, error: e?.message || 'Não foi possível iniciar a gravação.' };
   }
 }
 
@@ -2182,8 +2184,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         flows: request.flows || [],
         evidence: request.evidence,
         loopTest: request.loopTest,
-      });
-      break;
+      })
+        .then(sendResponse)
+        .catch((error) =>
+          sendResponse({ success: false, error: error?.message || 'Não foi possível iniciar a gravação.' }),
+        );
+      return true;
     case 'voidr:startVerificationRecording':
       (async () => {
         const apiKey = await resolveCollectorApiKey();
@@ -2192,13 +2198,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           return;
         }
         try {
-          await startVoidrSessionRecording(request.verification?.mission || 'Verification', {
+          const recording = await startVoidrSessionRecording(request.verification?.mission || 'Verification', {
             mode: 'verification',
             applicationId: request.verification?.applicationId,
             apiKey,
             verification: request.verification,
           });
-          sendResponse({ success: true });
+          sendResponse(recording);
         } catch (error) {
           sendResponse({ success: false, error: error?.message || String(error) });
         }
@@ -2222,8 +2228,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         collectorAlreadyInitialized: true,
         lifecycleGeneration: request.lifecycleGeneration,
         stopCapability: request.stopCapability,
-      });
-      break;
+      })
+        .then(sendResponse)
+        .catch((error) =>
+          sendResponse({ success: false, error: error?.message || 'Não foi possível abrir o painel.' }),
+        );
+      return true;
     case 'voidr:sessionCaptured':
       if (request.sessionId) {
         const activeHandoffPanel = document.querySelector(

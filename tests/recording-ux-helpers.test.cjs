@@ -315,8 +315,10 @@ test('countdown starts alongside collector bootstrap and survives a CSP reload r
   assert.match(content, /collectorAlreadyInitialized: true/);
   assert.match(
     background,
-    /sendResumeRecordingUi\(targetTabId, readyRecording, \{ showCountdown: true \}\)/,
+    /sendResumeRecordingUi\(targetTabId, readyRecording, \{[\s\S]{0,80}showCountdown: true/,
   );
+  assert.match(background, /if \(!uiReady\) throw new Error\('O painel de gravação não confirmou a abertura\.'\)/);
+  assert.match(content, /case 'voidr:resumeRecordingUI':/);
   assert.match(
     background,
     /chrome\.runtime[\s\S]{0,80}\.sendMessage\([\s\S]{0,180}\.catch\(\(\) => \{\}\)/,
