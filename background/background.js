@@ -1567,6 +1567,7 @@ async function tabBlocksCollectorConnects(tabId, collectorUrl) {
 const VERIFICATION_CAPABILITY_PREFIX = 'voidrVerificationCapability:';
 const VERIFICATION_EVIDENCE_PREFIX = 'voidrVerificationEvidence:';
 const VERIFICATION_VOICE_PREFIX = 'voidrVerificationVoice:';
+const VERIFICATION_VOICE_INGEST_TIMEOUT_MS = 25_000;
 const ACTIVE_VERIFICATION_VOICE_KEY = 'voidrActiveVerificationVoice';
 let offscreenVoiceDocumentPromise = null;
 
@@ -1607,6 +1608,9 @@ async function verificationIngest(record, endpoint, body) {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(body),
+      ...(endpoint === 'voice-segments'
+        ? { redirect: 'error', signal: AbortSignal.timeout(VERIFICATION_VOICE_INGEST_TIMEOUT_MS) }
+        : {}),
     },
   );
   const json = await response.json().catch(() => ({}));
