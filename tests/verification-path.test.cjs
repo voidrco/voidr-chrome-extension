@@ -141,6 +141,8 @@ test('voice notes use an optional governed outbox and join the same seal fence',
   assert.match(background, /VERIFICATION_VOICE_PREFIX/);
   assert.match(background, /local-extension-outbox/);
   assert.match(background, /voice-segments/);
+  assert.match(background, /VERIFICATION_VOICE_INGEST_TIMEOUT_MS = 25_000/);
+  assert.match(background, /signal: AbortSignal.timeout\(VERIFICATION_VOICE_INGEST_TIMEOUT_MS\)/);
   assert.match(
     background,
     /await flushPendingVerificationVoice\(record\);\s*await reconcilePendingVerificationEvidence\(record\);/,

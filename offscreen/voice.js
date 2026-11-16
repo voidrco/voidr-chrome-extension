@@ -69,10 +69,10 @@ async function stopCapture() {
   if (active.timer) clearInterval(active.timer);
   active.processor.disconnect();
   active.source.disconnect();
-  await emitSegment();
-  active.stream.getTracks().forEach((track) => track.stop());
-  await active.context.close();
+  const finalSegment = emitSegment();
   capture = null;
+  active.stream.getTracks().forEach((track) => track.stop());
+  await Promise.all([active.context.close(), finalSegment]);
 }
 
 async function startCapture(message) {
